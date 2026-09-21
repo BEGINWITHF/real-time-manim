@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "real-time-manim"
-version = "0.1.3"
+version = "1.0.0"
 description = "Vulkan-accelerated real-time rendering backend for ManimCE (Windows)"
 readme = "README.md"
 license = { text = "MIT" }
