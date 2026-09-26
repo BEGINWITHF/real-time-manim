@@ -23,7 +23,7 @@ from real_time_manim.rate_functions import (
     _wiggle, _lingering, _exponential_decay,
     _squish_rate_func, _sigmoid,
 )
-from real_time_manim.animations import (
+from real_time_manim.compat import (
     Animation, Create, Uncreate, DrawBorderThenFill, Write, Unwrite,
     ShowIncreasingSubsets, SpiralIn,
     Blink, TypeWithCursor, UntypeWithCursor,
@@ -50,7 +50,7 @@ _OrigChangingDecimal.check_validity_of_input = lambda self, dm: None
 _OrigChangeDecimalToValue.check_validity_of_input = lambda self, dm: None
 
 from manim.animation.animation import prepare_animation as _orig_prepare_animation
-from real_time_manim.animations.base import Animation as _OurAnimation
+from real_time_manim.compat import Animation as _OurAnimation
 def _patched_prepare_animation(anim):
     if isinstance(anim, _OurAnimation):
         return anim
