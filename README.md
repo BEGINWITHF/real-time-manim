@@ -12,7 +12,7 @@ all driven by ordinary Manim scenes.
 > RTM(Real-Time-Manim) is a vulkan-based manim renderer boosting manim speed, making live-rendering available and compatible for rendering manim. Previous manim render focusing on Opengl ang Cairo renderer is CPU-based, making graphic rendering extremely slow and live-interaction unfeasible. RTM uses a refactored render pipeline (see flow chart below) to make live-render available for math animation, preparing for further development of Manteraction(a app for live interaction manim video creation, animation, and interaction.)
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B-lightgrey.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS-lightgrey.svg)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)
 
 > **Audience.** This README is a short, user-facing guide. For the full picture —
@@ -46,8 +46,20 @@ real-time-manim is published to **PyPI**. With any Python 3.11+ on Windows
 pip install real-time-manim
 ```
 
-The wheel bundles everything you need to render (`vulkan_core.dll` and the
-window icon), so no separate build step is required.
+The Windows wheel bundles everything you need to render (`vulkan_core.dll` and
+the window icon), so no separate build step is required.
+
+**macOS** is supported as well: the renderer loads a `vulkan_core.dylib` instead
+of the Windows DLL, so build that once from source first:
+
+```bash
+brew install molten-vk          # MoltenVK provides the Vulkan layer on macOS
+bash native/build_mac.sh        # -> dist/release/vulkan_core.dylib
+```
+
+Then install the package (from PyPI or this repo) and run as usual. See
+[Building the DLL](https://github.com/BEGINWITHF/real-time-manim/wiki/Building-the-DLL)
+for details.
 
 > **Prerequisites at runtime:** a Vulkan-capable GPU/driver, and `ffmpeg` on your
 > `PATH` if you want to record video.
