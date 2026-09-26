@@ -1,10 +1,11 @@
 # Native C/C++ sources — shipped in the sdist so users can rebuild the DLL.
 # The compiled vulkan_core.dll itself is bundled as package-data under core/.
-recursive-include native *.c *.h *.ps1
+recursive-include native *.c *.h *.ps1 *.sh *.m
 
 # Standard metadata (normally auto-included, listed explicitly for clarity)
 include LICENSE
 include README.md
+include PYPI_README.md
 include logo.jpg
 
 # Keep build artifacts out of the source distribution

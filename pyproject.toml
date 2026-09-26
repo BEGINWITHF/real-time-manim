@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "real-time-manim"
-version = "1.0.0"
-description = "Vulkan-accelerated real-time rendering backend for ManimCE (Windows)"
-readme = "README.md"
+version = "1.0.1"
+description = "Vulkan-accelerated real-time rendering backend for ManimCE (Windows & macOS)"
+readme = "PYPI_README.md"
 license = { text = "MIT" }
 authors = [{ name = "Tagin T" }]
-keywords = ["manim", "vulkan", "renderer", "animation", "gpu", "3b1b"]
+keywords = ["manim", "vulkan", "renderer", "animation", "gpu"]
 requires-python = ">=3.11"
 dependencies = [
     "manim>=0.20.0",
