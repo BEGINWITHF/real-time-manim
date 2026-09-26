@@ -128,3 +128,38 @@ class Timeline:
     def screenshot_at(self, t, path):
         self.render_at(t)
         return self.window.screenshot(path)
+
+    def render_mp4(self, path, fps=60, duration=None, realtime=False):
+        """Render the prepared animations forward to ``path`` (mp4) by walking
+        ``t`` and drawing each frame — the same ``evaluate(t)`` path that powers
+        ``render_at``.  With ``realtime=True`` it paces to wall-clock (for a live
+        window); otherwise it runs as fast as it can (like a fast record)."""
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+        import time
+
+        duration = float(self.duration if duration is None else duration)
+        n_frames = int(round(duration * fps)) + 1
+        tmpdir = tempfile.mkdtemp(prefix="rtm_timeline_")
+        try:
+            for k in range(n_frames):
+                t = k / float(fps)
+                frame_start = time.perf_counter()
+                self.render_at(t)
+                self.window.screenshot(os.path.join(tmpdir, f"f_{k:05d}.bmp"))
+                if realtime:
+                    left = (1.0 / fps) - (time.perf_counter() - frame_start)
+                    if left > 0:
+                        time.sleep(left)
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error",
+                 "-framerate", str(fps),
+                 "-i", os.path.join(tmpdir, "f_%05d.bmp"),
+                 "-frames:v", str(n_frames),
+                 "-c:v", "libx264", "-pix_fmt", "yuv420p", path],
+                check=True)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        return path
