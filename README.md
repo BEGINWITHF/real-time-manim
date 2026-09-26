@@ -3,7 +3,7 @@
 <p align="center">
   <img src="logo.jpg" alt="real-time-manim logo" width="560"/>
 </p>
-A **Vulkan-accelerated, real-time rendering backend** for
+A Vulkan-accelerated, real-time rendering backend for
 [ManimCE](https://www.manim.community/). Instead of the default OpenGL/Cairo
 renderer, `real-time-manim` draws every scene through a native Vulkan pipeline —
 so you get a live, interactive window *and* fast GPU-accelerated video output,
