@@ -2,7 +2,7 @@ import ctypes
 import math
 import numpy as np
 from real_time_manim.vulkan_util import manim_to_screen, rotate_point, get_fill_rgb, get_fill_rgb_raw, get_stroke_rgb, get_stroke_w
-from real_time_manim.animations import get_anim_rotation
+from real_time_manim.state import get_anim_rotation
 
 
 class ShapeMixin:
