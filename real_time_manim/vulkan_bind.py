@@ -531,12 +531,25 @@ class BITMAPFILEHEADER(ctypes.Structure):
 
 
 class MLWindow(ShapeMixin, TextMixin):
+    # When True, play() records a timeline instead of rendering (see play()).
+    _schedule_mode = False
+    # Every constructed window is registered here (used by frames.FrameServer
+    # to grab the window a scene created for itself).
+    _registry = []
+
     def __init__(self, w=1920, h=1080):
         self.win_w = w
         self.win_h = h
         self.frame_count = 0
         self.scene = None
         self._active_anims = []
+        # Schedule mode (2.0.0): when the class flag _schedule_mode is True,
+        # play() records animations on a global timeline instead of rendering,
+        # so any frame can later be produced on demand via build_timeline().
+        self._sched = []          # list of (start_seconds, animation)
+        self._cursor = 0.0        # current end of the recorded timeline
+        self._defer_close = bool(getattr(type(self), '_schedule_mode', False))
+        type(self)._registry.append(self)
         self._recording = False
         self._record_dir = None
         self._record_frame_idx = 0
@@ -1141,6 +1154,10 @@ class MLWindow(ShapeMixin, TextMixin):
         if not self.scene:
             return
 
+        if type(self)._schedule_mode:
+            self._schedule_play(animations, kwargs)
+            return
+
         from real_time_manim.timeline import Timeline
         from manim.mobject.mobject import _AnimationBuilder
 
@@ -1229,6 +1246,67 @@ class MLWindow(ShapeMixin, TextMixin):
                     anim.clean_up_from_scene(self.scene)
                 except Exception:
                     pass
+
+    def _schedule_play(self, animations, kwargs):
+        """Record a play() call on the global timeline instead of rendering.
+
+        Mobjects are still added to the scene (so everything exists for later
+        evaluation) but nothing is drawn.  Later, ``build_timeline()`` turns the
+        whole recording into a Timeline whose every frame can be produced on
+        demand.
+        """
+        from manim.mobject.mobject import _AnimationBuilder
+
+        resolved = []
+        for anim in animations:
+            if isinstance(anim, _AnimationBuilder):
+                anim.anim_args['suspend_mobject_updating'] = False
+                resolved.append(anim.build())
+            else:
+                resolved.append(anim)
+        animations = tuple(resolved)
+
+        add_mobs = []
+        for anim in animations:
+            add_mobs.extend(self._extract_add_mobjects(anim))
+        real = [a for a in animations if not isinstance(a, Add)]
+
+        if 'run_time' in kwargs:
+            for a in real:
+                a.run_time = kwargs['run_time']
+        if 'rate_func' in kwargs:
+            for a in real:
+                a.rate_func = kwargs['rate_func']
+
+        for mob in add_mobs:
+            set_anim_opacity(mob, 1.0)
+            if mob not in self.scene.mobjects:
+                self.scene.mobjects.append(mob)
+        for a in real:
+            m = getattr(a, 'mobject', None)
+            if m is not None and m not in self.scene.mobjects:
+                self.scene.mobjects.append(m)
+            for mob in (getattr(a, 'mobjects', None) or []):
+                if mob not in self.scene.mobjects:
+                    self.scene.mobjects.append(mob)
+            cur = getattr(a, 'cursor', None)
+            if cur is not None and cur not in self.scene.mobjects:
+                self.scene.mobjects.append(cur)
+
+        duration = max((float(getattr(a, 'run_time', 1.0) or 1.0) for a in real),
+                       default=0.0)
+        for a in real:
+            self._sched.append((self._cursor, a))
+        self._cursor += duration
+
+    def build_timeline(self):
+        """Turn the recorded schedule into a Timeline (begin() once)."""
+        from real_time_manim.timeline import Timeline
+        tl = Timeline(self, self.scene)
+        for start, anim in self._sched:
+            tl.add(anim, start)
+        tl.finalize()
+        return tl
 
     def _play_legacy(self, *animations, **kwargs):
         if not self.scene:
@@ -1921,6 +1999,8 @@ class MLWindow(ShapeMixin, TextMixin):
             print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps → {path}")
 
     def close(self):
+        if getattr(self, '_defer_close', False):
+            return                    # keep the window alive for on-demand frames
         self.dll.Vulkan_Shutdown()
 
     def _capture_screenshot_to_pipe(self):
