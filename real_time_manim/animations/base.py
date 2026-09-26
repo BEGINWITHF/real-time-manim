@@ -8,42 +8,21 @@ from real_time_manim.rate_functions import (
     _smooth, _linear, _double_smooth, _there_and_back,
 )
 
-DEFAULT_ANIMATION_RUN_TIME = 1.0
-DEFAULT_ANIMATION_LAG_RATIO = 0.0
-TARGET_FPS = 60
-FRAME_DURATION = 1.0 / TARGET_FPS
-
-_anim_opacity = {}
-_anim_rotation = {}
-_anim_rotation_delta = {}
-
-
-def set_anim_opacity(mob, val):
-    _anim_opacity[id(mob)] = val
-
-
-def get_anim_opacity(mob):
-    return _anim_opacity.get(id(mob), 1.0)
-
-
-def set_anim_rotation(mob, val):
-    _anim_rotation[id(mob)] = val
-
-
-def get_anim_rotation(mob):
-    return _anim_rotation.get(id(mob), 0.0)
-
-
-def set_anim_rotation_delta(mob, val):
-    _anim_rotation_delta[id(mob)] = val
-
-
-def get_anim_rotation_delta(mob):
-    return _anim_rotation_delta.get(id(mob), 0.0)
-
-
-def clear_anim_rotation_delta():
-    _anim_rotation_delta.clear()
+# Shared state/helpers live in real_time_manim.state (so the renderer no longer
+# depends on this package); re-exported here so existing imports keep working.
+from real_time_manim.state import (
+    DEFAULT_ANIMATION_RUN_TIME,
+    DEFAULT_ANIMATION_LAG_RATIO,
+    TARGET_FPS,
+    FRAME_DURATION,
+    set_anim_opacity,
+    get_anim_opacity,
+    set_anim_rotation,
+    get_anim_rotation,
+    set_anim_rotation_delta,
+    get_anim_rotation_delta,
+    clear_anim_rotation_delta,
+)
 
 
 class Animation:
