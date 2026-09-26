@@ -1,7 +1,7 @@
 import ctypes
 import math
 from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb
-from real_time_manim.state import get_anim_opacity
+from real_time_manim.animations import get_anim_opacity
 
 
 class TextMixin:

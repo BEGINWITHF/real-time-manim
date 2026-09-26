@@ -27,9 +27,6 @@ Known limitations (tracked for later phases):
 """
 
 
-from manim.animation.animation import Animation as _ManimAnimation
-
-
 #: Animation class names that are known to accumulate state across frames and
 #: therefore cannot (yet) be evaluated as a pure function of time.
 STATEFUL_ANIMATIONS = frozenset({
@@ -53,25 +50,30 @@ def is_animation_stateful(anim):
 
 
 def _is_manim_animation(anim):
-    """True for anything that follows manim's alpha-based Animation contract
-    (manim's own animations and our compat shims, which subclass them)."""
-    return isinstance(anim, _ManimAnimation)
+    return type(anim).__module__.startswith("manim")
 
 
 def evaluate_animation(anim, t):
     """Set ``anim``'s mobjects to their state at elapsed time ``t`` (seconds).
 
-    All animations follow manim's contract: ``interpolate(alpha)`` recomputes
-    the mobject from the start/target copies captured in ``begin()``.  ``t`` is
-    clamped to ``[0, run_time]``, so evaluating before an animation starts
-    yields its start state and after it ends its final state.
+    Our animations take an absolute time and derive ``alpha`` from
+    ``start_time``; manim's own animations take ``alpha`` directly.  In both
+    cases ``start_time`` is pinned to ``0`` so ``t`` is elapsed-since-prepare.
+    ``t`` is clamped to ``[0, run_time]``, so evaluating before an animation
+    starts yields its start state and after it ends its final state.
     """
     run_time = float(getattr(anim, "run_time", 1.0) or 1.0)
     local = 0.0 if t < 0 else (run_time if t > run_time else t)
     alpha = 0.0 if run_time <= 0 else local / run_time
-    if hasattr(anim, "start_time"):
-        anim.start_time = 0.0
-    anim.interpolate(alpha)
+    if _is_manim_animation(anim):
+        if hasattr(anim, "start_time"):
+            anim.start_time = 0.0
+        # manim rate-functions live inside interpolate(); pass raw alpha.
+        anim.interpolate(alpha)
+    else:
+        if hasattr(anim, "start_time"):
+            anim.start_time = 0.0
+        anim.interpolate(local)
 
 
 class Timeline:
@@ -112,7 +114,11 @@ class Timeline:
         if self._prepared:
             raise RuntimeError("Timeline already finalized")
         for entry in self._entries:
-            entry["anim"].begin()   # manim's begin() takes no time argument
+            anim = entry["anim"]
+            if _is_manim_animation(anim):
+                anim.begin()          # manim's begin() takes no time argument
+            else:
+                anim.begin(0.0)       # our animations take an absolute start time
         self.duration = max(
             (e["start"] + e["run_time"] for e in self._entries), default=0.0)
         self._prepared = True
