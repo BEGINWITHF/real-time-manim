@@ -407,14 +407,25 @@ static void FreeScreenshotBuffer(void) {
 }
 
 // Copy the last presented swapchain image into a host-visible staging buffer.
+// Reuses ONE persistent command buffer (per-frame vkAllocate/vkFreeCommandBuffers
+// was slow) and is submitted on the same queue the render used, so a single
+// wait is enough.
+static VkCommandBuffer g_ss_cmd = VK_NULL_HANDLE;
 static void CopySwapchainImageToBuffer(uint32_t img_idx, VkBuffer dst, int w, int h) {
-    VkCommandBufferAllocateInfo ai = {0};
-    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = g_cmd_pool;
-    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(g_dev, &ai, &cmd);
+    if (g_ss_cmd == VK_NULL_HANDLE) {
+        VkCommandBufferAllocateInfo ai = {0};
+        ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        ai.commandPool = g_cmd_pool;
+        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        if (vkAllocateCommandBuffers(g_dev, &ai, &g_ss_cmd) != VK_SUCCESS) {
+            g_ss_cmd = VK_NULL_HANDLE;
+            return;
+        }
+    } else {
+        vkResetCommandBuffer(g_ss_cmd, 0);
+    }
+    VkCommandBuffer cmd = g_ss_cmd;
 
     VkCommandBufferBeginInfo bi = {0};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -462,15 +473,22 @@ static void CopySwapchainImageToBuffer(uint32_t img_idx, VkBuffer dst, int w, in
     si.pCommandBuffers = &cmd;
     vkQueueSubmit(g_gfx_queue, 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(g_gfx_queue);
-    vkFreeCommandBuffers(g_dev, g_cmd_pool, 1, &cmd);
 }
 
 // Convert the BGRA swapchain readback (g_ss_map, w*h*4 bytes) into BGR.
 // The mapped GPU buffer reads slowly byte-by-byte on Intel iGPUs, so we first
 // bulk-copy the raw bytes into CPU cache (vectorized memcpy) and convert there.
+static unsigned char *g_conv_buf = NULL;
+static VkDeviceSize g_conv_size = 0;
 static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
     VkDeviceSize raw_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
-    unsigned char *raw = (unsigned char *)malloc((size_t)raw_size);
+    if (g_conv_size < raw_size) {
+        free(g_conv_buf);
+        g_conv_buf = (unsigned char *)malloc((size_t)raw_size);
+        g_conv_size = raw_size;
+    }
+    if (g_conv_buf == NULL) return;
+    unsigned char *raw = g_conv_buf;
     memcpy(raw, g_ss_map, (size_t)raw_size);
     int rowBytes = ((w * 3 + 3) & ~3);
     for (int y = 0; y < h; y++) {
@@ -482,7 +500,6 @@ static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
             dst[x * 3 + 2] = row[x * 4 + 2];  // R
         }
     }
-    free(raw);
 }
 
 // SaveScreenshot reads the swapchain framebuffer directly (independent of the
@@ -490,7 +507,6 @@ static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
 // solid white because Vulkan swapchain content is not present in the window DC.
 __declspec(dllexport) int SaveScreenshot(const char *path) {
     if (!g_is_ready || !g_swapchain) return 0;
-    vkQueueWaitIdle(g_gfx_queue);
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
     if (w <= 0 || h <= 0) return 0;
@@ -535,7 +551,6 @@ __declspec(dllexport) int SaveScreenshot(const char *path) {
 // padding). Returns 1 on success and sets *out_size to w*h*3.
 __declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int *out_size) {
     if (!g_is_ready || !g_swapchain || !out) return 0;
-    vkQueueWaitIdle(g_gfx_queue);
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
     if (w <= 0 || h <= 0) return 0;
