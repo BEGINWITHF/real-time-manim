@@ -1131,6 +1131,106 @@ class MLWindow(ShapeMixin, TextMixin):
         return mobjects
 
     def play(self, *animations, **kwargs):
+        """Timeline-driven playback (2.0.0).
+
+        Animations are scheduled on one Timeline and every frame is produced by
+        evaluating that schedule at time ``t`` -- the same O(1) ``render_at``
+        path that powers seeking.  The legacy fork-aware pipeline is preserved
+        as :meth:`_play_legacy` for reference during the migration.
+        """
+        if not self.scene:
+            return
+
+        from real_time_manim.timeline import Timeline
+        from manim.mobject.mobject import _AnimationBuilder
+
+        # resolve .animate builders
+        resolved = []
+        for anim in animations:
+            if isinstance(anim, _AnimationBuilder):
+                anim.anim_args['suspend_mobject_updating'] = False
+                resolved.append(anim.build())
+            else:
+                resolved.append(anim)
+        animations = tuple(resolved)
+
+        # Add() only makes mobjects visible; it is not a timed animation.
+        add_mobs = []
+        for anim in animations:
+            add_mobs.extend(self._extract_add_mobjects(anim))
+        real_anims = [a for a in animations if not isinstance(a, Add)]
+
+        # shared kwargs
+        if 'run_time' in kwargs:
+            for a in real_anims:
+                a.run_time = kwargs['run_time']
+        if 'rate_func' in kwargs:
+            for a in real_anims:
+                a.rate_func = kwargs['rate_func']
+
+        for mob in add_mobs:
+            set_anim_opacity(mob, 1.0)
+            if mob not in self.scene.mobjects:
+                self.scene.mobjects.append(mob)
+
+        # make sure every animated mobject is present in the scene
+        for a in real_anims:
+            m = getattr(a, 'mobject', None)
+            if m is not None and m not in self.scene.mobjects:
+                self.scene.mobjects.append(m)
+            for mob in (getattr(a, 'mobjects', None) or []):
+                if mob not in self.scene.mobjects:
+                    self.scene.mobjects.append(mob)
+            cur = getattr(a, 'cursor', None)
+            if cur is not None and cur not in self.scene.mobjects:
+                self.scene.mobjects.append(cur)
+
+        tl = Timeline(self, self.scene)
+        for a in real_anims:
+            tl.add(a, 0.0)
+        tl.finalize()
+
+        self._run_timeline(tl)
+
+    def _run_timeline(self, tl):
+        """Walk a finalized Timeline forward, drawing and capturing each frame."""
+        fps = self._fast_record_fps if self._fast_record else 30
+        dt = 1.0 / fps
+        n_frames = max(1, int(round(tl.duration * fps)))
+
+        if self._fast_record:
+            self._fast_record_sim_time = time.time()
+            self._last_frame_time = self._fast_record_sim_time - dt
+
+        for k in range(n_frames + 1):
+            frame_start = time.time()
+            tl.render_at(k * dt)
+
+            if self._fast_record:
+                if getattr(self, '_fast_record_count_only', False):
+                    pass
+                elif getattr(self, '_fast_record_pipe_mode', True):
+                    self._capture_screenshot_to_pipe()
+                else:
+                    self.screenshot(os.path.join(
+                        self._fast_record_path,
+                        f"frame_{self._fast_record_frame_idx:06d}.bmp"))
+                self._fast_record_frame_idx += 1
+            else:
+                self._capture_frame()
+                elapsed = time.time() - frame_start
+                if elapsed < dt:
+                    time.sleep(dt - elapsed)
+
+        for entry in tl._entries:
+            anim = entry['anim']
+            if hasattr(anim, 'clean_up_from_scene'):
+                try:
+                    anim.clean_up_from_scene(self.scene)
+                except Exception:
+                    pass
+
+    def _play_legacy(self, *animations, **kwargs):
         if not self.scene:
             return
 
