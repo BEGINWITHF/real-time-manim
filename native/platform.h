@@ -6,7 +6,17 @@ extern "C" {
 #endif
 
 __declspec(dllexport) int Vulkan_Init(int w, int h);
+// Same as Vulkan_Init, but the window is created WITHOUT being shown, so
+// offline work (frame export, fast record) never pops a window up.  Use
+// Vulkan_SetWindowVisible(1) later to reveal it.
+__declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden);
+// Show/hide the window after creation (SW_SHOW / SW_HIDE).
+__declspec(dllexport) void Vulkan_SetWindowVisible(int visible);
 __declspec(dllexport) int Vulkan_Tick(void);
+// Arm the next drawn frame to copy itself into the readback staging buffer
+// (before present, while the image is still ours).  Call before the tick that
+// draws the frame you want; then SaveScreenshot/SaveScreenshotRaw can read it.
+__declspec(dllexport) void Vulkan_RequestReadback(void);
 __declspec(dllexport) void Vulkan_Shutdown(void);
 
 __declspec(dllexport) void AddRect(float x, float y, float hw, float hh, float rot, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, float stroke_progress, float alpha);
