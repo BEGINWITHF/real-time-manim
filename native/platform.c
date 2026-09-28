@@ -121,6 +121,23 @@ static HICON LoadWindowIcon(void) {
 }
 
 __declspec(dllexport) int Vulkan_Init(int w, int h) {
+    return Vulkan_InitEx(w, h, 0);
+}
+
+// Show or hide the window after creation.  SW_SHOW also brings it to front so
+// an interactive viewer (FrameServer.show_frame) actually sees it.
+__declspec(dllexport) void Vulkan_SetWindowVisible(int visible) {
+    if (!g_hwnd || !IsWindow(g_hwnd)) return;
+    if (visible) {
+        ShowWindow(g_hwnd, SW_SHOW);
+        UpdateWindow(g_hwnd);
+        SetForegroundWindow(g_hwnd);
+    } else {
+        ShowWindow(g_hwnd, SW_HIDE);
+    }
+}
+
+__declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
     SetProcessDPIAware();
     g_hinst = GetModuleHandleW(NULL);
     g_aspect_ratio = (double)w / (double)h;
@@ -162,8 +179,12 @@ __declspec(dllexport) int Vulkan_Init(int w, int h) {
         return 0;
     }
 
-    ShowWindow(g_hwnd, SW_SHOW);
-    UpdateWindow(g_hwnd);
+    if (!hidden) {
+        ShowWindow(g_hwnd, SW_SHOW);
+        UpdateWindow(g_hwnd);
+    }
+    // When hidden, the window exists (and renders/presents) but is never shown,
+    // so offline frame export / fast record do not disturb the desktop.
     return 1;
 }
 

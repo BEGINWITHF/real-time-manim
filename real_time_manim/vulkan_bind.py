@@ -533,11 +533,18 @@ class BITMAPFILEHEADER(ctypes.Structure):
 class MLWindow(ShapeMixin, TextMixin):
     # When True, play() records a timeline instead of rendering (see play()).
     _schedule_mode = False
+    # Windows created while this is True are built hidden (never shown), so
+    # offline work -- frame export, fast record, batch rendering -- does not pop
+    # windows onto the desktop.  Set it around a scene run, then restore.
+    _hidden_default = False
     # Every constructed window is registered here (used by frames.FrameServer
     # to grab the window a scene created for itself).
     _registry = []
 
-    def __init__(self, w=1920, h=1080):
+    def __init__(self, w=1920, h=1080, hidden=None):
+        if hidden is None:
+            hidden = bool(getattr(type(self), '_hidden_default', False))
+        self.hidden = bool(hidden)
         self.win_w = w
         self.win_h = h
         self.frame_count = 0
@@ -696,8 +703,23 @@ class MLWindow(ShapeMixin, TextMixin):
         self.dll.SaveScreenshot.restype = ctypes.c_int
         self.dll.SaveScreenshot.argtypes = [ctypes.c_char_p]
 
-        if self.dll.Vulkan_Init(w, h) != 1:
-            raise RuntimeError("Vulkan_Init failed")
+        self.dll.Vulkan_SetWindowVisible.restype = None
+        self.dll.Vulkan_SetWindowVisible.argtypes = [ctypes.c_int]
+        self.dll.Vulkan_InitEx.restype = ctypes.c_int
+        self.dll.Vulkan_InitEx.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+
+        init_ex = getattr(self.dll, 'Vulkan_InitEx', None)
+        if self.hidden and init_ex is not None:
+            # Create the window without ever showing it: offline work (frame
+            # export, fast record) must not pop a window onto the desktop.
+            if not init_ex(w, h, 1):
+                raise RuntimeError("Vulkan_InitEx failed")
+        else:
+            if self.dll.Vulkan_Init(w, h) != 1:
+                raise RuntimeError("Vulkan_Init failed")
+            if self.hidden:
+                # Older DLL without hidden creation: hide right after building.
+                self.set_visible(False)
 
         if sys.platform == "darwin":
             font_paths = [
@@ -1997,6 +2019,24 @@ class MLWindow(ShapeMixin, TextMixin):
             self._fast_tmp_bmp = os.path.join(tempfile.gettempdir(),
                 f"manim_fast_{os.getpid()}_{id(self)}.bmp")
             print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps → {path}")
+
+    def set_visible(self, visible=True):
+        """Show or hide the window after it was created.
+
+        Used to build a window hidden (offline frame export / fast record) and
+        only reveal it when a human is meant to watch (FrameServer.show_frame).
+        """
+        visible = bool(visible)
+        fn = getattr(self.dll, 'Vulkan_SetWindowVisible', None)
+        if fn is not None:
+            fn(1 if visible else 0)
+        elif sys.platform == "win32":
+            # Older DLL without the export: hide/show by window title.
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, "Real Time Manim")
+            if hwnd:
+                user32.ShowWindow(hwnd, 5 if visible else 0)  # SW_SHOW / SW_HIDE
+        self.hidden = not visible
 
     def close(self):
         if getattr(self, '_defer_close', False):

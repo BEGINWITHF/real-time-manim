@@ -161,14 +161,23 @@ class _AutoRecord:
 
 def _run(scene, out_path: str, on_init, on_close,
          verbose: bool, overwrite: bool, count_only: bool,
-         cleanup: bool = True) -> Dict[str, Any]:
+         cleanup: bool = True, hidden: Optional[bool] = None) -> Dict[str, Any]:
     runner = _as_runner(scene)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     _guard_overwrite(out_path, overwrite, count_only)
     rec = _AutoRecord(out_path, on_init, on_close, verbose=verbose)
-    with rec:
-        runner()
+    # ``hidden`` decides whether the scene's windows are *created* hidden (never
+    # shown, so nothing pops onto the desktop) -- not merely hidden afterwards.
+    from real_time_manim.vulkan_bind import MLWindow
+    prev_hidden = MLWindow._hidden_default
+    if hidden is not None:
+        MLWindow._hidden_default = bool(hidden)
+    try:
+        with rec:
+            runner()
+    finally:
+        MLWindow._hidden_default = prev_hidden
     # Rendering leaves transient manim media/Tex output behind; clear it for the
     # caller so they never have to remember to.  Opt out via cleanup=False.
     if cleanup:
@@ -260,7 +269,8 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
     fps:
         Output frame rate passed to ``enable_fast_record``.
     hidden:
-        Hide the Vulkan window while capturing (default True).
+        Build the window hidden and never show it (default True), so an offline
+        capture never pops a window onto the desktop.  Pass False to watch.
     count_only:
         Probe mode — count frames without capturing or GPU-rendering.
     segment:
@@ -288,4 +298,4 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
 
     return _run(scene, out_path if out_path is not None else _default_out_path(),
                 on_init, on_close, verbose, overwrite, count_only=count_only,
-                cleanup=cleanup)
+                cleanup=cleanup, hidden=hidden)

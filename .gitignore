@@ -21,6 +21,17 @@ downloaded_videos/
 media/
 tex_cache/
 
+# ---- MSVC build byproducts (build_msvc.bat) ----
+*.obj
+real_time_manim/vulkan_core.lib
+real_time_manim/vulkan_core.exp
+
+# ---- Local debug/bench scratch (not part of the project) ----
+_hidden_check/
+
+# ---- Local syntax-comparison scratch (not part of the project) ----
+syntax_compare/
+
 # ---- Editor / OS ----
 .vscode/
 .idea/

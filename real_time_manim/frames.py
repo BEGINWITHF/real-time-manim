@@ -43,17 +43,23 @@ class FrameServer:
     """A prepared scene whose every frame can be produced on demand."""
 
     def __init__(self, scene_cls, width=1920, height=1080,
-                 max_workers=4, max_pending=32):
+                 max_workers=4, max_pending=32, hidden=True):
         from real_time_manim.vulkan_bind import MLWindow
 
         prev_mode = MLWindow._schedule_mode
+        prev_hidden = MLWindow._hidden_default
         MLWindow._schedule_mode = True          # play() records, never draws
+        # Build the scene's windows hidden: preparing a FrameServer, exporting
+        # frames and grabbing pixels are offline work and must not pop a window
+        # up.  Only show_frame() reveals it (see set_visible below).
+        MLWindow._hidden_default = bool(hidden)
         _LAST_WINDOWS.clear()
         try:
             self.scene = scene_cls()
             self.scene.construct()
         finally:
             MLWindow._schedule_mode = prev_mode
+            MLWindow._hidden_default = prev_hidden
         if not _LAST_WINDOWS:
             raise RuntimeError("scene did not create an MLWindow")
         self.window = _LAST_WINDOWS[-1]
@@ -73,7 +79,12 @@ class FrameServer:
             ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(ctypes.c_int)]
 
     def _read_pixels(self):
-        """Read the window's current framebuffer into RAM (BGR). Main thread."""
+        """Read the window's current framebuffer into RAM (BGR). Main thread.
+
+        Reads the swapchain image through a persistent staging buffer; works on
+        a hidden window too, since it does not depend on the window being
+        composited on screen.
+        """
         w, h = self.window.win_w, self.window.win_h
         row_bytes = ((w * 3 + 3) & ~3)
         size = row_bytes * h
