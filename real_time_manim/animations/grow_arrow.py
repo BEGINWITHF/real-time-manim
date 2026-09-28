@@ -1,5 +1,5 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
-from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity
+from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity, color_to_rgb
 import numpy as np
 
 
@@ -36,7 +36,7 @@ class GrowArrow(Animation):
         mob._grow_scale = 0.0
         mob._grow_point = self._grow_point
         if self.point_color:
-            self._pc = (self.point_color[0], self.point_color[1], self.point_color[2])
+            self._pc = color_to_rgb(self.point_color)
             mob.set_color(self.point_color)
 
     def interpolate(self, t):
