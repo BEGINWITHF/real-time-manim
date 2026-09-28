@@ -13,24 +13,38 @@ If a build loads the same font blob once per window, window 13 exhausts the pool
 and every font load fails.  The dev tree dedupes identical blobs, so it should
 survive -- this script says which one you are running.
 
-Usage: python tests/verify_window_churn.py [count]     (default 15)
+Usage: python tests/verify_window_churn.py [count]              # dev tree
+       venv21/Scripts/python.exe <this file> --installed        # installed package
 """
 import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, REPO)
+if "--installed" not in sys.argv:
+    sys.path.insert(0, REPO)      # dev tree; --installed tests whatever is installed
+else:
+    sys.argv.remove("--installed")
 
-from real_time_manim.vulkan_bind import MLWindow
+from real_time_manim.vulkan_bind import MLWindow   # noqa: E402
 
 COUNT = int(sys.argv[1]) if len(sys.argv) > 1 else 15
+print("RTM from:", __import__("real_time_manim").__file__, flush=True)
 
 
 def main():
     ok = 0
+    import inspect
+    supports_hidden = "hidden" in inspect.signature(MLWindow.__init__).parameters
     for i in range(1, COUNT + 1):
         try:
-            win = MLWindow(320, 240, hidden=True)
+            win = MLWindow(320, 240, **({"hidden": True} if supports_hidden else {}))
+            if not supports_hidden:
+                # Pre-2.0 builds cannot create a hidden window; ask for the
+                # count-only fast-record probe, which hides it after the fact.
+                try:
+                    win.enable_fast_record("", count_only=True, hidden=True)
+                except Exception:
+                    pass
             win._defer_close = False
             win.close()
             ok += 1
