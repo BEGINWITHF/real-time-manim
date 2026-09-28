@@ -1,9 +1,22 @@
 import math
 import numpy as np
 from functools import partialmethod
-from manim import VGroup, Group, Rectangle, Circle, YELLOW, Text
+from manim import VGroup, Group, Rectangle, Circle, YELLOW, Text, ManimColor
 
 TAU = 2.0 * math.pi
+
+
+def color_to_rgb(color):
+    """Normalize any Manim color spec to an ``(r, g, b)`` tuple of 0..1 floats.
+
+    Accepts everything manim accepts: ``ManimColor``, ``'#33AADD'``, ``'blue'``,
+    ``(1, 0, 0)``.  Colour arguments used to be indexed blindly (``color[0]``),
+    which for a hex string silently took the characters of the string -- or
+    crashed on ``float('#')``.
+    """
+    return tuple(float(c) for c in ManimColor(color).to_rgb())
+
+
 from real_time_manim.rate_functions import (
     _smooth, _linear, _double_smooth, _there_and_back,
 )
