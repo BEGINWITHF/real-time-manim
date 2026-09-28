@@ -1,6 +1,6 @@
 import ctypes
 import math
-from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb
+from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb, get_opacity
 from real_time_manim.animations import get_anim_opacity
 
 
@@ -190,7 +190,7 @@ class TextMixin:
             except Exception:
                 sr, sg, sb = 1, 1, 1
                 sa = 1.0
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
             sw_manim = 2.0
             try:
                 raw = mob.get_stroke_width()
@@ -331,7 +331,7 @@ class TextMixin:
                 if len(frgbas) > 0:
                     fo = float(frgbas[0][3])
             except Exception:
-                fo = mob.get_fill_opacity() if hasattr(mob, 'get_fill_opacity') else 0.0
+                fo = get_opacity(mob, 'fill', 0.0)
             if fo > 0.01 and n >= 3:
                 fr, fg, fb = 0, 0, 0
                 try:
@@ -424,7 +424,7 @@ class TextMixin:
         try:
             so = float(mob.stroke_rgbas[:, 3].max())
         except Exception:
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
         if so <= 0:
             try:
                 for fm in mob.family_members_with_points():

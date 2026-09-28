@@ -1,7 +1,7 @@
 import ctypes
 import math
 import numpy as np
-from real_time_manim.vulkan_util import manim_to_screen, rotate_point, get_fill_rgb, get_fill_rgb_raw, get_stroke_rgb, get_stroke_w
+from real_time_manim.vulkan_util import manim_to_screen, rotate_point, get_fill_rgb, get_fill_rgb_raw, get_stroke_rgb, get_stroke_w, get_opacity
 from real_time_manim.animations import get_anim_rotation
 
 
@@ -50,11 +50,11 @@ class ShapeMixin:
         try:
             fo = float(mob.fill_rgbas[:, 3].max())
         except Exception:
-            fo = mob.get_fill_opacity() if hasattr(mob, 'get_fill_opacity') else 1.0
+            fo = get_opacity(mob, 'fill', 1.0)
         try:
             so = float(mob.stroke_rgbas[:, 3].max())
         except Exception:
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if fo <= 0 and so <= 0:
             return
@@ -117,11 +117,11 @@ class ShapeMixin:
         try:
             fo = float(mob.fill_rgbas[:, 3].max())
         except Exception:
-            fo = mob.get_fill_opacity() if hasattr(mob, 'get_fill_opacity') else 1.0
+            fo = get_opacity(mob, 'fill', 1.0)
         try:
             so = float(mob.stroke_rgbas[:, 3].max())
         except Exception:
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if fo <= 0 and so <= 0:
             return
@@ -184,11 +184,11 @@ class ShapeMixin:
         try:
             fo = float(mob.fill_rgbas[:, 3].max())
         except Exception:
-            fo = mob.get_fill_opacity() if hasattr(mob, 'get_fill_opacity') else 1.0
+            fo = get_opacity(mob, 'fill', 1.0)
         try:
             so = float(mob.stroke_rgbas[:, 3].max())
         except Exception:
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if fo <= 0 and so <= 0:
             return
@@ -250,11 +250,11 @@ class ShapeMixin:
         try:
             fo = float(mob.fill_rgbas[:, 3].max())
         except Exception:
-            fo = mob.get_fill_opacity() if hasattr(mob, 'get_fill_opacity') else 1.0
+            fo = get_opacity(mob, 'fill', 1.0)
         try:
             so = float(mob.stroke_rgbas[:, 3].max())
         except Exception:
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if fo <= 0 and so <= 0:
             return
@@ -418,7 +418,7 @@ class ShapeMixin:
         try:
             fo = float(mob.fill_rgbas[:, 3].max())
         except Exception:
-            fo = mob.get_fill_opacity() if hasattr(mob, 'get_fill_opacity') else 1.0
+            fo = get_opacity(mob, 'fill', 1.0)
         if fo <= 0:
             return
         r, g, b = self._color(mob, a)
@@ -497,7 +497,7 @@ class ShapeMixin:
         try:
             fo = float(mob.fill_rgbas[:, 3].max())
         except Exception:
-            fo = mob.get_fill_opacity() if hasattr(mob, 'get_fill_opacity') else 1.0
+            fo = get_opacity(mob, 'fill', 1.0)
         if progress <= 0 and not has_bounds:
             return
         if fo <= 0:
@@ -572,7 +572,7 @@ class ShapeMixin:
                 sx, sy, fr, fg, fb, 0, 0, 0, 0.0,
                 len(verts), arr, 0 if has_bounds else progress, alpha * fo, 1
             )
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
             if so > 0:
                 n = len(verts)
                 edge_lens = []
