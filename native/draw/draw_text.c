@@ -52,8 +52,20 @@ __declspec(dllexport) int Text_LoadFont(const unsigned char *data, int data_len)
             return 1;
         }
     }
-    if (font_count >= MAX_FONTS) return 0;
-    if (data_len > (int)sizeof(font_data[font_count])) return 0;
+    if (font_count >= MAX_FONTS) {
+        // MAX_FONTS *distinct* blobs per process; identical blobs are deduped
+        // above, so a multi-window batch of the same font never lands here.
+        // Each slot is 32 MiB to leave room for large CJK fonts.
+        fprintf(stderr, "[Text_LoadFont] font pool full (%d/%d distinct fonts, "
+                        "new blob is %d bytes) -- raise MAX_FONTS in draw_text.c\n",
+                font_count, MAX_FONTS, data_len);
+        return 0;
+    }
+    if (data_len > (int)sizeof(font_data[font_count])) {
+        fprintf(stderr, "[Text_LoadFont] font blob too large: %d > %d bytes\n",
+                data_len, (int)sizeof(font_data[font_count]));
+        return 0;
+    }
 
     memcpy(font_data[font_count], data, data_len);
     memset(&fonts[font_count], 0, sizeof(stbtt_fontinfo));

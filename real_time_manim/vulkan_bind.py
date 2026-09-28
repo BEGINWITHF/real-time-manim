@@ -2060,7 +2060,19 @@ class MLWindow(ShapeMixin, TextMixin):
     def close(self):
         if getattr(self, '_defer_close', False):
             return                    # keep the window alive for on-demand frames
+        self._unregister()
         self.dll.Vulkan_Shutdown()
+
+    def _unregister(self):
+        """Drop this window from the class registry.
+
+        Every constructed MLWindow registers itself there; without this a process
+        that opens many windows (batch runs, harnesses) keeps them all alive.
+        Pure bookkeeping -- safe to call in any state, no GPU involved.
+        """
+        reg = type(self)._registry
+        while self in reg:
+            reg.remove(self)
 
     def _capture_screenshot_to_pipe(self):
         """SaveScreenshot → parse BMP → pipe BGR to ffmpeg."""

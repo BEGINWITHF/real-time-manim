@@ -41,6 +41,9 @@ static int g_draw_cmd_count = 0;
 
 static double g_aspect_ratio = 16.0 / 9.0;
 static int g_min_width = 320;
+// Window icon loaded for the current window; destroyed in Vulkan_Shutdown so a
+// long batch does not leak one GDI/USER handle per window.
+static HICON g_win_icon = NULL;
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     (void)lpvReserved;
@@ -120,7 +123,12 @@ static HICON LoadWindowIcon(void) {
         wcscat_s(ico, MAX_PATH, L"logo.ico");
         HICON icon = (HICON)LoadImageW(NULL, ico, IMAGE_ICON, 0, 0,
                                        LR_LOADFROMFILE | LR_DEFAULTSIZE);
-        if (icon) return icon;
+        if (icon) {
+            // Keep it so Vulkan_Shutdown can DestroyIcon it: a batch that opens
+            // many windows would otherwise leak one GDI/USER handle per window.
+            g_win_icon = icon;
+            return icon;
+        }
     }
     return NULL;
 }
@@ -358,6 +366,10 @@ __declspec(dllexport) void Vulkan_Shutdown(void) {
         g_hwnd = NULL;
     }
     UnregisterClassW(L"ManimVulkanClass", g_hinst);
+    if (g_win_icon) {
+        DestroyIcon(g_win_icon);      // else every window leaks a GDI/USER handle
+        g_win_icon = NULL;
+    }
     // Drop any WM_QUIT left over from this window (e.g. the user hit Alt+F4),
     // so the next window in this process starts with a clean message queue.
     MSG quit;
