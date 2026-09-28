@@ -207,6 +207,7 @@ def main():
             print(f"Running: {desc}")
             _restore_tex_cache()
             scene = cls()
+            scene.setup()
             scene.construct()
             _save_tex_cache()
             _clean_media()

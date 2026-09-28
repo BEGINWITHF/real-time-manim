@@ -38,7 +38,7 @@ def _safe(desc):
 def _runner_script(num, desc, cls_name):
     out = os.path.join(OUT_DIR, f"{num.zfill(2)}_{_safe(desc)}.mp4")
     return (
-        "import sys, os, shutil\n"
+        "import sys, os, shutil; from real_time_manim.record import scene_lifecycle\n"
         f"sys.path.insert(0, {PROJECT!r})\n"
         "import real_time_manim.vulkan_bind as vb\n"
         f"from scenes.demo_scene import {cls_name}\n"
@@ -60,7 +60,7 @@ def _runner_script(num, desc, cls_name):
         "def pc(s):\n"
         "    s._finish_fast_record(); oc(s)\n"
         "vb.MLWindow.__init__ = pi; vb.MLWindow.close = pc\n"
-        f"{cls_name}().construct()\n"
+        f"scene_lifecycle({cls_name}())\n"
         "print('SCENE_DONE')\n"
     )
 

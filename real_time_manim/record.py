@@ -50,12 +50,25 @@ def _default_out_path() -> str:
 # scene normalisation
 # --------------------------------------------------------------------------
 
+def scene_lifecycle(scene) -> None:
+    """Run a scene the way Manim does: ``setup()`` first, then ``construct()``.
+
+    Manim's own ``Scene.render()`` calls ``setup()`` before ``construct()``.
+    RTM used to call ``construct()`` alone, so everything a scene prepares in
+    ``setup()`` was missing -- ``LinearTransformationScene`` (``moving_vectors``),
+    ``ZoomedScene`` (``zoomed_display``), ``MovingCameraScene`` (``camera.frame``)
+    and any user ``setup()`` hook.
+    """
+    scene.setup()
+    scene.construct()
+
+
 def _as_runner(scene: Union[type, Any, Callable[[], None]]) -> Callable[[], None]:
     """Turn a Scene subclass / Scene instance / callable into a no-arg runner.
 
     Scenes in real-time-manim drive themselves via ``construct()`` and close
     their own :class:`MLWindow`, so the runner is just: create (if needed) and
-    call ``construct()``.
+    run the scene's lifecycle.
     """
     if isinstance(scene, type):
         if not hasattr(scene, "construct"):
@@ -63,9 +76,9 @@ def _as_runner(scene: Union[type, Any, Callable[[], None]]) -> Callable[[], None
                 "scene looks like a class but has no construct(); pass a Scene "
                 "subclass, a Scene instance, or a no-arg callable."
             )
-        return lambda: scene().construct()
+        return lambda: scene_lifecycle(scene())
     if hasattr(scene, "construct"):
-        return scene.construct
+        return lambda: scene_lifecycle(scene)
     if callable(scene):
         return scene
     raise TypeError(
