@@ -557,6 +557,40 @@ def _setup_anim_scene(anim, scene):
     return getattr(anim, "scene", None) is scene
 
 
+def _drive_mobject_updaters(scene, dt, patch_group=None, unpatch_group=None):
+    """Run every mobject updater on ``scene``, as manim does once per frame.
+
+    Updaters are *stateful* -- they accumulate over frames -- so this is only
+    meaningful while playing forward.  A seek should pass ``dt=0`` to re-anchor
+    instead of replaying history, which is what ``Timeline`` does.
+
+    ``patch_group``/``unpatch_group`` are optional hooks for the VGroup rotate
+    machinery, which lives in ``play()`` as closures over its per-frame state
+    (``_anim_alpha``, ``_prev_vg_rotation``); the play loop passes them, the
+    timeline path does not need them.
+    """
+    if patch_group is not None:
+        for mob in scene.mobjects:
+            if isinstance(mob, (VGroup, Group)) and getattr(mob, 'updaters', None):
+                patch_group(mob)
+
+    for mob in reversed(scene.mobjects):
+        if getattr(mob, 'updaters', None) and not getattr(mob, 'updating_suspended', False):
+            for updater in mob.updaters:
+                nparams = len(inspect.signature(updater).parameters)
+                if nparams == 0:
+                    updater()
+                elif nparams == 1:
+                    updater(mob)
+                else:
+                    updater(mob, dt)
+
+    if unpatch_group is not None:
+        for mob in scene.mobjects:
+            if isinstance(mob, (VGroup, Group)):
+                unpatch_group(mob)
+
+
 class MLWindow(ShapeMixin, TextMixin):
     # When True, play() records a timeline instead of rendering (see play()).
     _schedule_mode = False
@@ -1854,26 +1888,9 @@ class MLWindow(ShapeMixin, TextMixin):
                                 sub.points = (sub.points - pivot) @ rot_matrix.T + pivot
                     _prev_vg_rotation[id(mob)] = vg_rot
 
-            for mob in self.scene.mobjects:
-                if isinstance(mob, (VGroup, Group)) and getattr(mob, 'updaters', None):
-                    _patch_vgroup(mob)
-
-            for mob in reversed(self.scene.mobjects):
-                if hasattr(mob, 'updaters') and mob.updaters and not getattr(mob, 'updating_suspended', False):
-                    for updater in mob.updaters:
-                        nparams = len(inspect.signature(updater).parameters)
-                        if nparams == 0:
-                            updater()
-                        elif nparams == 1:
-                            updater(mob)
-                        else:
-                            updater(mob, dt)
+            _drive_mobject_updaters(self.scene, dt, _patch_vgroup, _unpatch_vgroup)
 
             clear_anim_rotation_delta()
-
-            for mob in self.scene.mobjects:
-                if isinstance(mob, (VGroup, Group)) and id(mob) in _orig_vgroup_rotate:
-                    _unpatch_vgroup(mob)
 
             if self._fast_record:
                 seg = self._fast_record_segment

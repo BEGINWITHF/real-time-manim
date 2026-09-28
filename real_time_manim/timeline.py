@@ -87,6 +87,7 @@ class Timeline:
         self._entries = []          # {anim, start, run_time, stateful}
         self._prepared = False
         self.duration = 0.0
+        self._last_t = None        # last rendered time, for updater dt re-anchoring
 
     def add(self, anim, start=0.0):
         """Schedule ``anim`` to begin at global time ``start`` (seconds)."""
@@ -116,6 +117,13 @@ class Timeline:
         for entry in self._entries:
             anim = entry["anim"]
             if _is_manim_animation(anim):
+                # manim's Scene.play() gives every animation its scene before
+                # begin(): introducers register their mobject and .scene is
+                # stored.  manim-native classes such as AddTextWordByWord read
+                # it, so the timeline path has to do the same (lazy import: this
+                # module is imported by vulkan_bind).
+                from real_time_manim.vulkan_bind import _setup_anim_scene
+                _setup_anim_scene(anim, self.scene)
                 anim.begin()          # manim's begin() takes no time argument
             else:
                 anim.begin(0.0)       # our animations take an absolute start time
@@ -153,6 +161,15 @@ class Timeline:
         frame (see ``MLWindow.request_readback``).
         """
         self.evaluate(t)
+        # Mobject updaters are stateful, so they accumulate only while the
+        # timeline moves forward; a seek (first frame, same t, or backwards)
+        # re-anchors with dt=0 instead of replaying history.  The animation
+        # state itself stays a pure function of t, so random access is intact.
+        dt = 0.0 if (self._last_t is None or t <= self._last_t) else t - self._last_t
+        if dt > 0.0:
+            from real_time_manim.vulkan_bind import _drive_mobject_updaters
+            _drive_mobject_updaters(self.scene, dt)
+        self._last_t = t
         self.window.sync(self.scene)
         if readback:
             self.window.request_readback()
