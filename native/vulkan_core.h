@@ -67,4 +67,11 @@ void update_vertex_buffer(const void *data, VkDeviceSize size);
 
 int Render_DrawFrame(uint32_t vertex_count);
 
+// Called by the renderer from inside the frame's command buffer (after the
+// render pass, before present) to perform a requested readback copy -- the
+// image is still ours at that point, so the pixels are well defined.  Returns 1
+// when it copied.  Implemented per platform (platform.c / platform_mac.m).
+int Platform_RecordReadbackCopy(VkCommandBuffer cmd, uint32_t img_idx,
+                                uint32_t frame_idx);
+
 #endif

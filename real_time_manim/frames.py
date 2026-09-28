@@ -8,10 +8,17 @@ without drawing); after that every frame is O(1) -- just draw it at time ``t``.
     from real_time_manim.frames import FrameServer
     from scenes.demo_scene import DemoCreate
 
-    fs = FrameServer(DemoCreate)        # build + record the timeline ONCE
-    fs.show_frame(1.5)                  # draw t=1.5 in the window (~10 ms)
-    fs.save_frame(1.5, "f.png")         # draw + readback + write (PNG)
+    fs = FrameServer(DemoCreate)        # build + record the timeline ONCE (no window)
+    fs.show_frame(1.5)                  # draw t=1.5 in the window (~10 ms, and shows it)
+    fs.save_frame(1.5, "f.png")         # draw + readback + write (PNG), still no window
     fs.close()
+
+Visibility
+----------
+A FrameServer builds its scene's window **hidden** (``hidden=True``), so
+preparing, exporting and grabbing never pop a window onto the desktop.
+``show_frame`` is the one call that reveals it (``MLWindow.set_visible``);
+``hidden=False`` builds a visible window if you want to watch from the start.
 
 Saving many frames without blocking
 -----------------------------------
@@ -96,16 +103,27 @@ class FrameServer:
         return bytes(buf), w, h, row_bytes
 
     # -- frames -------------------------------------------------------------
-    def render_frame(self, t):
-        """Draw frame at ``t`` into the window.  ~10 ms, O(1) in t."""
-        self.timeline.render_at(t)
+    def render_frame(self, t, readback=False):
+        """Draw frame at ``t`` into the window.  ~10 ms, O(1) in t.
+
+        Works on a hidden window too -- rendering never needs to be on screen.
+        With ``readback=True`` the frame also copies itself out before present,
+        so ``_read_pixels()`` right after returns exactly this frame.
+        """
+        self.timeline.render_at(t, readback=readback)
 
     def show_frame(self, t):
+        """Draw frame ``t`` and make sure the window is on screen to watch."""
+        self.window.set_visible(True)
         self.render_frame(t)
 
     def grab(self, t):
-        """Render ``t`` and read the pixels into RAM.  Returns (bytes,w,h,rb)."""
-        self.render_frame(t)
+        """Render ``t`` and read the pixels into RAM.  Returns (bytes,w,h,rb).
+
+        The frame is drawn with a readback request, so the pixels are the ones
+        this call drew -- not a previously presented image.
+        """
+        self.render_frame(t, readback=True)
         return self._read_pixels()
 
     def save_frame(self, t, path, quality=6):

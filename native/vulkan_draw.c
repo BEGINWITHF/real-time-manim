@@ -161,6 +161,13 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
     }
 #endif
 
+#ifdef _WIN32
+    // Windows readback: copy the image into the staging buffer inside this
+    // command buffer, before present -- afterwards the presentation engine owns
+    // the image and reading it gives undefined (observed: stale/black) pixels.
+    Platform_RecordReadbackCopy(cmd_buf, img_idx, g_current_frame);
+#endif
+
     vkEndCommandBuffer(cmd_buf);
 }
 

@@ -1859,9 +1859,15 @@ class MLWindow(ShapeMixin, TextMixin):
                     if getattr(self, '_fast_record_count_only', False):
                         pass  # count only — no GPU
                     else:
+                        # Queue this frame's state first, then draw + capture it:
+                        # tick() renders whatever is queued, so drawing before
+                        # sync() would capture the previous frame.  The readback
+                        # request must also be armed before the draw, so the
+                        # frame copies itself out while it still owns the image.
+                        self.sync(self.scene)
+                        self.request_readback()
                         if not self.tick():
                             break
-                        self.sync(self.scene)
                         if getattr(self, '_fast_record_pipe_mode', True):
                             self._capture_screenshot_to_pipe()
                         else:
@@ -1872,9 +1878,10 @@ class MLWindow(ShapeMixin, TextMixin):
                 
                 self._fast_record_frame_idx += 1
             else:
+                self.sync(self.scene)
+                self.request_readback()
                 if not self.tick():
                     break
-                self.sync(self.scene)
                 self._capture_frame()
 
             frame_count += 1
@@ -1906,6 +1913,18 @@ class MLWindow(ShapeMixin, TextMixin):
     def screenshot(self, path):
         path_bytes = path.encode('utf-8') if isinstance(path, str) else path
         return self.dll.SaveScreenshot(path_bytes)
+
+    def request_readback(self):
+        """Arm the next drawn frame to copy itself for readback.
+
+        Must be called *before* the tick that draws the frame you want.  A
+        presented swapchain image is owned by the presentation engine, so
+        copying it afterwards returns undefined pixels; the engine copies the
+        frame while it still owns it instead.
+        """
+        fn = getattr(self.dll, 'Vulkan_RequestReadback', None)
+        if fn is not None:
+            fn()
 
     def screenshot_printwindow(self, path):
         if sys.platform != "win32":

@@ -140,14 +140,26 @@ class Timeline:
         for entry in self._entries:
             evaluate_animation(entry["anim"], t - entry["start"])
 
-    def render_at(self, t):
-        """Evaluate at ``t`` and draw one frame into the window.  O(1) in ``t``."""
+    def render_at(self, t, readback=False):
+        """Evaluate at ``t``, draw that state, and present it.  O(1) in ``t``.
+
+        Order matters: the renderer draws whatever is queued, so the state at
+        ``t`` must be queued (``sync``) *before* the frame is drawn (``tick``).
+        Drawing first presents the previous call's state, which is what made a
+        readback after ``render_at(t)`` return the previous frame.
+
+        With ``readback=True`` the frame also copies itself into the readback
+        buffer before it is presented, so a following read returns exactly this
+        frame (see ``MLWindow.request_readback``).
+        """
         self.evaluate(t)
-        self.window.tick()
         self.window.sync(self.scene)
+        if readback:
+            self.window.request_readback()
+        self.window.tick()
 
     def screenshot_at(self, t, path):
-        self.render_at(t)
+        self.render_at(t, readback=True)
         return self.window.screenshot(path)
 
     def render_mp4(self, path, fps=60, duration=None, realtime=False):
@@ -168,7 +180,7 @@ class Timeline:
             for k in range(n_frames):
                 t = k / float(fps)
                 frame_start = time.perf_counter()
-                self.render_at(t)
+                self.render_at(t, readback=True)
                 self.window.screenshot(os.path.join(tmpdir, f"f_{k:05d}.bmp"))
                 if realtime:
                     left = (1.0 / fps) - (time.perf_counter() - frame_start)
