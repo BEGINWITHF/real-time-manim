@@ -62,8 +62,9 @@ class FrameServer:
         MLWindow._hidden_default = bool(hidden)
         _LAST_WINDOWS.clear()
         try:
+            from real_time_manim.record import scene_lifecycle
             self.scene = scene_cls()
-            self.scene.construct()
+            scene_lifecycle(self.scene)
         finally:
             MLWindow._schedule_mode = prev_mode
             MLWindow._hidden_default = prev_hidden
