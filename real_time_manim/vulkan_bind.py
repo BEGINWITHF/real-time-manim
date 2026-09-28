@@ -530,6 +530,33 @@ class BITMAPFILEHEADER(ctypes.Structure):
     ]
 
 
+def _setup_anim_scene(anim, scene):
+    """Give a manim animation its scene, the way manim's ``Scene.play`` does.
+
+    manim calls ``Animation._setup_scene(scene)`` before ``begin()``: it stores
+    ``anim.scene`` (``AddTextWordByWord`` reads it, and so do other manim
+    classes) and, for introducers, adds the animation's mobject to the scene.
+    RTM drives manim's animation classes directly, so it has to do the same --
+    otherwise such an animation dies with "has no attribute 'scene'".
+
+    Returns True when the animation learned about the scene.
+    """
+    setup = getattr(anim, "_setup_scene", None)
+    if callable(setup):
+        try:
+            setup(scene)
+        except Exception:
+            pass
+    # manim 0.21's hook stores anim.scene itself; 0.20's only registers
+    # introducers' mobjects, so make sure the attribute is there either way.
+    if getattr(anim, "scene", None) is None:
+        try:
+            anim.scene = scene
+        except Exception:
+            return False
+    return getattr(anim, "scene", None) is scene
+
+
 class MLWindow(ShapeMixin, TextMixin):
     # When True, play() records a timeline instead of rendering (see play()).
     _schedule_mode = False
@@ -1616,6 +1643,7 @@ class MLWindow(ShapeMixin, TextMixin):
                 # by the previous animation's target setup at line 513.
                 if getattr(a, 'mobject', None) is not None:
                     set_anim_opacity(a.mobject, 1.0)
+                _setup_anim_scene(a, self.scene)
                 a.start_time = self._fast_record_sim_time if self._fast_record else time.time()
                 a.begin()
                 tm = getattr(a, 'target_mobject', None)
