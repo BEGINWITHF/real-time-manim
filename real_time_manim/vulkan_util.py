@@ -79,3 +79,28 @@ def get_stroke_w(mob):
     except Exception:
         pass
     return 0.0
+
+
+def get_opacity(mob, kind="stroke", default=1.0):
+    """Return a mobject's stroke/fill opacity, or ``default`` when it has none.
+
+    ``hasattr(mob, 'get_fill_opacity')`` is **not** a usable guard: manim defines
+    that getter on every ``Mobject``, but it only forwards to
+    ``self.fill_opacity`` -- which ``PMobject`` and parts of the ``ImageMobject``
+    family do not have.  So the check passes and the call raises AttributeError
+    halfway through rendering (PointCloudDot: no ``stroke_opacity``,
+    ImageMobjectFromCamera: no ``fill_opacity``).  Ask for the attribute itself,
+    and fall back to the default if it (or the getter) is missing or unusable.
+    """
+    value = getattr(mob, "%s_opacity" % kind, None)
+    if value is None:
+        getter = getattr(mob, "get_%s_opacity" % kind, None)
+        if getter is not None:
+            try:
+                value = getter()
+            except Exception:
+                value = None
+    try:
+        return default if value is None else float(value)
+    except (TypeError, ValueError):
+        return default
