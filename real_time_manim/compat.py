@@ -32,13 +32,25 @@ _APPLIED = False
 
 
 def _shim_apply_pointwise_function_to_center() -> bool:
-    """1. Missing ``mobject`` argument in the super() call."""
-    from manim.animation.transform import ApplyPointwiseFunction, ApplyPointwiseFunctionToCenter
+    """1. Missing ``mobject`` argument in the super() call.
 
-    def _init(self, function, mobject, **kwargs):
+    Upstream calls ``super().__init__(mobject.move_to, **kwargs)``, which drops
+    ``mobject`` entirely -- so it cannot even construct.  The fix is *not* to pass
+    ``function``/``mobject`` on to ``ApplyPointwiseFunction`` (that leaves
+    ``method = mobject.apply_function``, and ``begin()`` then hands that bound
+    method a bare coordinate, giving "numpy.ndarray object is not callable").
+    What the class actually needs is ``ApplyMethod`` with the bound ``move_to``:
+    ``begin()`` supplies the centre as its single argument, so ``create_target``
+    ends up calling ``mobject.move_to(centre)``.
+    """
+    from manim.animation.transform import (
+        DEFAULT_POINTWISE_FUNCTION_RUN_TIME, ApplyMethod, ApplyPointwiseFunctionToCenter,
+    )
+
+    def _init(self, function, mobject,
+              run_time=DEFAULT_POINTWISE_FUNCTION_RUN_TIME, **kwargs):
         self.function = function
-        # upstream: super().__init__(mobject.move_to, **kwargs)  <- drops mobject
-        ApplyPointwiseFunction.__init__(self, mobject.move_to, mobject, **kwargs)
+        ApplyMethod.__init__(self, mobject.move_to, run_time=run_time, **kwargs)
 
     ApplyPointwiseFunctionToCenter.__init__ = _init
     return True
