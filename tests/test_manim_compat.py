@@ -24,17 +24,24 @@ def test_shims_are_idempotent():
     assert apply_manim_shims() == {"already applied": True}
 
 
-def test_apply_pointwise_function_to_center_constructs():
+def test_apply_pointwise_function_to_center_runs():
     """Upstream: super().__init__(mobject.move_to, **kwargs) drops `mobject`.
 
-    Only construction is asserted: with the shim the class exists and holds its
-    mobject, which is exactly what upstream's TypeError prevented.
+    Construction *and* interpolation, because a shim that only fixes construction
+    (leaving ``method = mobject.apply_function``) makes ``begin()`` hand that bound
+    method a bare coordinate -> "numpy.ndarray object is not callable".
     """
+    from manim import Square
     from manim.animation.transform import ApplyPointwiseFunctionToCenter
 
-    anim = ApplyPointwiseFunctionToCenter(lambda p: p, Square())
-    assert anim.mobject is not None
-    assert anim.function is not None
+    mob = Square()
+    anim = ApplyPointwiseFunctionToCenter(lambda p: p, mob)
+    anim.begin()
+    anim.interpolate(0.5)
+    # begin() supplies the centre as the single argument, so the method the
+    # animation applies has to be the bound `move_to`
+    assert anim.method.__name__ == "move_to"
+    assert anim.method.__self__ is mob
 
 
 def test_movement_module_has_vmobject():
