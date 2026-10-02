@@ -1208,7 +1208,7 @@ class MLWindow(ShapeMixin, TextMixin):
         elif isinstance(mob, Arrow):
             self._send_arrow(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, DashedLine):
-            self._send_dashed_line(mob, a, w, h)
+            self._send_dashed_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Line):
             self._send_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Arc):
