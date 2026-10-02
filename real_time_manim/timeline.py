@@ -50,6 +50,19 @@ def is_animation_stateful(anim):
 
 
 def _is_manim_animation(anim):
+    """True for manim's own animations *and* user subclasses of them.
+
+    Matching on the module name missed ``class MyFade(FadeIn)`` -- defined in the
+    user's own module -- which then got RTM's ``begin(t)`` signature and raised
+    "begin() takes 1 positional argument but 2 were given".  Identity is what
+    matters, and RTM's own base class does not inherit manim's Animation.
+    """
+    try:
+        from manim.animation.animation import Animation as _ManimAnimation
+    except Exception:                       # pragma: no cover - manim is required
+        return type(anim).__module__.startswith("manim")
+    if isinstance(anim, _ManimAnimation):
+        return True
     return type(anim).__module__.startswith("manim")
 
 
@@ -127,6 +140,10 @@ class Timeline:
                 anim.begin()          # manim's begin() takes no time argument
             else:
                 anim.begin(0.0)       # our animations take an absolute start time
+            # Phase 3: a manim-native animation writes no render channels of its
+            # own, so install the adapter that derives them from its state.
+            from real_time_manim.render_hooks import install_hooks
+            install_hooks(anim)
         self.duration = max(
             (e["start"] + e["run_time"] for e in self._entries), default=0.0)
         self._prepared = True
@@ -191,7 +208,7 @@ class Timeline:
         import time
 
         duration = float(self.duration if duration is None else duration)
-        n_frames = int(round(duration * fps)) + 1
+        n_frames = max(1, int(round(duration * fps)))
         tmpdir = tempfile.mkdtemp(prefix="rtm_timeline_")
         try:
             for k in range(n_frames):
