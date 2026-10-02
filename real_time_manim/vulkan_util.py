@@ -1,5 +1,7 @@
 import math
 
+import numpy as np
+
 
 def manim_to_screen(x, y, w=800, h=600):
     frame_width = w * 8.0 / h
@@ -92,14 +94,26 @@ def get_stroke_w(mob):
 def get_opacity(mob, kind="stroke", default=1.0):
     """Return a mobject's stroke/fill opacity, or ``default`` when it has none.
 
-    ``hasattr(mob, 'get_fill_opacity')`` is **not** a usable guard: manim defines
-    that getter on every ``Mobject``, but it only forwards to
-    ``self.fill_opacity`` -- which ``PMobject`` and parts of the ``ImageMobject``
-    family do not have.  So the check passes and the call raises AttributeError
-    halfway through rendering (PointCloudDot: no ``stroke_opacity``,
-    ImageMobjectFromCamera: no ``fill_opacity``).  Ask for the attribute itself,
-    and fall back to the default if it (or the getter) is missing or unusable.
+    **The animated value lives in the rgba arrays.**  manim interpolates
+    ``fill_rgbas`` / ``stroke_rgbas`` per frame; the stored ``*_opacity``
+    attributes are not updated (measured: after ``FadeIn(Square())`` at alpha 0.5
+    the array holds 0.5 while ``stroke_opacity`` still reads 1.0 -- and for many
+    shapes the attribute is 0 while the strokes are perfectly visible, so reading
+    it made whole strokes vanish).  So: arrays first, attributes as a fallback.
+
+    The attribute fallback exists because ``hasattr(mob, 'get_fill_opacity')`` is
+    **not** a usable guard either: manim defines that getter on every ``Mobject``,
+    but it only forwards to ``self.fill_opacity`` -- which ``PMobject`` and parts
+    of the ``ImageMobject`` family do not have, so the check passes and the call
+    raises AttributeError halfway through rendering.  Ask for the attribute
+    itself, and fall back to ``default`` if it (or the getter) is unusable.
     """
+    arrays = getattr(mob, "%s_rgbas" % kind, None)
+    try:
+        if arrays is not None and len(arrays):
+            return float(np.asarray(arrays)[:, 3].max())
+    except Exception:
+        pass
     value = getattr(mob, "%s_opacity" % kind, None)
     if value is None:
         getter = getattr(mob, "get_%s_opacity" % kind, None)

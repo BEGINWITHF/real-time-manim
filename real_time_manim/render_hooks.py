@@ -92,17 +92,26 @@ _ROTATE = _load("manim.animation.rotation", "Rotate", "Rotating")
 _FADE = _load("manim.animation.fading", "FadeIn", "FadeOut")
 _INDICATE = _load("manim.animation.indication",
                   "Indicate", "Flash", "Circumscribe", "Blink", "FocusOn")
-_TRANSFORM = _load("manim.animation.transform",
-                   "Transform", "ReplacementTransform", "TransformAnimations",
-                   "TransformMatchingAbstractBase", "ApplyMethod", "ApplyFunction",
-                   "ApplyPointwiseFunction", "ApplyPointwiseFunctionToCenter",
-                   "ApplyMatrix", "ApplyComplexFunction", "ClockwiseTransform",
-                   "CounterclockwiseTransform", "Restore", "FadeToColor",
-                   "ScaleInPlace", "ShrinkToCenter", "MoveToTarget", "ApplyWave",
-                   "CyclicReplace", "Swap") + \
-             _load("manim.animation.movement",
-                   "Homotopy", "SmoothedVectorizedHomotopy", "ComplexHomotopy",
-                   "PhaseFlow", "MoveAlongPath")
+# `_TRANSFORM_MORPH` interpolate *between two mobjects*: the geometry has to be
+# re-tessellated every frame, so they take the point path (`_transforming`).
+# `_TRANSFORM_METHOD` animate a single mobject through a method (scale / shift /
+# colour); the specialised senders already handle those, and routing them to the
+# point path silently **drops their fills** (measured: PolygonOnAxes lost 89% of
+# its ink that way).
+_TRANSFORM_MORPH = _load(
+    "manim.animation.transform",
+    "Transform", "ReplacementTransform", "TransformAnimations",
+    "TransformMatchingAbstractBase", "ClockwiseTransform",
+    "CounterclockwiseTransform", "Restore", "Swap", "CyclicReplace",
+    "ApplyWave") + _load(
+    "manim.animation.movement",
+    "Homotopy", "SmoothedVectorizedHomotopy", "ComplexHomotopy", "PhaseFlow",
+    "MoveAlongPath")
+_TRANSFORM_METHOD = _load(
+    "manim.animation.transform",
+    "ApplyMethod", "ApplyFunction", "ApplyPointwiseFunction",
+    "ApplyPointwiseFunctionToCenter", "ApplyMatrix", "ApplyComplexFunction",
+    "FadeToColor", "ScaleInPlace", "ShrinkToCenter", "MoveToTarget")
 
 # specific first, `Transform` last (it is the base class of most of the others)
 _RULES = (
@@ -112,7 +121,8 @@ _RULES = (
     ("rotate", _ROTATE),
     ("fade", _FADE),
     ("indicate", _INDICATE),
-    ("transform", _TRANSFORM),
+    ("method", _TRANSFORM_METHOD),
+    ("transform", _TRANSFORM_MORPH),
 )
 
 
@@ -232,6 +242,10 @@ def derive_channels(anim, alpha) -> None:
         _write_passing_flash(anim, mob, alpha)
     elif kind == "progress":
         _write_progress(anim, mob, alpha)
+    elif kind == "method":
+        # same mobject animated through a method: the specialised senders keep
+        # drawing it (fills included), only the opacity registry needs a refresh
+        set_anim_opacity(mob, _mob_alpha(mob))
     elif kind == "transform":
         _write_transform(anim, mob, alpha)
     elif kind == "grow":
