@@ -425,12 +425,35 @@ class ShapeMixin:
         fo = min(fo, getattr(mob, '_dot_max_opacity', 1.0))
         self.dll.AddCircle(sx, sy, rad, r, g, b, 0, 0, 0, 0.0, 1.0, a * fo)
 
-    def _send_dashed_line(self, mob, a, w, h):
-        s = mob.get_start()
-        e = mob.get_end()
+    def _send_dashed_line(self, mob, a, w, h, rot=0.0, parent_offset=None):
+        # same grow/offset/rotation treatment as _send_line, so a dashed line
+        # inside a group follows that group's transform and rotation
+        s = np.array(mob.get_start(), dtype=float)
+        e = np.array(mob.get_end(), dtype=float)
+        grow_scale = getattr(mob, '_grow_scale', 1.0)
+        grow_pt = getattr(mob, '_grow_point', None)
+        if grow_scale != 1.0 and grow_pt is not None:
+            gp = np.array(grow_pt, dtype=float)
+            s = gp + (s - gp) * grow_scale
+            e = gp + (e - gp) * grow_scale
+        if parent_offset is not None:
+            off = np.array(parent_offset, dtype=float)
+            s = s + off
+            e = e + off
         sx1, sy1 = manim_to_screen(s[0], s[1], w, h)
         sx2, sy2 = manim_to_screen(e[0], e[1], w, h)
+        cx, cy, _ = mob.get_center()
+        if parent_offset is not None:
+            cx += parent_offset[0]
+            cy += parent_offset[1]
+        scx, scy = manim_to_screen(cx, cy, w, h)
+        sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
+        sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
+        so = get_opacity(mob, 'stroke', 1.0)
+        if so <= 0:
+            return
         r, g, b = self._stroke_color(mob)
+        r, g, b = int(r * so), int(g * so), int(b * so)
         scale = h / 8.0
         sw = max(1, round(self._stroke_width(mob)))
         dl_manim = getattr(mob, 'dash_length', 0.05)
@@ -457,7 +480,11 @@ class ShapeMixin:
         rad = mob.radius * scale_y if hasattr(mob, 'radius') else 100.0
         sa = mob.start_angle if hasattr(mob, 'start_angle') else 0
         ang = mob.angle if hasattr(mob, 'angle') else math.pi
+        so = get_opacity(mob, 'stroke', 1.0)
+        if so <= 0:
+            return
         r, g, b = self._stroke_color(mob)
+        r, g, b = int(r * so), int(g * so), int(b * so)
         sw = max(1, round(self._stroke_width(mob)))
         self.dll.AddArc(sx, sy, rad, sa, ang, r, g, b, sw, a)
 
@@ -522,7 +549,10 @@ class ShapeMixin:
                 el = math.sqrt(dx * dx + dy * dy)
                 edge_lens.append(el)
                 perimeter += el
-            sr, sg, sb = br, bg, bb
+            so = get_opacity(mob, 'stroke', 1.0)
+            if so <= 0:
+                return
+            sr, sg, sb = int(br * so), int(bg * so), int(bb * so)
             sw = max(1, round(bw))
             lower_dist = perimeter * progress_lower
             upper_dist = perimeter * progress_upper

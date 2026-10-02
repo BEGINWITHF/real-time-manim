@@ -37,7 +37,12 @@ def get_fill_rgb(mob, alpha=1.0):
             return int(r * 255 * alpha), int(g * 255 * alpha), int(b * 255 * alpha)
     except Exception:
         pass
-    return int(255 * alpha), int(255 * alpha), int(255 * alpha)
+    # No rgba arrays at all (ImageMobject and friends): at least honour the
+    # mobject's own fill opacity instead of falling back to an opaque white quad.
+    fo = get_opacity(mob, 'fill', 1.0)
+    if fo <= 0:
+        return 0, 0, 0
+    return int(255 * alpha * fo), int(255 * alpha * fo), int(255 * alpha * fo)
 
 
 def get_fill_rgb_raw(mob):
@@ -55,6 +60,9 @@ def get_fill_rgb_raw(mob):
             return int(r * 255), int(g * 255), int(b * 255)
     except Exception:
         pass
+    fo = get_opacity(mob, 'fill', 1.0)
+    if fo <= 0:
+        return 0, 0, 0
     return 255, 255, 255
 
 

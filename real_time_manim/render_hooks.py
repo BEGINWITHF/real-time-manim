@@ -274,6 +274,11 @@ def _mob_alpha(mob, default=1.0):
             arrays = getattr(mob, name, None)
             if arrays is not None and len(arrays):
                 alphas.append(float(np.asarray(arrays)[:, 3].max()))
+        if not alphas:                     # ImageMobject has no rgba arrays
+            for name in ("fill_opacity", "stroke_opacity"):
+                value = getattr(mob, name, None)
+                if isinstance(value, (int, float)):
+                    alphas.append(float(value))
         return max(alphas) if alphas else default
     except Exception:
         return default
