@@ -591,6 +591,18 @@ def _drive_mobject_updaters(scene, dt, patch_group=None, unpatch_group=None):
                 unpatch_group(mob)
 
 
+def container_subs(mob):
+    """The children of a container mobject.
+
+    manim's ``Mobject.__iter__`` yields *self first* when the mobject has points
+    (``it.chain([self] if self.has_points() else [], self.submobjects)``), so
+    ``enumerate(mob)`` / ``len(list(mob))`` on a point-bearing VGroup hands the
+    container back to itself -- a 978-frame recursion in HeatDiagramPlot, and an
+    off-by-one in the progress segmentation.  Iterate ``submobjects`` instead.
+    """
+    return getattr(mob, "submobjects", None) or ()
+
+
 class MLWindow(ShapeMixin, TextMixin):
     # When True, play() records a timeline instead of rendering (see play()).
     _schedule_mode = False
@@ -955,7 +967,25 @@ class MLWindow(ShapeMixin, TextMixin):
                     return False
         return True
 
-    def _send(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False):
+    def _send(self, *args, **kwargs):
+        """Entry point: guard against a container that iterates itself.
+
+        The real fix is ``container_subs`` (iterate ``submobjects``); this keeps a
+        future mistake from turning into a RecursionError.
+        """
+        stack = getattr(self, '_send_stack', None)
+        if stack is None:
+            stack = self._send_stack = set()
+        key = id(args[0]) if args else None
+        if key in stack:
+            return
+        stack.add(key)
+        try:
+            return self._send_impl(*args, **kwargs)
+        finally:
+            stack.discard(key)
+
+    def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False):
         w, h = self.win_w, self.win_h
         own_alpha = get_anim_opacity(mob)
         a = parent_alpha * own_alpha
@@ -1029,7 +1059,8 @@ class MLWindow(ShapeMixin, TextMixin):
                         except Exception:
                             pass
             vgroup_progress = getattr(mob, '_vulkan_progress', 1.0)
-            num_subs = len(list(mob)) if hasattr(mob, '__len__') else 0
+            subs = container_subs(mob)
+            num_subs = len(subs)
             about = getattr(mob, '_rotation_about_point', None)
             is_3d = getattr(mob, '_rotation_3d', False)
             vgroup_center = np.array(mob.get_center(), dtype=float)
@@ -1057,7 +1088,7 @@ class MLWindow(ShapeMixin, TextMixin):
                         if need_gp:
                             del sub._grow_point
                 return
-            for i, sub in enumerate(mob):
+            for i, sub in enumerate(subs):
                 sub_offset = offset
                 if about is not None and rot != 0.0:
                     sub_center = np.array(sub.get_center(), dtype=float)
@@ -1302,7 +1333,7 @@ class MLWindow(ShapeMixin, TextMixin):
             self._fast_record_sim_time = time.time()
             self._last_frame_time = self._fast_record_sim_time - dt
 
-        for k in range(n_frames + 1):
+        for k in range(n_frames):
             frame_start = time.time()
             tl.render_at(k * dt)
 
