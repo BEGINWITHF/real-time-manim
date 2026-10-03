@@ -817,6 +817,10 @@ class MLWindow(ShapeMixin, TextMixin):
             raise RuntimeError("Failed to load any font")
 
     def sync(self, scene, angle=0.0):
+        # Phase 5: publish this frame's camera viewport (None for a plain Camera,
+        # so non-camera scenes keep the fixed default frame).
+        from real_time_manim.camera_state import set_viewport_from_scene
+        set_viewport_from_scene(scene)
         self.dll.ClearShapes()
         skip_ids = getattr(self, '_skip_mob_ids', None)
         # Also skip any root that is a descendant of another root (prevents double render)
@@ -836,6 +840,10 @@ class MLWindow(ShapeMixin, TextMixin):
                 if _search(other, r):
                     extra_skip.add(id(r))
                     break
+        # The camera frame is a helper mobject, not scene content (Phase 5.1).
+        cam_frame = getattr(getattr(scene, "camera", None), "frame", None)
+        if cam_frame is not None:
+            extra_skip.add(id(cam_frame))
         if skip_ids is None:
             skip_ids = extra_skip
         else:
@@ -1204,7 +1212,15 @@ class MLWindow(ShapeMixin, TextMixin):
         elif isinstance(mob, Dot):
             self._send_dot(mob, a, w, h)
         elif isinstance(mob, Circle):
-            self._send_circle(mob, a, w, h, screen_rot, parent_offset)
+            # same reasoning as the Arc branch: a partially drawn circle keeps the
+            # real radius on the point path (native progress counts segments of a
+            # full-radius circle, and `mob.width/2` is the chord early on).
+            _c_progress = getattr(mob, '_vulkan_progress', 1.0)
+            if 0.0 < _c_progress < 1.0:
+                self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
+                                    rot, is_text=is_text)
+            else:
+                self._send_circle(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Arrow):
             self._send_arrow(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, DashedLine):
@@ -1212,7 +1228,17 @@ class MLWindow(ShapeMixin, TextMixin):
         elif isinstance(mob, Line):
             self._send_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Arc):
-            self._send_arc(mob, a, w, h)
+            # `_send_arc` reads mob.radius / start_angle -- construction-time
+            # attributes that a partial draw (`Create`) or a scale does not
+            # update, so an arc that is being drawn or morphed has to go through
+            # the point path, which tessellates the actual points and honours
+            # `_vulkan_progress` (plan 4.2).
+            _arc_progress = getattr(mob, '_vulkan_progress', 1.0)
+            if 0.0 < _arc_progress < 1.0 or getattr(mob, '_transforming', False):
+                self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
+                                    rot, is_text=is_text)
+            else:
+                self._send_arc(mob, a, w, h)
         elif isinstance(mob, Polygon):
             self._send_polygon(mob, mob.get_vertices(), a)
         elif isinstance(mob, Polygram):
