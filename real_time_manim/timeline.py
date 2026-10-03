@@ -89,6 +89,30 @@ def evaluate_animation(anim, t):
         anim.interpolate(local)
 
 
+def ce_frame_count(anims, duration, fps):
+    """How many frames manim itself emits for one play of ``anims``.
+
+    An animation is stepped with ``np.arange(0, run_time, 1/fps)`` -- one frame per
+    step, at times ``0, dt, 2dt, ...`` -- while a wait is a *frozen* frame counted
+    as ``int(duration / dt)`` (``CairoRenderer.freeze_current_frame``).  Rounding
+    both to nearest instead drifts by a frame per segment, which is what put 47 of
+    114 suite scenes 1-4 frames away from CE.
+
+    The epsilon keeps an exact multiple of dt (e.g. run_time 0.6666.. = 10/15) at
+    ``n`` rather than ``n + 1``, matching ``arange``'s exclusive end.
+    """
+    import math
+    try:
+        fps = float(fps) or 30.0
+        duration = float(duration)
+    except (TypeError, ValueError):
+        return 1
+    anims = list(anims or [])
+    frozen = len(anims) == 1 and bool(getattr(anims[0], "is_static_wait", False))
+    if frozen:
+        return max(1, int(duration * fps))
+    return max(1, int(math.ceil(duration * fps - 1e-9)))
+
 class Timeline:
     """A schedule of animations on one time axis that can render any frame
     instantly (``render_at``) or forward (``render_mp4``)."""
@@ -208,7 +232,8 @@ class Timeline:
         import time
 
         duration = float(self.duration if duration is None else duration)
-        n_frames = max(1, int(round(duration * fps)))
+        anims = [e.get("anim") for e in getattr(self, "_entries", [])]
+        n_frames = ce_frame_count(anims, duration, fps)
         tmpdir = tempfile.mkdtemp(prefix="rtm_timeline_")
         try:
             for k in range(n_frames):

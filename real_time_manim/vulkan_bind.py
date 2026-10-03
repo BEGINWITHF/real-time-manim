@@ -1366,13 +1366,22 @@ class MLWindow(ShapeMixin, TextMixin):
             tl.add(a, 0.0)
         tl.finalize()
 
-        self._run_timeline(tl)
+        self._run_timeline(tl, real_anims)
 
-    def _run_timeline(self, tl):
-        """Walk a finalized Timeline forward, drawing and capturing each frame."""
+    def _run_timeline(self, tl, anims=None):
+        """Walk a finalized Timeline forward, drawing and capturing each frame.
+
+        The frame count comes from ``timeline.ce_frame_count`` so a recording has
+        exactly as many frames as manim would emit for the same play -- ceil for an
+        animation, truncation for a wait.  Rounding both to nearest drifted by a
+        frame per segment.
+        """
+        from real_time_manim.timeline import ce_frame_count
         fps = self._fast_record_fps if self._fast_record else 30
         dt = 1.0 / fps
-        n_frames = max(1, int(round(tl.duration * fps)))
+        if anims is None:
+            anims = [e.get("anim") for e in getattr(tl, "_entries", [])]
+        n_frames = ce_frame_count(anims, tl.duration, fps)
 
         if self._fast_record:
             self._fast_record_sim_time = time.time()
