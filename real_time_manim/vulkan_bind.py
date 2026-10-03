@@ -598,6 +598,19 @@ def _drive_mobject_updaters(scene, dt, patch_group=None, unpatch_group=None):
 # this one token (image tokens from vulkan_image start at 1, so no clash).
 _RASTER_TOKEN = 0xCA11E4A5
 
+
+def _raster_debug(message):
+    """Append a line to $RTM_RASTER_DEBUG when that is set (phase-5.4 tracing)."""
+    import os
+    path = os.environ.get("RTM_RASTER_DEBUG")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+    except Exception:
+        pass
+
 def container_subs(mob):
     """The children of a container mobject.
 
@@ -878,7 +891,10 @@ class MLWindow(ShapeMixin, TextMixin):
         Returns True when it drew the frame.
         """
         cam = getattr(scene, "camera", None)
-        if cam is None or not self._camera_needs_raster(scene, cam):
+        needs = cam is not None and self._camera_needs_raster(scene, cam)
+        _raster_debug(f"camera={type(cam).__name__ if cam is not None else None} "
+                      f"needs_raster={needs}")
+        if not needs:
             return False
         try:
             reset = getattr(cam, "reset", None)
@@ -886,10 +902,14 @@ class MLWindow(ShapeMixin, TextMixin):
                 reset()                                # clear the previous frame
             cam.capture_mobjects(list(scene.mobjects))
             pixels = np.asarray(cam.pixel_array, dtype=np.float32)
-        except Exception:
+        except Exception as exc:
+            _raster_debug(f"  capture failed: {type(exc).__name__}: {exc}")
             return False                               # fall back to the vector path
         if pixels.ndim != 3 or pixels.shape[2] < 3:
+            _raster_debug(f"  unusable pixel_array: {getattr(pixels, 'shape', None)}")
             return False
+        _raster_debug(f"  pixels {pixels.shape} min={float(pixels.min()):.3f} "
+                      f"max={float(pixels.max()):.3f} mean={float(pixels.mean()):.3f}")
 
         rgb = pixels[..., :3]
         if float(rgb.max()) <= 1.0 + 1e-3:              # manim hands back 0..1 floats
