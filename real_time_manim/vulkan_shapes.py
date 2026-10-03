@@ -20,10 +20,21 @@ class ShapeMixin:
         # Convert manim stroke_width to pixels
         # Manim shader: v_stroke_width = 0.01 * stroke_width * frame_scale
         # Geometry shader offsets curve by v_stroke_width in world space
-        # World space to pixels: multiply by (pixel_height / 8.0)
-        # So: pixel_width = stroke_width * 0.01 * (pixel_height / 8.0)
+        # World space to pixels: multiply by (pixel_height / frame_height).
+        # The frame height is the *visible* one: a moving/zoomed camera narrows the
+        # view (MovingCameraScene zoomed to height 4.1 measured here), and manim
+        # scales strokes with it -- using the default 8 drew them half as thick
+        # (CameraFamilyScene luma 1.12 vs CE 1.82).
         h = getattr(self, 'win_h', 800)
-        return sw_manim * 0.01 * (h / 8.0)
+        frame_height = 8.0
+        try:
+            from real_time_manim.camera_state import get_viewport
+            viewport = get_viewport()
+            if viewport is not None:
+                frame_height = float(viewport.height) or 8.0
+        except Exception:
+            pass
+        return sw_manim * 0.01 * (h / frame_height)
 
     def _rotate_point(self, x, y, cx, cy, angle):
         return rotate_point(x, y, cx, cy, angle)
