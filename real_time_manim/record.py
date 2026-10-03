@@ -59,6 +59,9 @@ def scene_lifecycle(scene) -> None:
     ``ZoomedScene`` (``zoomed_display``), ``MovingCameraScene`` (``camera.frame``)
     and any user ``setup()`` hook.
     """
+    # Phase 6: capture Scene.add_sound so the recorder can mux a real track
+    from real_time_manim import audio_track
+    audio_track.install_add_sound_hook(scene)
     scene.setup()
     scene.construct()
 
@@ -179,6 +182,8 @@ def _run(scene, out_path: str, on_init, on_close,
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     _guard_overwrite(out_path, overwrite, count_only)
+    from real_time_manim import audio_track
+    audio_track.reset()
     rec = _AutoRecord(out_path, on_init, on_close, verbose=verbose)
     # ``hidden`` decides whether the scene's windows are *created* hidden (never
     # shown, so nothing pops onto the desktop) -- not merely hidden afterwards.
@@ -196,11 +201,15 @@ def _run(scene, out_path: str, on_init, on_close,
     if cleanup:
         from real_time_manim.util import clear_media
         clear_media(verbose=verbose)
-    files = rec.windows if rec.windows else _produced_files(out_path)
+    files = [f for f in (rec.windows if rec.windows else _produced_files(out_path))
+             if os.path.exists(f)]
+    # Phase 6: attach the sounds the scene registered (copy the video stream).
+    muxed = audio_track.apply_sounds(files, verbose=verbose)
     return {
         "out_path": out_path,
         "windows": rec.windows,
-        "files": [f for f in files if os.path.exists(f)],
+        "files": files,
+        "with_audio": muxed,
     }
 
 
