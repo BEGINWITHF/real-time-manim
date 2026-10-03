@@ -473,20 +473,154 @@ class ShapeMixin:
             ey = sy1 + (sy2 - sy1) * progress
             self.dll.AddDashedLine(sx1, sy1, ex, ey, sw, r, g, b, dl, gl, a)
 
-    def _send_arc(self, mob, a, w, h):
-        cx, cy, _ = mob.get_center()
-        sx, sy = manim_to_screen(cx, cy, w, h)
-        scale_y = h / 8.0
-        rad = mob.radius * scale_y if hasattr(mob, 'radius') else 100.0
-        sa = mob.start_angle if hasattr(mob, 'start_angle') else 0
-        ang = mob.angle if hasattr(mob, 'angle') else math.pi
+    def _stroke_polyline_with_progress(self, flat, closed, lower, upper,
+                                       r, g, b, width, alpha):
+        """Stroke the [lower, upper] stretch of a screen-space polyline.
+
+        ``flat`` is x0,y0,x1,y1,... in screen pixels; ``lower``/``upper`` are
+        fractions of the total length.  Shared by the polygon and arc senders so
+        a partially drawn shape (Create / ShowPartial / ShowPassingFlash) is
+        stroked the same way whichever sender handles it (plan 4.2).
+        """
+        n = len(flat) // 2
+        if n < 2:
+            return
+        last = n if closed else n - 1
+        edge_lens = []
+        perimeter = 0.0
+        for j in range(last):
+            j2 = (j + 1) % n
+            el = math.hypot(flat[j2 * 2] - flat[j * 2],
+                            flat[j2 * 2 + 1] - flat[j * 2 + 1])
+            edge_lens.append(el)
+            perimeter += el
+        if perimeter <= 0.0:
+            return
+        try:
+            lower = max(0.0, min(1.0, float(lower)))
+            upper = max(0.0, min(1.0, float(upper)))
+        except (TypeError, ValueError):
+            lower, upper = 0.0, 1.0
+        skip = perimeter * lower
+        remaining = perimeter * upper - skip
+        if remaining <= 0.0:
+            return
+        for j in range(last):
+            if remaining <= 0.0:
+                break
+            j2 = (j + 1) % n
+            el = edge_lens[j]
+            x0, y0 = flat[j * 2], flat[j * 2 + 1]
+            x1, y1 = flat[j2 * 2], flat[j2 * 2 + 1]
+            if skip >= el:
+                skip -= el
+                continue
+            seg_start = el - skip
+            if seg_start > 0:
+                frac_start = (el - seg_start) / el if el > 0 else 0.0
+                x0 = x0 + (x1 - x0) * frac_start
+                y0 = y0 + (y1 - y0) * frac_start
+                skip = 0.0
+                el = seg_start
+            if remaining >= el:
+                self.dll.AddLine(x0, y0, x1, y1, width, r, g, b, alpha)
+                remaining -= el
+            else:
+                frac = remaining / el if el > 0 else 0.0
+                ex = x0 + (x1 - x0) * frac
+                ey = y0 + (y1 - y0) * frac
+                self.dll.AddLine(x0, y0, ex, ey, width, r, g, b, alpha)
+                remaining = 0.0
+
+    def _stroke_points_polyline(self, points, w, h, parent_offset, rot, sx, sy):
+        """Screen-space polyline for a VMobject's points (groups of 4 control points).
+
+        Cubic segments are subdivided so that roughly every 3 screen pixels is a
+        straight run (the same length-aware rule the text stroke uses): the
+        caller's points are the *real* geometry, so a partially drawn or scaled
+        arc is already encoded in them (plan 4.2).
+        """
+        flat = []
+        n = len(points)
+        # manim stores a shape's cubics as runs of 4 control points -- Arc, Sector
+        # and Annulus all come out as a multiple of 4 (measured: Arc(180°) = 32,
+        # Annulus = 64, Sector = 72) -- while a shape built curve-by-curve carries
+        # 1 + 3k points.  Pick the stride that fits and never index past the end:
+        # a wrong count here raised IndexError in the middle of a frame.
+        if n % 4 == 0:
+            stride, n_seg = 4, n // 4
+        elif (n - 1) % 3 == 0:
+            stride, n_seg = 3, (n - 1) // 3
+        else:
+            stride, n_seg = 4, max(0, (n - 3) // 4)
+        for si in range(n_seg):
+            idx = si * stride
+            if idx + 3 >= n:
+                break
+            ctrl = []
+            for k in range(4):
+                p = points[idx + k]
+                vx, vy = float(p[0]), float(p[1])
+                if parent_offset is not None:
+                    vx += parent_offset[0]
+                    vy += parent_offset[1]
+                vx, vy = manim_to_screen(vx, vy, w, h)
+                vx, vy = self._rotate_point(vx, vy, sx, sy, rot)
+                ctrl.append((vx, vy))
+            (p0x, p0y), (p1x, p1y), (p2x, p2y), (p3x, p3y) = ctrl
+            cpoly = (math.hypot(p1x - p0x, p1y - p0y)
+                     + math.hypot(p2x - p1x, p2y - p1y)
+                     + math.hypot(p3x - p2x, p3y - p2y))
+            chord = math.hypot(p3x - p0x, p3y - p0y)
+            est = (cpoly + chord) * 0.5
+            samples = int(max(8.0, min(256.0, math.ceil(est / 3.0))))
+            start = 0 if si == 0 else 1        # the shared endpoint is not repeated
+            for s in range(start, samples + 1):
+                t = s / samples
+                u = 1.0 - t
+                bx = u * u * u * p0x + 3 * u * u * t * p1x + 3 * u * t * t * p2x + t * t * t * p3x
+                by = u * u * u * p0y + 3 * u * u * t * p1y + 3 * u * t * t * p2y + t * t * t * p3y
+                flat.append(bx)
+                flat.append(by)
+        return flat
+
+    def _send_arc(self, mob, a, w, h, rot=0.0, parent_offset=None):
+        """Arc drawn from its own points (plan 4.2).
+
+        The previous version read ``mob.radius`` / ``start_angle`` / ``angle`` --
+        construction-time attributes that neither a partial draw (``Create``) nor
+        ``.animate.scale()`` updates -- so an animating arc rendered as a full,
+        unscaled arc (ArcScaleProbe FLAT, CreateArcProbe SKIP-INTRO).
+        Tessellating the points fixes both and picks up stroke opacity on the way;
+        the shared progress walk keeps a partial stroke exact.
+        """
         so = get_opacity(mob, 'stroke', 1.0)
         if so <= 0:
             return
+        progress = getattr(mob, '_vulkan_progress', 1.0)
+        if progress <= 0:
+            return
+        try:
+            points = mob.get_points()
+        except Exception:
+            points = None
+        if points is None or len(points) < 4:
+            return
+        cx, cy, _ = mob.get_center()
+        if parent_offset is not None:
+            cx += parent_offset[0]
+            cy += parent_offset[1]
+        sx, sy = manim_to_screen(cx, cy, w, h)
+        flat = self._stroke_points_polyline(points, w, h, parent_offset, rot, sx, sy)
+        if len(flat) < 4:
+            return
         r, g, b = self._stroke_color(mob)
-        r, g, b = int(r * so), int(g * so), int(b * so)
         sw = max(1, round(self._stroke_width(mob)))
-        self.dll.AddArc(sx, sy, rad, sa, ang, r, g, b, sw, a)
+        lower = getattr(mob, '_vulkan_progress_lower', 0.0)
+        upper = getattr(mob, '_vulkan_progress_upper', progress)
+        self._stroke_polyline_with_progress(flat, False, lower, upper,
+                                            int(r * so), int(g * so), int(b * so),
+                                            sw, a)
 
     def _send_polygon(self, mob, verts, alpha=1.0, rot_override=None, parent_offset=None):
         w, h = self.win_w, self.win_h
@@ -539,51 +673,13 @@ class ShapeMixin:
                 vx, vy = self._rotate_point(vx, vy, sx, sy, rot)
                 flat.append(vx)
                 flat.append(vy)
-            n = len(verts)
-            edge_lens = []
-            perimeter = 0.0
-            for j in range(n):
-                j2 = (j + 1) % n
-                dx = flat[j2 * 2] - flat[j * 2]
-                dy = flat[j2 * 2 + 1] - flat[j * 2 + 1]
-                el = math.sqrt(dx * dx + dy * dy)
-                edge_lens.append(el)
-                perimeter += el
             so = get_opacity(mob, 'stroke', 1.0)
             if so <= 0:
                 return
-            sr, sg, sb = int(br * so), int(bg * so), int(bb * so)
-            sw = max(1, round(bw))
-            lower_dist = perimeter * progress_lower
-            upper_dist = perimeter * progress_upper
-            skip = lower_dist
-            remaining = upper_dist
-            for j in range(n):
-                if remaining <= 0:
-                    break
-                j2 = (j + 1) % n
-                el = edge_lens[j]
-                x0, y0 = flat[j * 2], flat[j * 2 + 1]
-                x1, y1 = flat[j2 * 2], flat[j2 * 2 + 1]
-                if skip >= el:
-                    skip -= el
-                    continue
-                seg_start = el - skip
-                if seg_start > 0:
-                    frac_start = (el - seg_start) / el if el > 0 else 0
-                    x0 = x0 + (x1 - x0) * frac_start
-                    y0 = y0 + (y1 - y0) * frac_start
-                    skip = 0
-                    el = seg_start
-                if remaining >= el:
-                    self.dll.AddLine(x0, y0, x1, y1, sw, sr, sg, sb, alpha)
-                    remaining -= el
-                else:
-                    frac = remaining / el if el > 0 else 0
-                    ex = x0 + (x1 - x0) * frac
-                    ey = y0 + (y1 - y0) * frac
-                    self.dll.AddLine(x0, y0, ex, ey, sw, sr, sg, sb, alpha)
-                    remaining = 0
+            self._stroke_polyline_with_progress(
+                flat, True, progress_lower, progress_upper,
+                int(br * so), int(bg * so), int(bb * so),
+                max(1, round(bw)), alpha)
         else:
             flat = []
             for v in verts:
@@ -604,50 +700,10 @@ class ShapeMixin:
             )
             so = get_opacity(mob, 'stroke', 1.0)
             if so > 0:
-                n = len(verts)
-                edge_lens = []
-                perimeter = 0.0
-                for j in range(n):
-                    j2 = (j + 1) % n
-                    dx = flat[j2 * 2] - flat[j * 2]
-                    dy = flat[j2 * 2 + 1] - flat[j * 2 + 1]
-                    el = math.sqrt(dx * dx + dy * dy)
-                    edge_lens.append(el)
-                    perimeter += el
-                sw = max(1, round(bw))
-                lower_dist = perimeter * progress_lower
-                upper_dist = perimeter * progress_upper
-                skip = lower_dist
-                remaining = upper_dist
-                for j in range(n):
-                    if remaining <= 0:
-                        break
-                    j2 = (j + 1) % n
-                    el = edge_lens[j]
-                    x0, y0 = flat[j * 2], flat[j * 2 + 1]
-                    x1, y1 = flat[j2 * 2], flat[j2 * 2 + 1]
-                    if skip >= el:
-                        skip -= el
-                        continue
-                    seg_start = el - skip
-                    if seg_start > 0:
-                        frac_start = (el - seg_start) / el if el > 0 else 0
-                        x0 = x0 + (x1 - x0) * frac_start
-                        y0 = y0 + (y1 - y0) * frac_start
-                        skip = 0
-                        el = seg_start
-                    cr = int(br * so)
-                    cg = int(bg * so)
-                    cb = int(bb * so)
-                    if remaining >= el:
-                        self.dll.AddLine(x0, y0, x1, y1, sw, cr, cg, cb, alpha)
-                        remaining -= el
-                    else:
-                        frac = remaining / el if el > 0 else 0
-                        ex = x0 + (x1 - x0) * frac
-                        ey = y0 + (y1 - y0) * frac
-                        self.dll.AddLine(x0, y0, ex, ey, sw, cr, cg, cb, alpha)
-                        remaining = 0
+                self._stroke_polyline_with_progress(
+                    flat, True, progress_lower, progress_upper,
+                    int(br * so), int(bg * so), int(bb * so),
+                    max(1, round(bw)), alpha)
 
     def _send_point(self, mob, a, w, h):
         pos = mob.get_location()
