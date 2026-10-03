@@ -1360,6 +1360,7 @@ class MLWindow(ShapeMixin, TextMixin):
         # the fill stays a full convex quad instead of going through Bezier
         # tessellation.
         if isinstance(mob, (Square, Rectangle)) and not is_text:
+            drawn = False
             try:
                 # Always route axis-aligned quads through the polygon path.
                 # This keeps fills solid both for .animate.rotate() (points already
@@ -1371,9 +1372,20 @@ class MLWindow(ShapeMixin, TextMixin):
                     rot_override=screen_rot,
                     parent_offset=parent_offset,
                 )
-                return
+                drawn = True
             except Exception:
-                pass
+                drawn = False
+            if drawn:
+                # A Rectangle may carry submobjects -- manim's SampleSpace turns
+                # its divided parts into children -- and manim's family walk
+                # paints parent first, then children on top.  Returning here
+                # without walking them dropped the divisions entirely (the
+                # SampleSpace showed only its base fill; charts d(last) -6.33).
+                for sub in getattr(mob, 'submobjects', ()) or ():
+                    self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
+                               parent_transforming=parent_transforming,
+                               parent_is_text=is_text)
+                return
 
         if isinstance(mob, Square):
             self._send_square(mob, a, w, h, screen_rot, parent_offset)
