@@ -437,9 +437,83 @@ def _write_rotate(anim, mob, alpha):
         set_anim_opacity(mob, _mob_alpha(mob))
 
 
+def _family(mob):
+    """Every descendant of ``mob`` (structural walk, points or not).
+
+    ``family_members_with_points()`` skips a DashedLine container because it has
+    no points of its own -- the container is exactly what RTM draws, so it has to
+    be reachable here.
+    """
+    out = []
+    for sub in getattr(mob, "submobjects", None) or []:
+        out.append(sub)
+        out.extend(_family(sub))
+    return out
+
+
+def _fade_alpha(anim, alpha):
+    """FadeIn/FadeOut's animated opacity for this frame.
+
+    The hook is handed manim's raw alpha, so the animation's own rate function has
+    to be applied here to match what manim does to the mobject.
+    """
+    rate = getattr(anim, "rate_func", None)
+    try:
+        a = float(rate(alpha)) if callable(rate) else float(alpha)
+    except Exception:
+        a = float(alpha)
+    target = float(getattr(anim, "target_opacity", 1.0) or 1.0)
+    value = (1.0 - a) if type(anim).__name__.startswith("FadeOut") else a
+    return max(0.0, min(1.0, value * target))
+
+
+def _arrays_carry_fade(mob):
+    """True when the mobject's own rgba alpha already encodes the fade.
+
+    *Every* present array must be below opaque: a stroke-only shape such as a
+    DashedLine has fill alpha 0, so testing the arrays one at a time reported
+    "already faded" and the dashed stroke was skipped.
+    """
+    seen = False
+    for kind in ("stroke", "fill"):
+        arr = getattr(mob, "%s_rgbas" % kind, None)
+        try:
+            if arr is None or not len(arr):
+                continue
+        except Exception:
+            continue
+        seen = True
+        if max(float(rgba[3]) for rgba in arr) >= 0.999:
+            return False
+    return seen
+
+
 def _write_fade(anim, mob, alpha):
+    """Register the fade, including for what manim leaves at full opacity.
+
+    Most mobjects carry the animated opacity in ``*_rgbas``; a DashedLine does not
+    (only its dash children do, and RTM draws the line as one primitive from its
+    start/end attributes).  So the animation's own alpha is registered on DashedLine
+    containers -- and only on them, and only on the container rather than also its
+    dashes, since registering both would square the fade (0.5 * 0.5).  Measured
+    effect without this: one AddDashedLine at alpha 1.0 on the first frame, luma
+    0.0954 where CE has 0.0.
+    """
+    value = _fade_alpha(anim, alpha)
     if not _is_container(mob):
         set_anim_opacity(mob, _mob_alpha(mob))
+        return
+    dashed = _load("manim", "DashedLine")
+    if not dashed:
+        return
+    for desc in _family(mob):
+        if not isinstance(desc, dashed) or _arrays_carry_fade(desc):
+            continue
+        kids = [k for k in (getattr(desc, "submobjects", None) or [])
+                if getattr(k, "points", None) is not None and len(k.points)]
+        if not kids:
+            continue                      # a bare dash: drawn through its own arrays
+        set_anim_opacity(desc, value)
 
 
 def _write_indicate(anim, mob, alpha):
