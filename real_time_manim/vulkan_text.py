@@ -388,7 +388,19 @@ class TextMixin:
         try:
             frgbas = mob.get_fill_rgbas()
             if len(frgbas) > 0:
-                fr, fg, fb, fa = float(frgbas[0][0]), float(frgbas[0][1]), float(frgbas[0][2]), float(frgbas[0][3])
+                # manim keeps a *gradient* fill as several stops -- e.g.
+                # `set_sheen(0.4, RIGHT)` leaves [dim, bright].  Reading only
+                # stop 0 painted every gradient/sheen fill at its darkest stop
+                # (~25% dim): measured on VobjectManagerPathOperations the same
+                # region read '.' (52-78) in RTM against ':' (78-104) in CE,
+                # which straddles the lit threshold (luma>55) and cost 60% of
+                # the lit count.  Average the stops; a flat fill has all stops
+                # equal, so nothing else moves.
+                _stops = list(frgbas)
+                fr = sum(float(s[0]) for s in _stops) / len(_stops)
+                fg = sum(float(s[1]) for s in _stops) / len(_stops)
+                fb = sum(float(s[2]) for s in _stops) / len(_stops)
+                fa = max(float(s[3]) for s in _stops)
         except Exception:
             pass
         if fr == 0 and fg == 0 and fb == 0:
