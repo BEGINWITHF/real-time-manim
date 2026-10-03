@@ -117,4 +117,22 @@ def viewport_from_scene(scene):
 
 def set_viewport_from_scene(scene):
     """Publish the scene's camera viewport (or clear it).  Called once per frame."""
-    set_viewport(viewport_from_scene(scene))
+    viewport = viewport_from_scene(scene)
+    import os
+    path = os.environ.get("RTM_VIEWPORT_DEBUG")
+    if path:
+        try:
+            cam = getattr(scene, "camera", None)
+            frame = getattr(cam, "frame", None)
+            centre = None if frame is None else tuple(
+                round(float(v), 3) for v in frame.get_center())
+            height = None if frame is None else round(float(frame.height), 3)
+            shown = None if viewport is None else (
+                round(viewport.center[0], 3), round(viewport.center[1], 3),
+                round(viewport.height, 3), viewport.rotation is not None)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(f"{type(cam).__name__} frame_centre={centre} "
+                             f"frame_height={height} viewport={shown}\n")
+        except Exception:
+            pass
+    set_viewport(viewport)
