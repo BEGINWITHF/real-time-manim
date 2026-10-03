@@ -17,6 +17,7 @@ from manim import (
 )
 from manim.animation.transform import Transform as _ManimTransform
 from manim.mobject.types.image_mobject import AbstractImageMobject
+from manim.mobject.types.point_cloud_mobject import PMobject
 from manim.animation.transform import FadeTransform as _ManimFadeTransform
 
 from real_time_manim.rate_functions import (
@@ -1413,6 +1414,9 @@ class MLWindow(ShapeMixin, TextMixin):
             self._send_polygon(mob, mob.get_vertices(), a)
         elif isinstance(mob, Polygram):
             self._send_polygon(mob, mob.get_vertices(), a)
+        elif isinstance(mob, PMobject):
+            # 点云/PMobject：逐点画，别走贝塞尔填充（实测会糊成实心，ink 差 4 倍）
+            self._send_point_cloud(mob, a, w, h, rot=rot, parent_offset=parent_offset)
         elif isinstance(mob, Point):
             self._send_point(mob, a, w, h)
         else:

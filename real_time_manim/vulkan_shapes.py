@@ -719,6 +719,33 @@ class ShapeMixin:
                     int(br * so), int(bg * so), int(bb * so),
                     max(1, round(bw)), alpha)
 
+    def _send_point_cloud(self, mob, a, w, h, rot=0.0, parent_offset=None):
+        """PMobject 家族：每个点画成一个点，而不是一条填充路径。
+
+        manim 把这些 mobject 画成一个个小圆点（``PMobject.radius``）；送给贝塞尔
+        填充路径会把点之间的间隙糊成实心（实测 PointCloudMobjects：RTM ink 24232
+        vs CE 5797，4 倍，且 RTM 在 CE 画点阵处画成整块）。
+        """
+        so = get_opacity(mob, 'fill', 1.0)
+        if so <= 0:
+            return
+        r, g, b = self._color(mob, a)
+        cx, cy, _ = mob.get_center()
+        sx, sy = manim_to_screen(cx, cy, w, h)
+        try:
+            points = mob.get_points()
+        except Exception:
+            return
+        for p in points:
+            vx, vy = float(p[0]), float(p[1])
+            if parent_offset is not None:
+                vx += parent_offset[0]
+                vy += parent_offset[1]
+            vz = float(p[2]) if len(p) > 2 else 0.0
+            px, py = manim_to_screen(vx, vy, w, h, vz)
+            px, py = self._rotate_point(px, py, sx, sy, rot)
+            self.dll.AddPoint(px, py, r, g, b, a * so)
+
     def _send_point(self, mob, a, w, h):
         pos = mob.get_location()
         sx, sy = manim_to_screen(pos[0], pos[1], w, h)
