@@ -108,7 +108,18 @@ def ce_frame_count(anims, duration, fps):
     except (TypeError, ValueError):
         return 1
     anims = list(anims or [])
-    frozen = len(anims) == 1 and bool(getattr(anims[0], "is_static_wait", False))
+    frozen = False
+    if len(anims) == 1:
+        anim = anims[0]
+        try:
+            from manim import Wait
+            # `Scene.wait()` builds Wait(frozen_frame=None) and manim still counts
+            # it as a frozen frame (measured: wait(0.3) at 15 fps -> 4 frames, not
+            # 5), so only an explicit frozen_frame=False takes the stepping path.
+            frozen = (isinstance(anim, Wait)
+                      and getattr(anim, "is_static_wait", None) is not False)
+        except Exception:
+            frozen = False
     if frozen:
         return max(1, int(duration * fps))
     return max(1, int(math.ceil(duration * fps - 1e-9)))
