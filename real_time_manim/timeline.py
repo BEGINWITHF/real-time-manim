@@ -113,16 +113,58 @@ def ce_frame_count(anims, duration, fps):
         anim = anims[0]
         try:
             from manim import Wait
-            # `Scene.wait()` builds Wait(frozen_frame=None) and manim still counts
-            # it as a frozen frame (measured: wait(0.3) at 15 fps -> 4 frames, not
-            # 5), so only an explicit frozen_frame=False takes the stepping path.
+            # Mirror manim's own test -- `Scene.is_current_animation_frozen_frame`
+            # is `... and animations[0].is_static_wait`, i.e. plain truthiness.
+            # `Scene.wait` resolves that flag from `should_update_mobjects()`, so a
+            # scene *with updaters* gets False and manim STEPS the wait (measured:
+            # 0.3 s -> 5 frames, ceil) while a plain scene gets True and freezes it
+            # (4 frames, int).  Treating None as frozen put six updater/camera scenes
+            # one frame short of CE.
             frozen = (isinstance(anim, Wait)
-                      and getattr(anim, "is_static_wait", None) is not False)
+                      and bool(getattr(anim, "is_static_wait", False)))
         except Exception:
             frozen = False
     if frozen:
         return max(1, int(duration * fps))
     return max(1, int(math.ceil(duration * fps - 1e-9)))
+
+
+def resolve_static_wait(scene, anims):
+    """Mark a lone ``Wait`` static, the way manim's renderer does.
+
+    ``Scene.wait`` leaves ``Wait.is_static_wait`` at ``None``; manim resolves it
+    inside ``compile_animation_data`` / ``should_update_mobjects`` -- neither of
+    which runs once RTM takes over ``Scene.play``, so the flag stayed ``None`` and
+    both RTM and the frame counter had to guess.  manim's rule for a single Wait:
+
+        static  <=>  not (always_update_mobjects or scene updaters or a
+                          stop_condition or any mobject with a time updater)
+
+    A static wait is a *frozen* frame, counted ``int(duration*fps)``; every other
+    wait steps like an animation, counted ``ceil(duration*fps)``.  Measured: a
+    plain scene's ``wait(0.3)`` = 4 frames, the same wait in a scene with updaters
+    = 5 -- the difference behind six suite scenes one frame short of CE.
+    """
+    try:
+        from manim import Wait
+    except Exception:                                   # pragma: no cover
+        return
+    if len(anims) != 1 or not isinstance(anims[0], Wait):
+        return
+    wait = anims[0]
+    if getattr(wait, "is_static_wait", None) is not None:
+        return                                          # explicit True/False wins
+    try:
+        should_update = bool(
+            getattr(scene, "always_update_mobjects", False)
+            or getattr(scene, "updaters", None)
+            or wait.stop_condition is not None
+            or any(mob.has_time_based_updater()
+                   for mob in scene.get_mobject_family_members())
+        )
+    except Exception:
+        should_update = True                            # be conservative: step it
+    wait.is_static_wait = not should_update
 
 class Timeline:
     """A schedule of animations on one time axis that can render any frame

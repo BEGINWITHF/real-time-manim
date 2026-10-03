@@ -1336,6 +1336,12 @@ class MLWindow(ShapeMixin, TextMixin):
             add_mobs.extend(self._extract_add_mobjects(anim))
         real_anims = [a for a in animations if not isinstance(a, Add)]
 
+        # manim resolves a lone Wait's frozen-vs-stepping decision inside its
+        # renderer, which RTM replaces -- so do it here, before the timeline is
+        # built, because it decides whether the wait is counted int() or ceil().
+        from real_time_manim.timeline import resolve_static_wait
+        resolve_static_wait(self.scene, real_anims)
+
         # shared kwargs
         if 'run_time' in kwargs:
             for a in real_anims:
