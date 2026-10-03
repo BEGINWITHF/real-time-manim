@@ -805,6 +805,14 @@ class MLWindow(ShapeMixin, TextMixin):
             ctypes.POINTER(ctypes.c_float), ctypes.c_float,
         ]
 
+        # Frame clear colour (manim's `camera.background_color`).  Optional: a DLL
+        # built before this existed simply keeps clearing to black.
+        _set_background = getattr(self.dll, 'SetBackgroundColor', None)
+        if _set_background is not None:
+            _set_background.restype = None
+            _set_background.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self._set_background = _set_background
+
         self.dll.Vulkan_SetWindowVisible.restype = None
         self.dll.Vulkan_SetWindowVisible.argtypes = [ctypes.c_int]
         self.dll.Vulkan_InitEx.restype = ctypes.c_int
@@ -844,6 +852,36 @@ class MLWindow(ShapeMixin, TextMixin):
                 pass
         if not font_loaded:
             raise RuntimeError("Failed to load any font")
+
+    def _publish_background_color(self, scene):
+        """Hand native the frame's clear colour.
+
+        manim lets a scene override it (`self.camera.background_color`, falling back
+        to `config.background_color`); the native side used to hard-code black, so a
+        scene with a light background rendered on black (measured on the gallery logo
+        scene: CE luma 220 vs RTM 9.5, the largest mismatch in the suite).
+        """
+        setter = getattr(self, "_set_background", None)
+        if setter is None:
+            return
+        camera = getattr(scene, "camera", None)
+        colour = getattr(camera, "background_color", None)
+        if colour is None:
+            try:
+                from manim import config as _config
+                colour = _config["background_color"]
+            except Exception:
+                return
+        try:
+            if isinstance(colour, str):
+                from manim.utils.color.core import ManimColor
+                colour = ManimColor(colour)
+            rgb = colour.to_rgb() if hasattr(colour, "to_rgb") else colour
+            values = [float(v) for v in list(rgb)[:3]]
+        except Exception:
+            return
+        if len(values) == 3:
+            setter(*values)
 
     @staticmethod
     def _camera_needs_raster(scene, cam):
@@ -941,6 +979,7 @@ class MLWindow(ShapeMixin, TextMixin):
         from real_time_manim.camera_state import set_viewport_from_scene
         set_viewport_from_scene(scene)
         self.dll.ClearShapes()
+        self._publish_background_color(scene)
         # Phase 5.4: a custom camera's frame comes back as pixels, not geometry.
         if self._rasterise_custom_camera(scene):
             return

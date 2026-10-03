@@ -9,6 +9,18 @@
 static int g_readback_copied = 0;
 #endif
 
+// Cleared background colour, linear RGB 0..1.  manim lets a scene override it
+// (`self.camera.background_color`), so it is published per frame from Python
+// instead of being hard-coded -- measured: the gallery logo scene's light grey
+// background came out black (CE luma 220 vs RTM 9.5).
+float g_clear_rgb[3] = {0.0f, 0.0f, 0.0f};
+
+void Render_SetBackgroundColor(float r, float g, float b) {
+    g_clear_rgb[0] = r < 0.0f ? 0.0f : (r > 1.0f ? 1.0f : r);
+    g_clear_rgb[1] = g < 0.0f ? 0.0f : (g > 1.0f ? 1.0f : g);
+    g_clear_rgb[2] = b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b);
+}
+
 float g_vertices[MAX_VERTICES * 6];
 uint32_t g_vertex_count = 0;
 
@@ -90,7 +102,7 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
 
     vkBeginCommandBuffer(cmd_buf, &begin_info);
 
-    VkClearValue clear_color = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    VkClearValue clear_color = {{{g_clear_rgb[0], g_clear_rgb[1], g_clear_rgb[2], 1.0f}}};
     VkRenderPassBeginInfo render_pass_info = {0};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_info.renderPass = g_render_pass;

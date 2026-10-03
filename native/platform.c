@@ -305,6 +305,10 @@ __declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long 
     g_image_quad_count++;
 }
 
+__declspec(dllexport) void SetBackgroundColor(float r, float g, float b) {
+    Render_SetBackgroundColor(r, g, b);
+}
+
 __declspec(dllexport) void ClearShapes(void) {
     g_rect_count = 0;
     g_circle_count = 0;

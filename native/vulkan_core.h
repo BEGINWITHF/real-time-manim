@@ -48,6 +48,9 @@ extern uint32_t g_current_frame;
 extern uint32_t g_last_img_idx;
 extern bool g_framebuffer_resized;
 
+extern float g_clear_rgb[3];
+void Render_SetBackgroundColor(float r, float g, float b);
+
 VkShaderModule CreateShaderModule(const uint32_t *code, size_t size);
 
 uint32_t FindMemoryType(uint32_t type_filter, VkMemoryPropertyFlags props);

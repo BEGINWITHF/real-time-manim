@@ -35,6 +35,9 @@ __declspec(dllexport) void AddBezierPath(const float *points, int num_points, in
 // top-left, top-right, bottom-right, bottom-left order.
 __declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long long digest, const unsigned char *rgba, int w, int h, const float *xy8, float opacity);
 
+// Background colour used to clear the frame (linear RGB 0..1); scenes with a
+// custom `camera.background_color` publish theirs each frame.
+__declspec(dllexport) void SetBackgroundColor(float r, float g, float b);
 __declspec(dllexport) void ClearShapes(void);
 __declspec(dllexport) int SaveScreenshot(const char *path);
 
