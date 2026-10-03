@@ -736,6 +736,7 @@ class ShapeMixin:
             points = mob.get_points()
         except Exception:
             return
+
         for p in points:
             vx, vy = float(p[0]), float(p[1])
             if parent_offset is not None:
