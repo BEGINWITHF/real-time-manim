@@ -9,6 +9,15 @@
 #define MAX_POLYGON_VERTS 64
 #endif
 
+/* Multisample anti-aliasing.  manim's Cairo renderer antialiases every edge;
+   this renderer rasterised hard-edged, which is the whole reason shapes came
+   out with ~0.91 px of ink where CE spreads the same line over two rows (the
+   "13 scenes within |d|<2" bucket).  The swapchain image is the resolve
+   target, so nothing downstream changes. */
+#ifndef MSAA_SAMPLE_COUNT
+#define MSAA_SAMPLE_COUNT 4
+#endif
+
 typedef struct {
     float x, y, hw, hh, rot;
     int r, g, b;

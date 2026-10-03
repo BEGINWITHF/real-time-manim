@@ -337,7 +337,7 @@ static void CreateTexPipeline(void) {
 
     VkPipelineMultisampleStateCreateInfo ms = {0};
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    ms.rasterizationSamples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
 
     // Same blending as the solid pipeline, so an image fades like a shape.
     VkPipelineColorBlendAttachmentState cba = {0};
