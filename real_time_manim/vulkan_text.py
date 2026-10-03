@@ -32,7 +32,7 @@ class TextMixin:
                 for seg_i in range(num_segs):
                     for pt_i in range(4):
                         p = pts[seg_i * 4 + pt_i]
-                        vx, vy = manim_to_screen(p[0], p[1], w, h)
+                        vx, vy = manim_to_screen(p[0], p[1], w, h, p[2])
                         flat.append(vx)
                         flat.append(vy)
                         flat.append(0.0)
@@ -67,7 +67,7 @@ class TextMixin:
 
             flat = []
             for p in pts:
-                sx, sy = manim_to_screen(p[0], p[1], w, h)
+                sx, sy = manim_to_screen(p[0], p[1], w, h, p[2])
                 flat.append(sx)
                 flat.append(sy)
                 flat.append(0.0)

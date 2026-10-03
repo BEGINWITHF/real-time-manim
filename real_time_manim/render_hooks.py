@@ -397,6 +397,17 @@ def _write_transform(anim, mob, alpha):
 
 
 def _write_grow(anim, mob, alpha):
+    if alpha >= 1.0:
+        # A finished grow must not leave the mobject scaled: these channels are
+        # read by every sender, and a stale `_grow_scale < 1` shrinks the mobject
+        # forever (measured: PolygramFamily lost 31% of its ink that way).
+        for attr in ("_grow_scale", "_grow_point", "_grow_rot"):
+            if hasattr(mob, attr):
+                try:
+                    delattr(mob, attr)
+                except Exception:
+                    pass
+        return
     point = getattr(anim, "_rtm_grow_point", None)     # begin-state snapshot
     if point is None:
         point = getattr(anim, "_grow_point", None)

@@ -316,11 +316,11 @@ class ShapeMixin:
             s = np.array([pivot[0] + dx * c - dy * sn, pivot[1] + dx * sn + dy * c, 0.0])
             dx, dy = e[0] - pivot[0], e[1] - pivot[1]
             e = np.array([pivot[0] + dx * c - dy * sn, pivot[1] + dx * sn + dy * c, 0.0])
-            sx1, sy1 = manim_to_screen(s[0], s[1], w, h)
-            sx2, sy2 = manim_to_screen(e[0], e[1], w, h)
+            sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
+            sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
         else:
-            sx1, sy1 = manim_to_screen(s[0], s[1], w, h)
-            sx2, sy2 = manim_to_screen(e[0], e[1], w, h)
+            sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
+            sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
             cx, cy, _ = mob.get_center()
             if parent_offset is not None:
                 cx += parent_offset[0]; cy += parent_offset[1]
@@ -387,11 +387,11 @@ class ShapeMixin:
             s = np.array([pivot[0] + dx * c - dy * sn, pivot[1] + dx * sn + dy * c, 0.0])
             dx, dy = e[0] - pivot[0], e[1] - pivot[1]
             e = np.array([pivot[0] + dx * c - dy * sn, pivot[1] + dx * sn + dy * c, 0.0])
-            sx1, sy1 = manim_to_screen(s[0], s[1], w, h)
-            sx2, sy2 = manim_to_screen(e[0], e[1], w, h)
+            sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
+            sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
         else:
-            sx1, sy1 = manim_to_screen(s[0], s[1], w, h)
-            sx2, sy2 = manim_to_screen(e[0], e[1], w, h)
+            sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
+            sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
             cx, cy, _ = mob.get_center()
             if parent_offset is not None:
                 cx += parent_offset[0]; cy += parent_offset[1]
@@ -440,8 +440,8 @@ class ShapeMixin:
             off = np.array(parent_offset, dtype=float)
             s = s + off
             e = e + off
-        sx1, sy1 = manim_to_screen(s[0], s[1], w, h)
-        sx2, sy2 = manim_to_screen(e[0], e[1], w, h)
+        sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
+        sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
         cx, cy, _ = mob.get_center()
         if parent_offset is not None:
             cx += parent_offset[0]

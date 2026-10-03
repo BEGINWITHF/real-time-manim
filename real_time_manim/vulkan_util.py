@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 
-def manim_to_screen(x, y, w=800, h=600):
+def manim_to_screen(x, y, w=800, h=600, z=0.0):
     # Phase 5: when the scene's camera exposes a frame (MovingCamera /
     # MovingCameraScene) that viewport is published per frame and every sender
     # funnels through here, so the camera finally affects what is drawn.
@@ -13,7 +13,7 @@ def manim_to_screen(x, y, w=800, h=600):
     except Exception:                            # pragma: no cover
         _vp = None
     if _vp is not None:
-        return _vp.project(x, y, w, h)
+        return _vp.project(x, y, w, h, z)
     frame_width = w * 8.0 / h
     sx = w / frame_width
     sy = h / 8.0
