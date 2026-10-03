@@ -339,7 +339,13 @@ class ShapeMixin:
             sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
             sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
         r, g, b = self._stroke_color(mob)
-        sw = max(1, round(self._stroke_width(mob)))
+        so = get_opacity(mob, 'stroke', 1.0)
+        if so <= 0:
+            return
+        r, g, b = int(r * so), int(g * so), int(b * so)
+        # native draws a quad of width+1 px (draw_line.c: half_thick=thick/2+0.5),
+        # so pass one less or every line/arrow is ~1.3-3.3x too wide.
+        sw = max(0, int(round(self._stroke_width(mob))) - 1)
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if progress <= 0:
             return
@@ -410,7 +416,15 @@ class ShapeMixin:
         sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
         sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
         r, g, b = self._stroke_color(mob)
-        sw = max(1, round(self._stroke_width(mob)))
+        so = get_opacity(mob, 'stroke', 1.0)
+        if so <= 0:
+            return
+        r, g, b = int(r * so), int(g * so), int(b * so)
+        # manim draws a line of 0.01*stroke_width*frame_unit pixels; native's
+        # rasteriser makes a quad of ``width+1`` pixels (draw_line.c:
+        # half_thick = thick*0.5 + 0.5), so hand it one less or every line comes
+        # out ~1.3-3.3x too wide (measured: LinearAlgebraScene grid luma +39%).
+        sw = max(0, int(round(self._stroke_width(mob))) - 1)
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if progress <= 0:
             return
