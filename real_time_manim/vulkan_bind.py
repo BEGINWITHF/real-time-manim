@@ -612,6 +612,12 @@ def _raster_debug(message):
     except Exception:
         pass
 
+# native AddPolygon stores at most this many vertices and silently drops any
+# polygon that exceeds it (see native/shared_types.h MAX_POLYGON_VERTS and the
+# guard in platform.c).  Send larger polygons down the bezier path instead.
+NATIVE_MAX_POLYGON_VERTS = 64
+
+
 def container_subs(mob):
     """The children of a container mobject.
 
@@ -1443,10 +1449,20 @@ class MLWindow(ShapeMixin, TextMixin):
                                     rot, is_text=is_text)
             else:
                 self._send_arc(mob, a, w, h)
-        elif isinstance(mob, Polygon):
-            self._send_polygon(mob, mob.get_vertices(), a)
-        elif isinstance(mob, Polygram):
-            self._send_polygon(mob, mob.get_vertices(), a)
+        elif isinstance(mob, (Polygon, Polygram)):
+            # native AddPolygon *silently drops* any polygon with more than
+            # MAX_POLYGON_VERTS (64) vertices (platform.c: `vert_count <=
+            # MAX_POLYGON_VERTS`), and its fill loop also indexes edge_lens[64].
+            # Axes.get_area() returns an 84-vertex Polygon, so the whole filled
+            # area disappeared (GraphAreaPlot lit 8782 vs CE 27905).  Route the
+            # big ones through the bezier path, which tessellates and fills up
+            # to 1024 segments.
+            _verts = mob.get_vertices()
+            if _verts is not None and len(_verts) > NATIVE_MAX_POLYGON_VERTS:
+                self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
+                                    rot, is_text=is_text)
+            else:
+                self._send_polygon(mob, _verts, a)
         elif isinstance(mob, PMobject):
             # 点云/PMobject：逐点画，别走贝塞尔填充（实测会糊成实心，ink 差 4 倍）
             self._send_point_cloud(mob, a, w, h, rot=rot, parent_offset=parent_offset)
