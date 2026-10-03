@@ -267,9 +267,9 @@ __declspec(dllexport) void AddArc(float x, float y, float radius, float start_an
     }
 }
 
-__declspec(dllexport) void AddPoint(float x, float y, int r, int g, int b, float alpha) {
+__declspec(dllexport) void AddPoint(float x, float y, int r, int g, int b, float alpha, float radius) {
     if (g_point_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
-        g_points[g_point_count] = (PointObj){ x, y, r, g, b, alpha };
+        g_points[g_point_count] = (PointObj){ x, y, r, g, b, alpha, radius };
         g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POINT, g_point_count };
         g_point_count++;
     }

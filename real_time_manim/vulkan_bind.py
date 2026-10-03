@@ -775,6 +775,7 @@ class MLWindow(ShapeMixin, TextMixin):
             ctypes.c_float, ctypes.c_float,
             ctypes.c_int, ctypes.c_int, ctypes.c_int,
             ctypes.c_float,
+            ctypes.c_float,
         ]
         self.dll.AddText.restype = None
         self.dll.AddText.argtypes = [

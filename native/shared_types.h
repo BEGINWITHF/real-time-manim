@@ -74,6 +74,10 @@ typedef struct {
     float x, y;
     int r, g, b;
     float alpha;
+    // Dot radius in pixels (<=0 -> default).  manim draws a PMobject point as a
+    // 4 px *diameter* disc (measured), while this used to be a fixed 4 px radius,
+    // i.e. four times the area.
+    float radius;
 } PointObj;
 
 #ifndef MAX_IMAGE_QUADS

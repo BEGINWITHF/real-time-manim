@@ -719,6 +719,23 @@ class ShapeMixin:
                     int(br * so), int(bg * so), int(bb * so),
                     max(1, round(bw)), alpha)
 
+    def _dot_radius(self, mob, h):
+        """PMobject / Point 的点半径（像素）。
+
+        manim 把点画成直径约 4px 的圆盘（实测 logs/point_size_probe.py：亮段长度
+        众数 4px），native 过去是固定半径 4px（面积 4 倍）。这里给 480p/默认视口下
+        2px，并按可见高度等比缩放——与描边同一套规则，所以相机 zoom 时点一起放大。
+        """
+        frame_height = 8.0
+        try:
+            from real_time_manim.camera_state import get_viewport
+            viewport = get_viewport()
+            if viewport is not None:
+                frame_height = float(viewport.height) or 8.0
+        except Exception:
+            pass
+        return max(0.5, (float(h) / 30.0) / frame_height)
+
     def _send_point_cloud(self, mob, a, w, h, rot=0.0, parent_offset=None):
         """PMobject 家族：每个点画成一个点，而不是一条填充路径。
 
@@ -732,6 +749,7 @@ class ShapeMixin:
         r, g, b = self._color(mob, a)
         cx, cy, _ = mob.get_center()
         sx, sy = manim_to_screen(cx, cy, w, h)
+        radius = self._dot_radius(mob, h)
         try:
             points = mob.get_points()
         except Exception:
@@ -745,10 +763,10 @@ class ShapeMixin:
             vz = float(p[2]) if len(p) > 2 else 0.0
             px, py = manim_to_screen(vx, vy, w, h, vz)
             px, py = self._rotate_point(px, py, sx, sy, rot)
-            self.dll.AddPoint(px, py, r, g, b, a * so)
+            self.dll.AddPoint(px, py, r, g, b, a * so, radius)
 
     def _send_point(self, mob, a, w, h):
         pos = mob.get_location()
         sx, sy = manim_to_screen(pos[0], pos[1], w, h)
         r, g, b = self._color(mob, a)
-        self.dll.AddPoint(sx, sy, r, g, b, a)
+        self.dll.AddPoint(sx, sy, r, g, b, a, self._dot_radius(mob, h))
