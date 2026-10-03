@@ -116,7 +116,11 @@ _TRANSFORM_METHOD = _load(
     "manim.animation.transform",
     "ApplyMethod", "ApplyFunction", "ApplyPointwiseFunction",
     "ApplyPointwiseFunctionToCenter", "ApplyMatrix", "ApplyComplexFunction",
-    "FadeToColor", "ScaleInPlace", "ShrinkToCenter", "MoveToTarget")
+    "FadeToColor", "ScaleInPlace", "ShrinkToCenter", "MoveToTarget",
+    # `.animate.scale(...)` sugar: manim builds a Transform subclass, but the
+    # mobject is only modified through a method -- treating it as a morph set
+    # `_transforming` and made the animation render as a static final state.
+    "_MethodAnimation")
 
 # specific first, `Transform` last (it is the base class of most of the others)
 _RULES = (
@@ -263,11 +267,10 @@ def derive_channels(anim, alpha) -> None:
     elif kind == "indicate":
         _write_indicate(anim, mob, alpha)
     else:
-        # Unknown class: say so (the plan wants the mapping table to be visible
-        # in the logs) but fall back to the transform-style derive, which only
-        # ever *adds* the point-path flag.
+        # Unknown class: log it (the plan wants the mapping table visible) and
+        # write NOTHING.  Guessing "it is probably a morph" and setting
+        # `_transforming` made `.animate.scale()` render as a static final state.
         logger.debug("no render hook for %s", type(anim).__name__)
-        _write_transform(anim, mob, alpha)
 
     for sub in _children(anim):
         derive_channels(sub, alpha)
