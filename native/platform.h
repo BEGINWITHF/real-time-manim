@@ -30,6 +30,10 @@ __declspec(dllexport) void AddPoint(float x, float y, int r, int g, int b, float
 __declspec(dllexport) void AddText(float x, float y, int r, int g, int b, float font_size, float opacity, const char* text, float alpha);
 __declspec(dllexport) int Text_LoadFont(const unsigned char *data, int data_len);
 __declspec(dllexport) void AddBezierPath(const float *points, int num_points, int sr, int sg, int sb, float stroke_width, int fr, int fg, int fb, float fill_opacity, float progress, int show_stroke, int show_fill, float alpha);
+// Textured quad: ``rgba`` (w*h*4 bytes) is uploaded once under ``token`` and
+// reused for later frames; ``xy8`` holds the four corners in window pixels, in
+// top-left, top-right, bottom-right, bottom-left order.
+__declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long long digest, const unsigned char *rgba, int w, int h, const float *xy8, float opacity);
 
 __declspec(dllexport) void ClearShapes(void);
 __declspec(dllexport) int SaveScreenshot(const char *path);

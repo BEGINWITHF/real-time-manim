@@ -1,6 +1,7 @@
 #include "platform.h"
 #include "vulkan_render.h"
 #include "vulkan_core.h"
+#include "vulkan_texture.h"
 #include "shared_types.h"
 #include <stdio.h>
 #include <string.h>
@@ -293,6 +294,17 @@ __declspec(dllexport) void AddText(float x, float y, int r, int g, int b, float 
     }
 }
 
+__declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long long digest, const unsigned char *rgba, int w, int h, const float *xy8, float opacity) {
+    if (g_image_quad_count >= MAX_IMAGE_QUADS || g_draw_cmd_count >= MAX_DRAW_CMDS) return;
+    if (Tex_Ensure(token, digest, rgba, w, h) < 0) return;         // upload failed / table full
+    ImageQuad *q = &g_image_quads[g_image_quad_count];
+    q->token = token;
+    q->opacity = opacity;
+    for (int i = 0; i < 8; i++) q->xy[i] = xy8[i];
+    g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_IMAGE, g_image_quad_count };
+    g_image_quad_count++;
+}
+
 __declspec(dllexport) void ClearShapes(void) {
     g_rect_count = 0;
     g_circle_count = 0;
@@ -303,6 +315,7 @@ __declspec(dllexport) void ClearShapes(void) {
     g_arc_count = 0;
     g_point_count = 0;
     g_text_count = 0;
+    g_image_quad_count = 0;
     g_draw_cmd_count = 0;
 }
 

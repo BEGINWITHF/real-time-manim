@@ -76,6 +76,20 @@ typedef struct {
     float alpha;
 } PointObj;
 
+#ifndef MAX_IMAGE_QUADS
+#define MAX_IMAGE_QUADS 64
+#endif
+
+// A textured quad submitted by the Python side (see AddImageQuad).  Corners are
+// in window pixels, ordered top-left, top-right, bottom-right, bottom-left --
+// the same order the texture coordinates run.  ``token`` identifies the pixel
+// data so the same image is uploaded once and reused across frames.
+typedef struct {
+    unsigned long long token;
+    float xy[8];
+    float opacity;
+} ImageQuad;
+
 #ifndef MAX_TEXT_LEN
 #define MAX_TEXT_LEN 512
 #endif

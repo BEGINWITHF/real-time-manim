@@ -15,6 +15,7 @@ from manim import (
     Arc, Ellipse, Point, Text, VGroup, Group, OUT, ORIGIN, WHITE
 )
 from manim.animation.transform import Transform as _ManimTransform
+from manim.mobject.types.image_mobject import AbstractImageMobject
 from manim.animation.transform import FadeTransform as _ManimFadeTransform
 
 from real_time_manim.rate_functions import (
@@ -776,6 +777,15 @@ class MLWindow(ShapeMixin, TextMixin):
         self.dll.SaveScreenshot.restype = ctypes.c_int
         self.dll.SaveScreenshot.argtypes = [ctypes.c_char_p]
 
+        # Textured quads (plan 4.4B): one stable token per mobject owning a GPU
+        # texture slot, refreshed only when the pixel digest changes.
+        self.dll.AddImageQuad.restype = None
+        self.dll.AddImageQuad.argtypes = [
+            ctypes.c_ulonglong, ctypes.c_ulonglong,
+            ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_float), ctypes.c_float,
+        ]
+
         self.dll.Vulkan_SetWindowVisible.restype = None
         self.dll.Vulkan_SetWindowVisible.argtypes = [ctypes.c_int]
         self.dll.Vulkan_InitEx.restype = ctypes.c_int
@@ -1180,6 +1190,15 @@ class MLWindow(ShapeMixin, TextMixin):
                 return
 
         screen_rot = -rot
+
+        # Images have no rgba arrays and four corner points, so the shape
+        # senders below cannot express them (they used to fall through to
+        # _send_vmobject as an opaque white quad).  Plan 4.4B routes them to the
+        # native texture pipeline instead.
+        if isinstance(mob, AbstractImageMobject) and not is_text:
+            from real_time_manim.vulkan_image import send_image
+            if send_image(self, mob, a):
+                return
 
         # For squares/rectangles whose points are already rotated (e.g. by
         # .animate.rotate()), the native rect dispatcher computes from the
@@ -2177,12 +2196,38 @@ class MLWindow(ShapeMixin, TextMixin):
             reg.remove(self)
 
     def _capture_screenshot_to_pipe(self):
-        """SaveScreenshot → parse BMP → pipe BGR to ffmpeg."""
+        """SaveScreenshot → parse BMP → pipe tightly packed BGR to ffmpeg.
+
+        BMP rows are padded to a 4-byte boundary ((w*3 + 3) & ~3 == 2564 bytes
+        at 854 px wide), but ffmpeg's ``bgr24`` with ``-video_size w x h`` expects
+        tightly packed rows.  Piping the payload verbatim therefore lands every
+        row 2 bytes late, which shears the picture horizontally by ~0.67 px per
+        row -- a vertical line comes out as a diagonal.  The padding has to be
+        stripped here (this is what _fast_row_padded exists for).
+        """
         tmp = self._fast_tmp_bmp
         self.dll.SaveScreenshot(tmp.encode('utf-8'))
         with open(tmp, 'rb') as f:
             f.seek(54)
-            self._ffmpeg.stdin.write(f.read())
+            data = f.read()
+
+        row_size = self._fast_row_size                 # w * 3, what ffmpeg wants
+        padded = self._fast_row_padded                 # what the BMP carries
+        if padded == row_size:
+            self._ffmpeg.stdin.write(data)
+            return
+
+        height = self._fast_h
+        try:
+            import numpy as np
+            rows = np.frombuffer(data, dtype=np.uint8, count=padded * height)
+            self._ffmpeg.stdin.write(rows.reshape(height, padded)[:, :row_size].tobytes())
+        except Exception:                              # numpy unavailable
+            out = bytearray(row_size * height)
+            for y in range(height):
+                src = y * padded
+                out[y * row_size:(y + 1) * row_size] = data[src:src + row_size]
+            self._ffmpeg.stdin.write(bytes(out))
 
     def _finish_fast_record(self):
         """Finish recording: close ffmpeg pipe or report BMP count."""

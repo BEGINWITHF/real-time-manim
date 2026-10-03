@@ -1,4 +1,5 @@
 #include "vulkan_core.h"
+#include "vulkan_texture.h"
 #include "draw_common.h"
 
 #define VK_CHECK(call) do { \
@@ -817,6 +818,8 @@ void Render_Init(void *metal_layer, int width, int height) {
 
     CreateVertexBuffer();
 
+    Tex_CreateResources();
+
     g_is_ready = true;
 
 }
@@ -912,6 +915,8 @@ void Render_Cleanup(void) {
     vkFreeCommandBuffers(g_dev, g_cmd_pool, g_cmd_buf_count, g_cmd_bufs);
     free(g_cmd_bufs);
     vkDestroyCommandPool(g_dev, g_cmd_pool, NULL);
+
+    Tex_DestroyResources();
 
     vkDestroyPipeline(g_dev, g_pipeline, NULL);
     vkDestroyPipelineLayout(g_dev, g_pipeline_layout, NULL);

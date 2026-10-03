@@ -1,5 +1,6 @@
 #include "vulkan_core.h"
 #include "vulkan_render.h"
+#include "vulkan_texture.h"
 #include "draw_common.h"
 
 #ifdef __APPLE__
@@ -35,6 +36,7 @@ void Render_DrawScene(const Rect* rects, int rect_count,
                       const DrawCmd* cmds, int cmd_count) {
 
     g_vertex_count = 0;
+    Tex_BeginFrame();
 
     for (int i = 0; i < cmd_count; i++) {
         int idx = cmds[i].index;
@@ -66,11 +68,15 @@ void Render_DrawScene(const Rect* rects, int rect_count,
             case CMD_TEXT:
                 if (idx < text_count) BuildVerticesFromTexts(&texts[idx], 1);
                 break;
+            case CMD_IMAGE:
+                BuildVerticesFromImageQuad(idx);
+                break;
         }
     }
 
     BuildVerticesFromBezierPaths();
     BuildVerticesFromLineStrips();
+    Tex_EndFrame();
 
     if (g_vertex_count > 0) {
         update_vertex_buffer(g_vertices, g_vertex_count * 6 * sizeof(float));
@@ -109,7 +115,9 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
     VkDeviceSize offsets[] = { 0 };
     vkCmdBindVertexBuffers(cmd_buf, 0, 1, vertex_buffers, offsets);
 
-    if (vertex_count > 0) {
+    if (Tex_ItemCount() > 0) {
+        Tex_RecordInterleaved(cmd_buf, vertex_count);
+    } else if (vertex_count > 0) {
         vkCmdDraw(cmd_buf, vertex_count, 1, 0, 0);
     }
 
