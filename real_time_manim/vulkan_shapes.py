@@ -572,10 +572,11 @@ class ShapeMixin:
             for k in range(4):
                 p = points[idx + k]
                 vx, vy = float(p[0]), float(p[1])
+                vz = float(p[2]) if len(p) > 2 else 0.0
                 if parent_offset is not None:
                     vx += parent_offset[0]
                     vy += parent_offset[1]
-                vx, vy = manim_to_screen(vx, vy, w, h)
+                vx, vy = manim_to_screen(vx, vy, w, h, vz)
                 vx, vy = self._rotate_point(vx, vy, sx, sy, rot)
                 ctrl.append((vx, vy))
             (p0x, p0y), (p1x, p1y), (p2x, p2y), (p3x, p3y) = ctrl
@@ -677,10 +678,11 @@ class ShapeMixin:
             for v in verts:
                 vx = float(v[0])
                 vy = float(v[1])
+                vz = float(v[2]) if len(v) > 2 else 0.0
                 if parent_offset is not None:
                     vx += parent_offset[0]
                     vy += parent_offset[1]
-                vx, vy = manim_to_screen(vx, vy, w, h)
+                vx, vy = manim_to_screen(vx, vy, w, h, vz)
                 vx, vy = self._rotate_point(vx, vy, sx, sy, rot)
                 flat.append(vx)
                 flat.append(vy)
@@ -696,10 +698,11 @@ class ShapeMixin:
             for v in verts:
                 vx = float(v[0])
                 vy = float(v[1])
+                vz = float(v[2]) if len(v) > 2 else 0.0
                 if parent_offset is not None:
                     vx += parent_offset[0]
                     vy += parent_offset[1]
-                vx, vy = manim_to_screen(vx, vy, w, h)
+                vx, vy = manim_to_screen(vx, vy, w, h, vz)
                 vx, vy = self._rotate_point(vx, vy, sx, sy, rot)
                 flat.append(vx)
                 flat.append(vy)
