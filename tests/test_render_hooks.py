@@ -32,12 +32,27 @@ def prepared(anim, alpha=0.0):
     return anim
 
 
-def test_create_writes_progress():
+def test_create_writes_progress_without_bounds():
+    """`_vulkan_progress` only -- the lower/upper pair is ShowPassingFlash's window.
+
+    Writing bounds for the Create family puts the senders into "bounds mode" and
+    silently drops content (measured: PolygonOnAxes ink 35541 -> 3891, restored by
+    skipping that write).
+    """
     mob = Square()
-    anim = prepared(Create(mob, run_time=1.0), 0.4)
+    prepared(Create(mob, run_time=1.0), 0.4)
     assert mob._vulkan_progress == pytest.approx(0.4, abs=0.02)
-    assert mob._vulkan_progress_upper == pytest.approx(0.4, abs=0.02)
-    assert mob._vulkan_progress_lower == pytest.approx(0.0, abs=0.02)
+    assert not hasattr(mob, "_vulkan_progress_upper")
+    assert not hasattr(mob, "_vulkan_progress_lower")
+
+
+def test_show_passing_flash_writes_a_window():
+    from manim import ShowPassingFlash
+
+    mob = Square()
+    prepared(ShowPassingFlash(mob, run_time=1.0), 0.5)
+    assert hasattr(mob, "_vulkan_progress_upper")
+    assert mob._vulkan_progress_lower <= mob._vulkan_progress_upper
 
 
 def test_create_progress_reaches_one():

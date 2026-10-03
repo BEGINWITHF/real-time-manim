@@ -78,8 +78,13 @@ COMPOSITION = _load("manim.animation.composition",
 # of Create/Write/…) into the passing-flash rule, so Create took the flash branch
 # (`alpha + width`), and `Transform` came too early for its many subclasses
 # (FadeIn, GrowFromCenter, Rotate …).
-_PASSING = _load("manim.animation.creation",
-                 "ShowPassingFlash", "ShowPassingFlashWithThinningStrokeWidth")
+# `ShowPassingFlash` lives in `creation` from manim 0.21 on, but in `indication`
+# before that -- load from both so the adapter works on either version.
+_PASSING = tuple(dict.fromkeys(
+    _load("manim.animation.creation",
+          "ShowPassingFlash", "ShowPassingFlashWithThinningStrokeWidth") +
+    _load("manim.animation.indication",
+          "ShowPassingFlash", "ShowPassingFlashWithThinningStrokeWidth")))
 _PROGRESS = _load("manim.animation.creation",
                   "ShowPartial", "ShowIncreasingSubsets", "Create", "Uncreate",
                   "DrawBorderThenFill", "Write", "Unwrite", "SpiralIn",
@@ -245,7 +250,8 @@ def derive_channels(anim, alpha) -> None:
     elif kind == "method":
         # same mobject animated through a method: the specialised senders keep
         # drawing it (fills included), only the opacity registry needs a refresh
-        set_anim_opacity(mob, _mob_alpha(mob))
+        if not _is_container(mob):
+            set_anim_opacity(mob, _mob_alpha(mob))
     elif kind == "transform":
         _write_transform(anim, mob, alpha)
     elif kind == "grow":
@@ -274,6 +280,25 @@ def _kind_of(anim):
     return None
 
 
+def _is_container(mob):
+    """True for a mobject that is only a group of children (no geometry itself).
+
+    A container's own ``stroke_opacity`` / ``fill_opacity`` attributes are never
+    updated -- they keep their construction value, which for a ``VGroup`` is
+    **0**.  Reading them made ``FadeIn(ax)`` write ``opacity = 0`` for a whole
+    Axes subtree: the shapes were still submitted, but drawn invisible (measured
+    on PolygonOnAxes: CE's ink jumps 1675 -> 9333 pixels at frame 7, RTM stayed at
+    ~1700).  Containers get no registry write; each child's rgba arrays carry the
+    animated opacity and every sender reads those directly.
+    """
+    try:
+        subs = getattr(mob, "submobjects", None) or ()
+        pts = getattr(mob, "points", None)
+        return bool(subs) and (pts is None or len(pts) == 0)
+    except Exception:
+        return False
+
+
 def _mob_alpha(mob, default=1.0):
     """The mobject's current animated opacity, read from its rgba arrays.
 
@@ -298,6 +323,12 @@ def _mob_alpha(mob, default=1.0):
         return default
 
 
+def _is_text_like(mob):
+    """True for the mobjects whose children are glyphs (`Text`, `MathTexPart`)."""
+    from manim import Text
+    return isinstance(mob, Text) or bool(getattr(mob, "_is_text", False))
+
+
 def _write_progress(anim, mob, alpha):
     """`Create` / `Uncreate` / `Write` / `DrawBorderThenFill` / `ShowIncreasingSubsets`."""
     bounds = getattr(anim, "_get_bounds", None)
@@ -305,13 +336,20 @@ def _write_progress(anim, mob, alpha):
         lower, upper = bounds(alpha)
     else:                                       # older/other manim: raw alpha
         lower, upper = 0.0, alpha
-    mob._vulkan_progress_lower = float(lower)
-    mob._vulkan_progress_upper = float(upper)
+    # Only `_vulkan_progress` here: the lower/upper pair puts the senders into
+    # "bounds mode" (ShowPassingFlash's sliding window).  Setting it for the
+    # Create/Write family made whole scenes lose their content (measured on
+    # PolygonOnAxes: ink 35541 -> 3891, and skipping this writer restores it).
     mob._vulkan_progress = float(upper)
-    # letter-by-letter reveal (Write/DrawBorderThenFill) reads this map
-    letter_alphas = _letter_alphas(anim, alpha)
-    if letter_alphas is not None:
-        mob._letter_alphas = letter_alphas
+    # Letter-by-letter reveal (Write/DrawBorderThenFill) reads this map -- but
+    # ONLY for text-like mobjects.  `vulkan_bind._send` switches a mobject with
+    # `_letter_alphas` onto the per-glyph text path, so setting it on a container
+    # (e.g. `Write(ax)`) makes the whole Axes subtree draw as text: nothing comes
+    # out and it never recovers (measured: ink pinned at 2.01 from frame 2 on).
+    if _is_text_like(mob):
+        letter_alphas = _letter_alphas(anim, alpha)
+        if letter_alphas is not None:
+            mob._letter_alphas = letter_alphas
 
 
 def _letter_alphas(anim, alpha):
@@ -351,7 +389,8 @@ def _write_transform(anim, mob, alpha):
             RtmTransform._set_transforming(target, False)
     except Exception:
         mob._transforming = alpha < 1.0
-    set_anim_opacity(mob, _mob_alpha(mob))
+    if not _is_container(mob):
+        set_anim_opacity(mob, _mob_alpha(mob))
 
 
 def _write_grow(anim, mob, alpha):
@@ -368,7 +407,8 @@ def _write_grow(anim, mob, alpha):
     angle = getattr(anim, "angle", None)        # SpinInFromNothing
     if isinstance(angle, (int, float)):
         mob._grow_rot = float(angle) * float(alpha)
-    set_anim_opacity(mob, _mob_alpha(mob))
+    if not _is_container(mob):
+        set_anim_opacity(mob, _mob_alpha(mob))
 
 
 def _write_rotate(anim, mob, alpha):
@@ -379,13 +419,16 @@ def _write_rotate(anim, mob, alpha):
         about = mob.get_center()
     if about is not None:
         mob._rotation_about_point = about
-    set_anim_opacity(mob, _mob_alpha(mob))
+    if not _is_container(mob):
+        set_anim_opacity(mob, _mob_alpha(mob))
 
 
 def _write_fade(anim, mob, alpha):
-    set_anim_opacity(mob, _mob_alpha(mob))
+    if not _is_container(mob):
+        set_anim_opacity(mob, _mob_alpha(mob))
 
 
 def _write_indicate(anim, mob, alpha):
-    set_anim_opacity(mob, _mob_alpha(mob))
+    if not _is_container(mob):
+        set_anim_opacity(mob, _mob_alpha(mob))
     _write_grow(anim, mob, alpha)
