@@ -107,6 +107,7 @@ def ce_frame_count(anims, duration, fps):
         duration = float(duration)
     except (TypeError, ValueError):
         return 1
+    step = 1.0 / fps
     anims = list(anims or [])
     frozen = False
     if len(anims) == 1:
@@ -125,8 +126,15 @@ def ce_frame_count(anims, duration, fps):
         except Exception:
             frozen = False
     if frozen:
-        return max(1, int(duration * fps))
-    return max(1, int(math.ceil(duration * fps - 1e-9)))
+        # manim: CairoRenderer.freeze_current_frame -> int(duration / dt)
+        return max(1, int(duration / step))
+    # manim: one frame per step of np.arange(0, run_time, step).  Mirror it exactly
+    # rather than approximating with ceil(duration*fps): the two disagree whenever
+    # float error lands on the boundary -- Blink's Succession run_time is
+    # 0.6000000000000001, and 0.6000000000000001/(1/15) = 9.000000000000002 gives
+    # manim 10 frames where ceil(0.6*15) gives 9.
+    import numpy as np
+    return max(1, len(np.arange(0.0, duration, step)))
 
 
 def resolve_static_wait(scene, anims):
