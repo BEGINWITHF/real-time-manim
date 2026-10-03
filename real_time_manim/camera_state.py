@@ -18,6 +18,8 @@ is exactly what it was before, so nothing changes for non-camera scenes.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 # The frame's default height in manim units -- what manim's own Camera uses and
@@ -31,14 +33,25 @@ _viewport = None
 class Viewport:
     """The visible rectangle of manim space, in manim units."""
 
-    __slots__ = ("center", "height", "rotation")
+    __slots__ = ("center", "height", "rotation", "frame_center",
+                 "focal_distance", "exponential")
 
-    def __init__(self, center=(0.0, 0.0), height=DEFAULT_FRAME_HEIGHT, rotation=None):
+    def __init__(self, center=(0.0, 0.0), height=DEFAULT_FRAME_HEIGHT, rotation=None,
+                 frame_center=(0.0, 0.0, 0.0), focal_distance=None,
+                 exponential=False):
         self.center = (float(center[0]), float(center[1]))
         self.height = float(height) or DEFAULT_FRAME_HEIGHT
         # 3x3 camera rotation for the ThreeDCamera family (None for 2D).  Taken
         # from manim's own `generate_rotation_matrix()` so both agree.
         self.rotation = rotation
+        # manim's `project_points` subtracts `frame_center` *before* rotating and
+        # then scales each point by focal_distance/(focal_distance - z); doing the
+        # subtraction after the rotation (or skipping the perspective term) put the
+        # 3D content in the wrong place (measured IoU vs CE: 0.28-0.51).
+        self.frame_center = (float(frame_center[0]), float(frame_center[1]),
+                            float(frame_center[2]))
+        self.focal_distance = None if focal_distance is None else float(focal_distance)
+        self.exponential = bool(exponential)
 
     def project(self, x, y, w, h, z=0.0):
         """Map a manim point to screen pixels for a ``w``x``h`` surface.
@@ -48,8 +61,24 @@ class Viewport:
         """
         if self.rotation is not None:
             r = self.rotation
-            x, y = (r[0][0] * x + r[0][1] * y + r[0][2] * z,
-                    r[1][0] * x + r[1][1] * y + r[1][2] * z)
+            ox, oy, oz = self.frame_center
+            px, py, pz = x - ox, y - oy, z - oz
+            rx = r[0][0] * px + r[0][1] * py + r[0][2] * pz
+            ry = r[1][0] * px + r[1][1] * py + r[1][2] * pz
+            rz = r[2][0] * px + r[2][1] * py + r[2][2] * pz
+            distance = self.focal_distance
+            if distance and abs(distance) > 1e-6:
+                if self.exponential:
+                    factor = math.exp(rz / distance)
+                    if rz < 0.0:
+                        factor = distance / (distance - rz) if abs(distance - rz) > 1e-6 else 1.0
+                else:
+                    denominator = distance - rz
+                    factor = distance / denominator if abs(denominator) > 1e-6 else 1.0
+                rx *= factor
+                ry *= factor
+            s = float(h) / self.height
+            return float(w / 2.0 + rx * s), float(h / 2.0 - ry * s)
         s = float(h) / self.height
         cx, cy = self.center
         return float(w / 2.0 + (x - cx) * s), float(h / 2.0 - (y - cy) * s)
@@ -100,7 +129,19 @@ def viewport_from_scene(scene):
                 zoom = 1.0
             height = float(getattr(cam, "frame_height", DEFAULT_FRAME_HEIGHT) or
                            DEFAULT_FRAME_HEIGHT) / (zoom if zoom > 1e-6 else 1.0)
-            return Viewport(center, height, rotation=rot)
+            try:
+                frame_center = np.asarray(cam.frame_center, dtype=float).reshape(-1)[:3]
+            except Exception:
+                frame_center = (0.0, 0.0, 0.0)
+            get_focal = getattr(cam, "get_focal_distance", None)
+            try:
+                focal_distance = float(get_focal()) if callable(get_focal) else None
+            except Exception:
+                focal_distance = None
+            return Viewport(center, height, rotation=rot,
+                            frame_center=frame_center,
+                            focal_distance=focal_distance,
+                            exponential=bool(getattr(cam, "exponential_projection", False)))
 
     frame = getattr(cam, "frame", None)
     if frame is None or not hasattr(frame, "get_center"):
