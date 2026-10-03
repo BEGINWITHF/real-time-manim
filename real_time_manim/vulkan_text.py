@@ -307,6 +307,7 @@ class TextMixin:
             b_dy = float(getattr(mob, '_baseline_dy', 0.0) or 0.0)
             for p in pts:
                 px, py = p[0], p[1]
+                pz = float(p[2]) if len(p) > 2 else 0.0
                 if grow_scale != 1.0 and grow_pt is not None:
                     px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                     py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
@@ -317,7 +318,12 @@ class TextMixin:
                     px += parent_offset[0]
                     py += parent_offset[1]
                 py += b_dy
-                sx, sy = manim_to_screen(px, py, w, h)
+                # z must reach the viewport: a ThreeDCamera rotates the point
+                # before the screen mapping, so dropping it flattens every 3D
+                # VMobject (a Surface collapsed into thin stray strips).  native
+                # AddBezierPath reads stride-3 points but only x,y, so the third
+                # slot stays 0 here.
+                sx, sy = manim_to_screen(px, py, w, h, pz)
                 flat.append(sx)
                 flat.append(sy)
                 flat.append(0.0)

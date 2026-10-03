@@ -1013,10 +1013,30 @@ class MLWindow(ShapeMixin, TextMixin):
             skip_ids |= extra_skip
         # Same-font Text roots on one visual line that need baseline alignment.
         self._row_text_ids = self._text_row_ids(scene, skip_ids)
+        # manim's ThreeDCamera leaves fixed-in-frame mobjects unprojected
+        # (transform_points_pre_display returns their points unchanged), so a
+        # 3D scene's title/caption stays put instead of being rotated away.  RTM
+        # had no such path at all: every root went through the 3D rotation and
+        # the caption landed off-frame (measured: FixedInFrameMObjectTest and
+        # the captions of ThreeDSurfaceLab / PolyhedraShowcase missing).
+        from real_time_manim.camera_state import (
+            set_viewport, get_viewport, Viewport, DEFAULT_FRAME_HEIGHT)
+        fixed_ids = set()
+        cam = getattr(scene, "camera", None)
+        for fixed in getattr(cam, "fixed_in_frame_mobjects", ()) or ():
+            fixed_ids.add(id(fixed))
         for mob in scene.mobjects:
             if skip_ids and id(mob) in skip_ids:
                 continue
-            self._send(mob, angle, parent_alpha=1.0)
+            if fixed_ids and id(mob) in fixed_ids:
+                saved = get_viewport()
+                set_viewport(Viewport((0.0, 0.0), DEFAULT_FRAME_HEIGHT))
+                try:
+                    self._send(mob, angle, parent_alpha=1.0)
+                finally:
+                    set_viewport(saved)
+            else:
+                self._send(mob, angle, parent_alpha=1.0)
 
     def _glyph_baseline(self, mob):
         """Approximate the x-height baseline of a Text from its glyph bottoms.
