@@ -1,4 +1,5 @@
 import ctypes
+import hashlib
 import inspect
 import os
 import re
@@ -592,6 +593,11 @@ def _drive_mobject_updaters(scene, dt, patch_group=None, unpatch_group=None):
                 unpatch_group(mob)
 
 
+# Stable texture slot for the phase-5.4 camera fallback: the rasterised frame
+# is re-uploaded whenever its content digest changes, but always through
+# this one token (image tokens from vulkan_image start at 1, so no clash).
+_RASTER_TOKEN = 0xCA11E4A5
+
 def container_subs(mob):
     """The children of a container mobject.
 
@@ -826,12 +832,98 @@ class MLWindow(ShapeMixin, TextMixin):
         if not font_loaded:
             raise RuntimeError("Failed to load any font")
 
+    @staticmethod
+    def _camera_needs_raster(scene, cam):
+        """True for a Camera subclass that redefines how a frame is captured.
+
+        Only *unhandled* subclasses qualify (plan 5.4): a Camera that overrides
+        ``capture_mobjects``/``get_frame`` can apply arbitrary per-pixel effects that
+        no vector pipeline can express, but the ones RTM already models properly --
+        MovingCamera (5.1), ThreeDCamera (5.2) -- must keep the vector path, or every
+        camera scene would silently become a slow full-screen rasterisation.
+        """
+        try:
+            from manim.camera.camera import Camera as _BaseCamera
+        except Exception:                              # pragma: no cover
+            return False
+        if type(cam) is _BaseCamera:
+            return False
+        handled = set()
+        for module, names in (
+                ("manim.camera.moving_camera", ("MovingCamera",)),
+                ("manim.camera.three_d_camera", ("ThreeDCamera", "SpecialThreeDCamera")),
+                ("manim.camera.mapping_camera", ("MappingCamera", "OldMultiCamera")),
+        ):
+            for name in names:
+                try:
+                    mod = __import__(module, fromlist=[name])
+                    handled.add(getattr(mod, name))
+                except Exception:
+                    pass
+        if isinstance(cam, tuple(handled)) or getattr(cam, "zoomed_display", None) is not None:
+            return False
+        for klass in type(cam).__mro__:
+            if klass is _BaseCamera:
+                break
+            if "capture_mobjects" in klass.__dict__ or "get_frame" in klass.__dict__:
+                return True
+        return False
+
+    def _rasterise_custom_camera(self, scene):
+        """Draw a custom camera's frame as one textured quad (plan 5.4).
+
+        The scene's *own* camera does the rasterising, so whatever the subclass does
+        to the pixels is included by construction.  Correct but slow: one
+        rasterisation per frame, which is the accepted price of a fallback.
+        Returns True when it drew the frame.
+        """
+        cam = getattr(scene, "camera", None)
+        if cam is None or not self._camera_needs_raster(scene, cam):
+            return False
+        try:
+            reset = getattr(cam, "reset", None)
+            if callable(reset):
+                reset()                                # clear the previous frame
+            cam.capture_mobjects(list(scene.mobjects))
+            pixels = np.asarray(cam.pixel_array, dtype=np.float32)
+        except Exception:
+            return False                               # fall back to the vector path
+        if pixels.ndim != 3 or pixels.shape[2] < 3:
+            return False
+
+        rgb = pixels[..., :3]
+        if float(rgb.max()) <= 1.0 + 1e-3:              # manim hands back 0..1 floats
+            rgb = rgb * 255.0
+        image = np.empty(pixels.shape[:2] + (4,), dtype=np.uint8)
+        image[..., :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+        if pixels.shape[2] >= 4:
+            alpha = pixels[..., 3]
+            if float(alpha.max()) <= 1.0 + 1e-3:
+                alpha = alpha * 255.0
+            image[..., 3] = np.clip(alpha, 0, 255).astype(np.uint8)
+        else:
+            image[..., 3] = 255
+
+        height, width = image.shape[:2]
+        data = np.ascontiguousarray(image)
+        buf = (ctypes.c_ubyte * data.nbytes).from_buffer_copy(data.tobytes())
+        quad = (ctypes.c_float * 8)(
+            0.0, 0.0, float(self.win_w), 0.0,
+            float(self.win_w), float(self.win_h), 0.0, float(self.win_h))
+        key = int.from_bytes(hashlib.blake2b(data.tobytes(), digest_size=8).digest(),
+                             "little")
+        self.dll.AddImageQuad(_RASTER_TOKEN, key, buf, int(width), int(height), quad, 1.0)
+        return True
+
     def sync(self, scene, angle=0.0):
         # Phase 5: publish this frame's camera viewport (None for a plain Camera,
         # so non-camera scenes keep the fixed default frame).
         from real_time_manim.camera_state import set_viewport_from_scene
         set_viewport_from_scene(scene)
         self.dll.ClearShapes()
+        # Phase 5.4: a custom camera's frame comes back as pixels, not geometry.
+        if self._rasterise_custom_camera(scene):
+            return
         skip_ids = getattr(self, '_skip_mob_ids', None)
         # Also skip any root that is a descendant of another root (prevents double render)
         def _search(node, target):
