@@ -919,6 +919,14 @@ class MLWindow(ShapeMixin, TextMixin):
                     handled.add(getattr(mod, name))
                 except Exception:
                     pass
+        # A camera that renders *other cameras* into image mobjects composites a
+        # second viewport inside its own frame (ZoomedScene's MultiCamera does
+        # this in capture_mobjects, inset included).  There is no vector
+        # equivalent, and it must be checked before the MovingCamera exemption
+        # below -- MultiCamera *is* a MovingCamera.  The list is empty until
+        # activate_zooming() runs, so un-zoomed scenes keep the vector path.
+        if getattr(cam, "image_mobjects_from_cameras", None):
+            return True
         if isinstance(cam, tuple(handled)) or getattr(cam, "zoomed_display", None) is not None:
             return False
         for klass in type(cam).__mro__:
@@ -946,6 +954,19 @@ class MLWindow(ShapeMixin, TextMixin):
             reset = getattr(cam, "reset", None)
             if callable(reset):
                 reset()                                # clear the previous frame
+            # Rasterise at the window's own resolution.  manim's camera is built
+            # from config.pixel_* (1920x1080 by default in this harness) while
+            # the window is 854x480, so the fallback was rasterising ~5x the
+            # pixels and only then downscaling: moving/zoomed scenes cost seconds
+            # per frame (MovingZoomedSceneAround's 180 frames exceeded the 600 s
+            # harness timeout) and a downscaled raster is blurrier than CE's own
+            # 854x480 render.
+            try:
+                if (int(cam.pixel_width) != self.win_w
+                        or int(cam.pixel_height) != self.win_h):
+                    cam.reset_pixel_shape(self.win_h, self.win_w)
+            except Exception:
+                pass
             cam.capture_mobjects(list(scene.mobjects))
             pixels = np.asarray(cam.pixel_array, dtype=np.float32)
         except Exception as exc:
