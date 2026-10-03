@@ -103,6 +103,19 @@ _INDICATE = _load("manim.animation.indication",
 # colour); the specialised senders already handle those, and routing them to the
 # point path silently **drops their fills** (measured: PolygonOnAxes lost 89% of
 # its ink that way).
+# Updater-driven animations: they rewrite points/colours each frame and carry no
+# channel of their own (see the rule comment below).  Loaded from their own module
+# *and* the manim namespace, because class locations move between versions.
+_UPDATES = (_load("manim.animation.update", "UpdateFromFunc", "UpdateFromAlphaFunc",
+                  "MaintainPositionRelativeTo")
+            + _load("manim.animation.numbers", "ChangingDecimal",
+                    "ChangeDecimalToValue")
+            + _load("manim.animation.indication", "Wiggle")
+            + _load("manim.animation.speedmodifier", "ChangeSpeed")
+            + _load("manim", "UpdateFromFunc", "UpdateFromAlphaFunc",
+                    "MaintainPositionRelativeTo", "ChangingDecimal",
+                    "ChangeDecimalToValue", "Wiggle", "ChangeSpeed"))
+
 _TRANSFORM_MORPH = _load(
     "manim.animation.transform",
     "Transform", "ReplacementTransform", "TransformAnimations",
@@ -132,6 +145,7 @@ _RULES = (
     ("indicate", _INDICATE),
     ("method", _TRANSFORM_METHOD),
     ("transform", _TRANSFORM_MORPH),
+    ("updates", _UPDATES),
 )
 
 
@@ -266,6 +280,8 @@ def derive_channels(anim, alpha) -> None:
         _write_fade(anim, mob, alpha)
     elif kind == "indicate":
         _write_indicate(anim, mob, alpha)
+    elif kind == "updates":
+        _write_updates(anim, mob, alpha)
     else:
         # Unknown class: log it (the plan wants the mapping table visible) and
         # write NOTHING.  Guessing "it is probably a morph" and setting
@@ -394,6 +410,19 @@ def _write_transform(anim, mob, alpha):
         mob._transforming = alpha < 1.0
     if not _is_container(mob):
         set_anim_opacity(mob, _mob_alpha(mob))
+
+
+def _write_updates(anim, mob, alpha):
+    """Updater-driven animations: geometry changes every frame, so use the point path.
+
+    Same reasoning as the transform family (plan 3.2) -- these classes rewrite the
+    mobject's points (or a number's glyphs) through a callback each frame and carry
+    no progress/opacity channel, so the renderer has to read the current points
+    rather than a specialised shape sender.  Releasing the flag at alpha 1 keeps a
+    finished animation from leaving the mobject on the slow path (the stale
+    ``_grow_scale`` lesson).
+    """
+    _write_transform(anim, mob, alpha)
 
 
 def _write_grow(anim, mob, alpha):
