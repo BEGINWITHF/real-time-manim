@@ -424,20 +424,30 @@ class ShapeMixin:
         if so <= 0:
             return
         r, g, b = int(r * so), int(g * so), int(b * so)
-        # manim draws a line of 0.01*stroke_width*frame_unit pixels; native's
-        # rasteriser makes a quad of ``width+1`` pixels (draw_line.c:
-        # half_thick = thick*0.5 + 0.5), so hand it one less or every line comes
-        # out ~1.3-3.3x too wide (measured: LinearAlgebraScene grid luma +39%).
-        sw = max(0, int(round(self._stroke_width(mob))) - 1)
+        # manim draws a line of `0.01 * stroke_width * (pixel_height /
+        # frame_height)` pixels -- 1.2 px at 480p for the default stroke_width=2
+        # -- and native's rasteriser makes a quad of ``width + 1`` pixels
+        # (draw_line.c: half_thick = thick*0.5 + 0.5).  Native widths are
+        # integers, so an exact sub-pixel width needs the nearest integer quad
+        # ABOVE the target plus a compensating alpha: ink = (width+1) * alpha.
+        # Rounding to nearest with alpha 1 (the previous `round(px) - 1`) left
+        # every thin line short -- 1.2 px drawn as a 1 px quad is 17% less ink
+        # than CE, which is exactly the VectorBasicsScene / VectorArrow /
+        # OpeningManim signature (uniform ~12-22% dim, lit counts comparable).
+        px = self._stroke_width(mob)
+        if px <= 0:
+            return
+        sw = max(0, int(math.ceil(px - 1e-6)) - 1)
+        width_alpha = min(1.0, px / float(sw + 1))
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if progress <= 0:
             return
         if progress >= 1.0:
-            self.dll.AddLine(sx1, sy1, sx2, sy2, sw, r, g, b, a)
+            self.dll.AddLine(sx1, sy1, sx2, sy2, sw, r, g, b, a * width_alpha)
         else:
             ex = sx1 + (sx2 - sx1) * progress
             ey = sy1 + (sy2 - sy1) * progress
-            self.dll.AddLine(sx1, sy1, ex, ey, sw, r, g, b, a)
+            self.dll.AddLine(sx1, sy1, ex, ey, sw, r, g, b, a * width_alpha)
 
     def _send_dot(self, mob, a, w, h):
         cx, cy, _ = mob.get_center()
