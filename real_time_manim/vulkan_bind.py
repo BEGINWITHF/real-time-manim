@@ -2410,6 +2410,15 @@ class MLWindow(ShapeMixin, TextMixin):
                 "-framerate", str(fps),
                 "-i", "-",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                # Keep the frames full-range: the default limited-range
+                # conversion scales Y by 219/255 and the CLI's swscale truncates
+                # where manim's own encoder rounds, so a flat #808080 rendered
+                # correctly (verified from the DLL's own readback) decoded one
+                # level low -- and the chroma round trip amplified that into a
+                # (-4,-2,-5) RGB offset that pushed the flat scenes just outside
+                # tolerance.
+                "-vf", "scale=out_range=pc",
+                "-color_range", "pc",
                 "-crf", "18", "-preset", "fast",
                 self._fast_record_path,
             ]
