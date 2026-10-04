@@ -1070,18 +1070,36 @@ class MLWindow(ShapeMixin, TextMixin):
 
         Descender glyphs (g/p/j/y/q...) are the minority of deepest bottoms;
         the shallow half of letter bottoms cluster on the typographic baseline.
+
+        Returns ``None`` for a multi-line Text -- the whole baseline heuristic
+        assumes ONE visual line of words ("same-font words sharing a center
+        after arrange() fall onto one baseline"), and applying it to a tall
+        block moves the entire block: measured on ``FlagMappingScene``'s
+        20-line body it produced dy = -2.55 units (-153 px), so most of the
+        block was drawn below the frame (glyph first points out to y=600 in a
+        480 px window, d(last) -1.59).  A tall block is detected by comparing
+        its height with its tallest glyph, which is scale-free.
         """
         bottoms = []
+        glyph_heights = []
         stack = list(getattr(mob, 'submobjects', []))
         while stack:
             s = stack.pop()
             pts = getattr(s, 'points', None)
             if pts is not None and len(pts):
                 bottoms.append(float(pts[:, 1].min()))
+                glyph_heights.append(float(pts[:, 1].max() - pts[:, 1].min()))
             if getattr(s, 'submobjects', None):
                 stack.extend(s.submobjects)
         if not bottoms:
             return None
+        tallest = max(glyph_heights) if glyph_heights else 0.0
+        if tallest > 0.0:
+            try:
+                if float(mob.height) > 2.2 * tallest:
+                    return None
+            except Exception:
+                pass
         bottoms.sort()
         n = len(bottoms)
         shallow = bottoms[max(0, int(n * 0.5)):]
