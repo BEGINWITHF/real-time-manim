@@ -73,7 +73,9 @@ class ShapeMixin:
             return
         fr, fg, fb = self._fill_color(mob)
         self.dll.AddRect(sx, sy, half, half, rot, fr, fg, fb, 0, 0, 0, 0.0, progress, a * fo)
-        if so > 0:
+        if so > 0 and self._stroke_width(mob) > 0:
+            # `stroke_width = 0` means no stroke even though the rgba alpha is
+            # 1.0 (same trap as `_send_polygon`'s fill-only shapes).
             cr, cg, cb = self._stroke_color(mob)
             cr = int(cr * so)
             cg = int(cg * so)
@@ -140,7 +142,8 @@ class ShapeMixin:
             return
         fr, fg, fb = self._fill_color(mob)
         self.dll.AddRect(sx, sy, hw, hh, rot, fr, fg, fb, 0, 0, 0, 0.0, progress, a * fo)
-        if so > 0:
+        if so > 0 and self._stroke_width(mob) > 0:
+            # see _send_square: stroke_width 0 must not draw a border
             cr, cg, cb = self._stroke_color(mob)
             cr = int(cr * so)
             cg = int(cg * so)
@@ -207,7 +210,8 @@ class ShapeMixin:
             return
         fr, fg, fb = self._fill_color(mob)
         self.dll.AddEllipse(float(sx), float(sy), float(rx), float(ry), fr, fg, fb, 0, 0, 0, 0.0, progress, a * fo)
-        if so > 0:
+        if so > 0 and self._stroke_width(mob) > 0:
+            # see _send_square: stroke_width 0 must not draw a border
             cr, cg, cb = self._stroke_color(mob)
             cr = int(cr * so)
             cg = int(cg * so)
