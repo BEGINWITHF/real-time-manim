@@ -439,7 +439,13 @@ class ShapeMixin:
         cx, cy, _ = mob.get_center()
         sx, sy = manim_to_screen(cx, cy, w, h)
         scale_y = h / 8.0
-        rad = (mob.width / 2.0) * scale_y
+        # A Dot is a circle, but its bounding box need not be square: a VDict
+        # with show_keys=True stretches each entry to line up with its key label
+        # (measured: width 1.244 against height 0.351 for a radius-0.16 Dot), and
+        # taking the radius from `width` drew a disc 3.9x too big (emitted
+        # AddCircle radius 37px where CE's dot is 9.6px, 3882 yellow pixels
+        # against 226).  The smaller axis is the un-stretched one.
+        rad = (min(mob.width, mob.height) / 2.0) * scale_y
         try:
             fo = float(mob.fill_rgbas[:, 3].max())
         except Exception:
