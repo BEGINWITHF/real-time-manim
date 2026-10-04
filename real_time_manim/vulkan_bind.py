@@ -983,13 +983,14 @@ class MLWindow(ShapeMixin, TextMixin):
             rgb = rgb * 255.0
         image = np.empty(pixels.shape[:2] + (4,), dtype=np.uint8)
         image[..., :3] = np.clip(rgb, 0, 255).astype(np.uint8)
-        if pixels.shape[2] >= 4:
-            alpha = pixels[..., 3]
-            if float(alpha.max()) <= 1.0 + 1e-3:
-                alpha = alpha * 255.0
-            image[..., 3] = np.clip(alpha, 0, 255).astype(np.uint8)
-        else:
-            image[..., 3] = 255
+        # The rasterised frame is already composited over the background, and
+        # manim's own writer takes the RGB and ignores the alpha channel.  RTM
+        # draws it as a texture blended with SRC_ALPHA, so a camera alpha below
+        # 255 dimmed the whole frame (measured MovingZoomedSceneAround: every
+        # white texel came back (251,253,250) instead of (255,255,255) and
+        # (10,10,10) became (4,6,3), a uniform -1.9% and 220 -> 756 distinct
+        # colours).  Force it opaque to match CE.
+        image[..., 3] = 255
 
         height, width = image.shape[:2]
         data = np.ascontiguousarray(image)
