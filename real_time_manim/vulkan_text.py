@@ -468,7 +468,16 @@ class TextMixin:
         # stroke_alpha uses so (max stroke-rgba alpha) — consistent
         # with how fill_alpha uses fa (fill-rgba alpha from first element)
         stroke_alpha = min(1.0, so * a)
-        stroke_w = max(1.0, sw) if sw > 0 else 0
+        # Same sub-pixel rule as `_send_line`: native's quad/strip is
+        # `width + 1` px, so an exact pixel width needs the next integer up plus
+        # a compensating alpha (ink = (width+1) * alpha).  `AddLineStrip` takes
+        # per-vertex alphas, so the compensation rides on `stroke_point_alpha`.
+        if sw > 0:
+            stroke_w = max(1.0, float(int(math.ceil(sw - 1e-6)) - 1))
+            stroke_width_alpha = min(1.0, sw / (stroke_w + 1.0))
+        else:
+            stroke_w = 0
+            stroke_width_alpha = 1.0
         # Default per-vertex stroke alpha; the latex write-stroke synthesis
         # overrides this to fade the outline out as the fill comes in.
         stroke_point_alpha = a
@@ -489,7 +498,7 @@ class TextMixin:
         fbi = round(fb * 255)
 
         show_fill = 1 if fill_alpha > 0.01 and progress_lower == 0.0 else 0
-        do_stroke = stroke_alpha > 0.01 and stroke_w > 0
+        do_stroke = stroke_alpha > 0.01 and sw > 0
 
         if is_text and fill_alpha > 0.01:
             do_stroke = False
@@ -563,7 +572,7 @@ class TextMixin:
                 for i, (px, py) in enumerate(stroke_pts):
                     coords[i * 2] = px
                     coords[i * 2 + 1] = py
-                    alphas[i] = stroke_point_alpha
+                    alphas[i] = stroke_point_alpha * stroke_width_alpha
                 self.dll.AddLineStrip(coords, alphas, len(stroke_pts), int(stroke_w), sri, sgi, sbi, 1.0)
 
     def _send_text_stroke(self, mob, a, w, h, parent_offset=None):

@@ -424,6 +424,28 @@ class ShapeMixin:
         if so <= 0:
             return
         r, g, b = int(r * so), int(g * so), int(b * so)
+        # A Line whose points were warped by `apply_function` (OpeningManim's
+        # `grid.animate.apply_function(sin ...)`) is no longer straight, and
+        # drawing the start->end chord loses the curve -- CE draws the whole
+        # point path.  Hand those to the point path when a control point leaves
+        # the chord by more than ~0.02 manim units (1.2 px at 480p).
+        try:
+            _pts = mob.get_points()
+            if len(_pts) > 2:
+                _dx, _dy = float(e[0] - s[0]), float(e[1] - s[1])
+                _ln = math.hypot(_dx, _dy)
+                if _ln > 1e-6:
+                    _ux, _uy = _dx / _ln, _dy / _ln
+                    _dev = 0.0
+                    for _p in _pts:
+                        _d = -(_p[1] - s[1]) * _ux + (_p[0] - s[0]) * _uy
+                        if abs(_d) > _dev:
+                            _dev = abs(_d)
+                    if _dev > 0.02:
+                        self._send_vmobject(mob, a, w, h, parent_offset, rot)
+                        return
+        except Exception:
+            pass
         # manim draws a line of `0.01 * stroke_width * (pixel_height /
         # frame_height)` pixels -- 1.2 px at 480p for the default stroke_width=2
         # -- and native's rasteriser makes a quad of ``width + 1`` pixels
