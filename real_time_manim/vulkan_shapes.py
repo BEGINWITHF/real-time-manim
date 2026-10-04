@@ -707,7 +707,12 @@ class ShapeMixin:
                 flat.append(vx)
                 flat.append(vy)
             so = get_opacity(mob, 'stroke', 1.0)
-            if so <= 0:
+            if so <= 0 or bw <= 0:
+                # `stroke_width=0` means NO stroke, but `so` (the rgba alpha)
+                # stays 1.0 -- `max(1, round(bw))` then drew a 2 px border on
+                # every fill-only shape (manim's ConfigDrivenScene `plate` is a
+                # GREY_E fill with stroke_width=0; measured +4755 excess ink px
+                # against a 3128 px deficit, d(last) +1.02).
                 return
             self._stroke_polyline_with_progress(
                 flat, True, progress_lower, progress_upper,
@@ -733,7 +738,9 @@ class ShapeMixin:
                 len(verts), arr, 0 if has_bounds else progress, alpha * fo, 1
             )
             so = get_opacity(mob, 'stroke', 1.0)
-            if so > 0:
+            if so > 0 and bw > 0:
+                # `bw <= 0` means `stroke_width=0`: no stroke at all, even though
+                # the rgba alpha reads 1.0 (see the fill-only branch above).
                 self._stroke_polyline_with_progress(
                     flat, True, progress_lower, progress_upper,
                     int(br * so), int(bg * so), int(bb * so),
