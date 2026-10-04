@@ -767,6 +767,18 @@ class ShapeMixin:
         if so <= 0:
             return
         r, g, b = self._color(mob, a)
+        # The PMobject family (Mobject1D/Mobject2D/PMobject/PGroup/PointCloudDot)
+        # keeps its per-point colour in `mob.rgbas` -- `fill_rgbas` and
+        # `stroke_rgbas` both raise AttributeError on it, so `_color` fell back
+        # to its white default and every point cloud was drawn grey where CE
+        # renders the colours `add_line(..., color=...)` set (measured
+        # PointCloudMobjects: CE (144,160,128)/(128,176,112) against RTM's
+        # (240,240,240)/(112,112,112), d(last) +1.79).
+        rgbas = getattr(mob, 'rgbas', None)
+        try:
+            n_rgbas = len(rgbas) if rgbas is not None else 0
+        except Exception:
+            n_rgbas = 0
         cx, cy, _ = mob.get_center()
         sx, sy = manim_to_screen(cx, cy, w, h)
         radius = self._dot_radius(mob, h)
@@ -775,7 +787,7 @@ class ShapeMixin:
         except Exception:
             return
 
-        for p in points:
+        for i, p in enumerate(points):
             vx, vy = float(p[0]), float(p[1])
             if parent_offset is not None:
                 vx += parent_offset[0]
@@ -783,7 +795,12 @@ class ShapeMixin:
             vz = float(p[2]) if len(p) > 2 else 0.0
             px, py = manim_to_screen(vx, vy, w, h, vz)
             px, py = self._rotate_point(px, py, sx, sy, rot)
-            self.dll.AddPoint(px, py, r, g, b, a * so, radius)
+            if i < n_rgbas:
+                pr, pg, pb, pa = rgbas[i]
+                self.dll.AddPoint(px, py, int(float(pr) * 255), int(float(pg) * 255),
+                                  int(float(pb) * 255), float(pa) * a, radius)
+            else:
+                self.dll.AddPoint(px, py, r, g, b, a * so, radius)
 
     def _send_point(self, mob, a, w, h):
         pos = mob.get_location()
