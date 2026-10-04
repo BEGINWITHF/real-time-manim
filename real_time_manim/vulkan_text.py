@@ -147,7 +147,7 @@ class TextMixin:
         sx, sy = manim_to_screen(cx, cy, w, h)
         self.dll.AddText(sx, sy, base_r, base_g, base_b, font_px, 1.0, text_str.encode('utf-8'), alpha)
 
-    def _send_vmobject(self, mob, a, w, h, parent_offset=None, rot=0.0, is_text=False):
+    def _send_vmobject(self, mob, a, w, h, parent_offset=None, rot=0.0, is_text=False, exact_width=False):
         try:
             pts = mob.get_points()
         except Exception:
@@ -468,15 +468,17 @@ class TextMixin:
         # stroke_alpha uses so (max stroke-rgba alpha) — consistent
         # with how fill_alpha uses fa (fill-rgba alpha from first element)
         stroke_alpha = min(1.0, so * a)
-        # Same sub-pixel rule as `_send_line`: native's quad/strip is
-        # `width + 1` px, so an exact pixel width needs the next integer up plus
-        # a compensating alpha (ink = (width+1) * alpha).  `AddLineStrip` takes
-        # per-vertex alphas, so the compensation rides on `stroke_point_alpha`.
-        if sw > 0:
+        if exact_width and sw > 0:
+            # Warped lines arrive here from `_send_line`; give them the exact
+            # sub-pixel width (native's strip is `width+1` px, so use the next
+            # integer up plus a compensating alpha -- see _send_line).  NOT
+            # applied in general: dimming the outline of a filled shape measured
+            # worse than leaving it over-thick (ThreeDSurfaceLab -0.56 -> -2.08
+            # with it on).
             stroke_w = max(1.0, float(int(math.ceil(sw - 1e-6)) - 1))
             stroke_width_alpha = min(1.0, sw / (stroke_w + 1.0))
         else:
-            stroke_w = 0
+            stroke_w = max(1.0, sw) if sw > 0 else 0
             stroke_width_alpha = 1.0
         # Default per-vertex stroke alpha; the latex write-stroke synthesis
         # overrides this to fade the outline out as the fill comes in.
@@ -498,7 +500,7 @@ class TextMixin:
         fbi = round(fb * 255)
 
         show_fill = 1 if fill_alpha > 0.01 and progress_lower == 0.0 else 0
-        do_stroke = stroke_alpha > 0.01 and sw > 0
+        do_stroke = stroke_alpha > 0.01 and stroke_w > 0
 
         if is_text and fill_alpha > 0.01:
             do_stroke = False

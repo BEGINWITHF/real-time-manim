@@ -442,7 +442,8 @@ class ShapeMixin:
                         if abs(_d) > _dev:
                             _dev = abs(_d)
                     if _dev > 0.02:
-                        self._send_vmobject(mob, a, w, h, parent_offset, rot)
+                        self._send_vmobject(mob, a, w, h, parent_offset, rot,
+                                            exact_width=True)
                         return
         except Exception:
             pass
