@@ -347,9 +347,14 @@ class ShapeMixin:
         if so <= 0:
             return
         r, g, b = int(r * so), int(g * so), int(b * so)
-        # native draws a quad of width+1 px (draw_line.c: half_thick=thick/2+0.5),
-        # so pass one less or every line/arrow is ~1.3-3.3x too wide.
-        sw = max(0, int(round(self._stroke_width(mob))) - 1)
+        # Same integer-core-plus-fractional-edge rule as _send_line: a single
+        # widened quad makes every covered pixel cross an ink threshold, which
+        # is what the coverage detector saw on the arrow scenes.
+        px = self._stroke_width(mob)
+        if px <= 0:
+            return
+        core = int(math.floor(px + 1e-6))
+        frac = px - core
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if progress <= 0:
             return
@@ -370,11 +375,17 @@ class ShapeMixin:
         base_x = sx2 - ux * head_len
         base_y = sy2 - uy * head_len
         if progress >= 1.0:
-            self.dll.AddLine(sx1, sy1, base_x, base_y, sw, r, g, b, a)
+            ex, ey = base_x, base_y
         else:
             ex = sx1 + (base_x - sx1) * progress
             ey = sy1 + (base_y - sy1) * progress
-            self.dll.AddLine(sx1, sy1, ex, ey, sw, r, g, b, a)
+        if core < 1:
+            self.dll.AddLine(sx1, sy1, ex, ey, 0, r, g, b, a * min(1.0, px))
+        else:
+            if frac > 0.01:
+                self.dll.AddLine(sx1, sy1, ex, ey, core, r, g, b,
+                                 a * min(1.0, frac))
+            self.dll.AddLine(sx1, sy1, ex, ey, core - 1, r, g, b, a)
         px = -uy
         py = ux
         hx1 = base_x + px * head_w
@@ -460,17 +471,32 @@ class ShapeMixin:
         px = self._stroke_width(mob)
         if px <= 0:
             return
-        sw = max(0, int(math.ceil(px - 1e-6)) - 1)
-        width_alpha = min(1.0, px / float(sw + 1))
+        # Exact sub-pixel width as an integer core plus symmetric fractional
+        # edges, NOT one widened quad at a compensating alpha: native's quad is
+        # `width + 1` px, so a single quad covers the next integer up and every
+        # one of those pixels crosses an ink threshold.  That showed up as
+        # `ThreeDRotationProbe`'s excess coverage jumping 0.054 -> 0.192, all of
+        # it within 2 px of CE's strokes.  manim's own line is floor(px) solid
+        # plus (px - floor(px))/2 on each side, which is what drawing the wide
+        # quad at the residual alpha and an opaque core on top reproduces.
+        core = int(math.floor(px + 1e-6))
+        frac = px - core
         progress = getattr(mob, '_vulkan_progress', 1.0)
         if progress <= 0:
             return
         if progress >= 1.0:
-            self.dll.AddLine(sx1, sy1, sx2, sy2, sw, r, g, b, a * width_alpha)
+            ex, ey = sx2, sy2
         else:
             ex = sx1 + (sx2 - sx1) * progress
             ey = sy1 + (sy2 - sy1) * progress
-            self.dll.AddLine(sx1, sy1, ex, ey, sw, r, g, b, a * width_alpha)
+        if core < 1:
+            # thinner than one pixel: a single 1 px quad at the exact alpha
+            self.dll.AddLine(sx1, sy1, ex, ey, 0, r, g, b, a * min(1.0, px))
+            return
+        if frac > 0.01:
+            self.dll.AddLine(sx1, sy1, ex, ey, core, r, g, b,
+                             a * min(1.0, frac))
+        self.dll.AddLine(sx1, sy1, ex, ey, core - 1, r, g, b, a)
 
     def _send_dot(self, mob, a, w, h):
         cx, cy, _ = mob.get_center()
