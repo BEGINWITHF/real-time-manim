@@ -40,7 +40,7 @@ class ShapeMixin:
         return rotate_point(x, y, cx, cy, angle)
 
     def _send_square(self, mob, a, w, h, rot, parent_offset=None):
-        cx, cy, _ = mob.get_center()
+        cx, cy, cz = mob.get_center()
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
         about = getattr(mob, '_rotation_about_point', None)
@@ -55,7 +55,7 @@ class ShapeMixin:
         if grow_scale != 1.0 and grow_pt is not None:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
-        sx, sy = manim_to_screen(cx, cy, w, h)
+        sx, sy = manim_to_screen(cx, cy, w, h, cz)
         scale = h / 8.0
         half = mob.side_length / 2.0 * scale * grow_scale
         try:
@@ -108,7 +108,7 @@ class ShapeMixin:
                     remaining = 0
 
     def _send_rectangle(self, mob, a, w, h, rot, parent_offset=None):
-        cx, cy, _ = mob.get_center()
+        cx, cy, cz = mob.get_center()
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
         about = getattr(mob, '_rotation_about_point', None)
@@ -123,7 +123,7 @@ class ShapeMixin:
         if grow_scale != 1.0 and grow_pt is not None:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
-        sx, sy = manim_to_screen(cx, cy, w, h)
+        sx, sy = manim_to_screen(cx, cy, w, h, cz)
         scale = h / 8.0
         hw = mob.width / 2.0 * scale * grow_scale
         hh = mob.height / 2.0 * scale * grow_scale
@@ -176,7 +176,7 @@ class ShapeMixin:
                     remaining = 0
 
     def _send_ellipse(self, mob, a, w, h, rot, parent_offset=None):
-        cx, cy, _ = mob.get_center()
+        cx, cy, cz = mob.get_center()
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
         about = getattr(mob, '_rotation_about_point', None)
@@ -191,7 +191,7 @@ class ShapeMixin:
         if grow_scale != 1.0 and grow_pt is not None:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
-        sx, sy = manim_to_screen(cx, cy, w, h)
+        sx, sy = manim_to_screen(cx, cy, w, h, cz)
         scale = h / 8.0
         rx = mob.width / 2.0 * scale * grow_scale
         ry = mob.height / 2.0 * scale * grow_scale
@@ -244,7 +244,7 @@ class ShapeMixin:
                 prev_px, prev_py = px, py
 
     def _send_circle(self, mob, a, w, h, rot, parent_offset=None):
-        cx, cy, _ = mob.get_center()
+        cx, cy, cz = mob.get_center()
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
         about = getattr(mob, '_rotation_about_point', None)
@@ -259,7 +259,7 @@ class ShapeMixin:
         if grow_scale != 1.0 and grow_pt is not None:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
-        sx, sy = manim_to_screen(cx, cy, w, h)
+        sx, sy = manim_to_screen(cx, cy, w, h, cz)
         scale_y = h / 8.0
         sr = (mob.width / 2.0) * scale_y * grow_scale
         try:
@@ -336,10 +336,10 @@ class ShapeMixin:
         else:
             sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
-            cx, cy, _ = mob.get_center()
+            cx, cy, cz = mob.get_center()
             if parent_offset is not None:
                 cx += parent_offset[0]; cy += parent_offset[1]
-            scx, scy = manim_to_screen(cx, cy, w, h)
+            scx, scy = manim_to_screen(cx, cy, w, h, cz)
             sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
             sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
         r, g, b = self._stroke_color(mob)
@@ -424,10 +424,10 @@ class ShapeMixin:
         else:
             sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
-            cx, cy, _ = mob.get_center()
+            cx, cy, cz = mob.get_center()
             if parent_offset is not None:
                 cx += parent_offset[0]; cy += parent_offset[1]
-            scx, scy = manim_to_screen(cx, cy, w, h)
+            scx, scy = manim_to_screen(cx, cy, w, h, cz)
         sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
         sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
         r, g, b = self._stroke_color(mob)
@@ -499,8 +499,8 @@ class ShapeMixin:
         self.dll.AddLine(sx1, sy1, ex, ey, core - 1, r, g, b, a)
 
     def _send_dot(self, mob, a, w, h):
-        cx, cy, _ = mob.get_center()
-        sx, sy = manim_to_screen(cx, cy, w, h)
+        cx, cy, cz = mob.get_center()
+        sx, sy = manim_to_screen(cx, cy, w, h, cz)
         scale_y = h / 8.0
         # A Dot is a circle, but its bounding box need not be square: a VDict
         # with show_keys=True stretches each entry to line up with its key label
@@ -536,11 +536,11 @@ class ShapeMixin:
             e = e + off
         sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
         sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
-        cx, cy, _ = mob.get_center()
+        cx, cy, cz = mob.get_center()
         if parent_offset is not None:
             cx += parent_offset[0]
             cy += parent_offset[1]
-        scx, scy = manim_to_screen(cx, cy, w, h)
+        scx, scy = manim_to_screen(cx, cy, w, h, cz)
         sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
         sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
         so = get_opacity(mob, 'stroke', 1.0)
@@ -701,11 +701,11 @@ class ShapeMixin:
             points = None
         if points is None or len(points) < 4:
             return
-        cx, cy, _ = mob.get_center()
+        cx, cy, cz = mob.get_center()
         if parent_offset is not None:
             cx += parent_offset[0]
             cy += parent_offset[1]
-        sx, sy = manim_to_screen(cx, cy, w, h)
+        sx, sy = manim_to_screen(cx, cy, w, h, cz)
         flat = self._stroke_points_polyline(points, w, h, parent_offset, rot, sx, sy)
         if len(flat) < 4:
             return
@@ -719,7 +719,7 @@ class ShapeMixin:
 
     def _send_polygon(self, mob, verts, alpha=1.0, rot_override=None, parent_offset=None):
         w, h = self.win_w, self.win_h
-        cx, cy, _ = mob.get_center()
+        cx, cy, cz = mob.get_center()
         if parent_offset is not None:
             cx += parent_offset[0]
             cy += parent_offset[1]
@@ -738,7 +738,7 @@ class ShapeMixin:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
 
-        sx, sy = manim_to_screen(cx, cy, w, h)
+        sx, sy = manim_to_screen(cx, cy, w, h, cz)
         br, bg, bb = self._stroke_color(mob)
         bw = self._stroke_width(mob)
         rot = -get_anim_rotation(mob) if rot_override is None else rot_override
@@ -849,8 +849,8 @@ class ShapeMixin:
             n_rgbas = len(rgbas) if rgbas is not None else 0
         except Exception:
             n_rgbas = 0
-        cx, cy, _ = mob.get_center()
-        sx, sy = manim_to_screen(cx, cy, w, h)
+        cx, cy, cz = mob.get_center()
+        sx, sy = manim_to_screen(cx, cy, w, h, cz)
         radius = self._dot_radius(mob, h)
         try:
             points = mob.get_points()
@@ -874,6 +874,6 @@ class ShapeMixin:
 
     def _send_point(self, mob, a, w, h):
         pos = mob.get_location()
-        sx, sy = manim_to_screen(pos[0], pos[1], w, h)
+        sx, sy = manim_to_screen(pos[0], pos[1], w, h, pos[2])
         r, g, b = self._color(mob, a)
         self.dll.AddPoint(sx, sy, r, g, b, a, self._dot_radius(mob, h))

@@ -1425,7 +1425,20 @@ class MLWindow(ShapeMixin, TextMixin):
         # Route those through the polygon path rather than _send_vmobject so
         # the fill stays a full convex quad instead of going through Bezier
         # tessellation.
+        # A RoundedRectangle -- `SurroundingRectangle(corner_radius=...)` is one
+        # -- IS a Rectangle subclass, but `get_vertices()` returns the arc
+        # *anchors*, not the curved path, so drawing chords between them chamfers
+        # every corner (measured: a bright 45-degree cut across the corner where
+        # CE's arc leaves the frame background).  Take the polygon path only when
+        # the edges really are straight; a rounded one falls through to the point
+        # path, which tessellates the arcs.
+        _quad_flat = True
         if isinstance(mob, (Square, Rectangle)) and not is_text:
+            try:
+                _quad_flat = self._edges_are_straight(mob.get_points())
+            except Exception:
+                _quad_flat = True
+        if isinstance(mob, (Square, Rectangle)) and not is_text and _quad_flat:
             drawn = False
             try:
                 # Always route axis-aligned quads through the polygon path.
