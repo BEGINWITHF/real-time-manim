@@ -422,6 +422,18 @@ class TextMixin:
         except Exception:
             sr, sg, sb = fr, fg, fb
             sa = 1.0
+        from real_time_manim.background_color import background_image_rgb
+        if getattr(mob, 'get_background_image', None) is not None:
+            # The VectorField family carries a background image and leaves its
+            # stroke rgba WHITE; CE tints those strokes from that image.  Use the
+            # image's mean colour so the field is not drawn white (measured
+            # VectorFieldsAndTrackers, +2.58, 4832 white px vs CE's 768).
+            try:
+                _bg = background_image_rgb(mob)
+            except Exception:
+                _bg = None
+            if _bg is not None:
+                sr, sg, sb = _bg
         if sr == 0 and sg == 0 and sb == 0:
             sr, sg, sb = fr, fg, fb
             if is_text and sr == 0 and sg == 0 and sb == 0:
