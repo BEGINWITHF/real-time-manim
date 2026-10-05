@@ -191,6 +191,7 @@ $SourceFiles = @(
     "platform.c",
     "vulkan_init.c",
     "vulkan_draw.c",
+    "vulkan_texture.c",
     "draw/draw_rect.c",
     "draw/draw_circle.c",
     "draw/draw_line.c",

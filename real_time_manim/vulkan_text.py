@@ -1,6 +1,6 @@
 import ctypes
 import math
-from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb
+from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb, get_opacity
 from real_time_manim.animations import get_anim_opacity
 
 
@@ -32,7 +32,7 @@ class TextMixin:
                 for seg_i in range(num_segs):
                     for pt_i in range(4):
                         p = pts[seg_i * 4 + pt_i]
-                        vx, vy = manim_to_screen(p[0], p[1], w, h)
+                        vx, vy = manim_to_screen(p[0], p[1], w, h, p[2])
                         flat.append(vx)
                         flat.append(vy)
                         flat.append(0.0)
@@ -67,7 +67,7 @@ class TextMixin:
 
             flat = []
             for p in pts:
-                sx, sy = manim_to_screen(p[0], p[1], w, h)
+                sx, sy = manim_to_screen(p[0], p[1], w, h, p[2])
                 flat.append(sx)
                 flat.append(sy)
                 flat.append(0.0)
@@ -147,7 +147,7 @@ class TextMixin:
         sx, sy = manim_to_screen(cx, cy, w, h)
         self.dll.AddText(sx, sy, base_r, base_g, base_b, font_px, 1.0, text_str.encode('utf-8'), alpha)
 
-    def _send_vmobject(self, mob, a, w, h, parent_offset=None, rot=0.0, is_text=False):
+    def _send_vmobject(self, mob, a, w, h, parent_offset=None, rot=0.0, is_text=False, exact_width=False):
         try:
             pts = mob.get_points()
         except Exception:
@@ -190,7 +190,7 @@ class TextMixin:
             except Exception:
                 sr, sg, sb = 1, 1, 1
                 sa = 1.0
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
             sw_manim = 2.0
             try:
                 raw = mob.get_stroke_width()
@@ -307,6 +307,7 @@ class TextMixin:
             b_dy = float(getattr(mob, '_baseline_dy', 0.0) or 0.0)
             for p in pts:
                 px, py = p[0], p[1]
+                pz = float(p[2]) if len(p) > 2 else 0.0
                 if grow_scale != 1.0 and grow_pt is not None:
                     px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                     py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
@@ -317,7 +318,12 @@ class TextMixin:
                     px += parent_offset[0]
                     py += parent_offset[1]
                 py += b_dy
-                sx, sy = manim_to_screen(px, py, w, h)
+                # z must reach the viewport: a ThreeDCamera rotates the point
+                # before the screen mapping, so dropping it flattens every 3D
+                # VMobject (a Surface collapsed into thin stray strips).  native
+                # AddBezierPath reads stride-3 points but only x,y, so the third
+                # slot stays 0 here.
+                sx, sy = manim_to_screen(px, py, w, h, pz)
                 flat.append(sx)
                 flat.append(sy)
                 flat.append(0.0)
@@ -331,7 +337,7 @@ class TextMixin:
                 if len(frgbas) > 0:
                     fo = float(frgbas[0][3])
             except Exception:
-                fo = mob.get_fill_opacity() if hasattr(mob, 'get_fill_opacity') else 0.0
+                fo = get_opacity(mob, 'fill', 0.0)
             if fo > 0.01 and n >= 3:
                 fr, fg, fb = 0, 0, 0
                 try:
@@ -382,7 +388,19 @@ class TextMixin:
         try:
             frgbas = mob.get_fill_rgbas()
             if len(frgbas) > 0:
-                fr, fg, fb, fa = float(frgbas[0][0]), float(frgbas[0][1]), float(frgbas[0][2]), float(frgbas[0][3])
+                # manim keeps a *gradient* fill as several stops -- e.g.
+                # `set_sheen(0.4, RIGHT)` leaves [dim, bright].  Reading only
+                # stop 0 painted every gradient/sheen fill at its darkest stop
+                # (~25% dim): measured on VobjectManagerPathOperations the same
+                # region read '.' (52-78) in RTM against ':' (78-104) in CE,
+                # which straddles the lit threshold (luma>55) and cost 60% of
+                # the lit count.  Average the stops; a flat fill has all stops
+                # equal, so nothing else moves.
+                _stops = list(frgbas)
+                fr = sum(float(s[0]) for s in _stops) / len(_stops)
+                fg = sum(float(s[1]) for s in _stops) / len(_stops)
+                fb = sum(float(s[2]) for s in _stops) / len(_stops)
+                fa = max(float(s[3]) for s in _stops)
         except Exception:
             pass
         if fr == 0 and fg == 0 and fb == 0:
@@ -404,6 +422,18 @@ class TextMixin:
         except Exception:
             sr, sg, sb = fr, fg, fb
             sa = 1.0
+        from real_time_manim.background_color import background_image_rgb
+        if getattr(mob, 'get_background_image', None) is not None:
+            # The VectorField family carries a background image and leaves its
+            # stroke rgba WHITE; CE tints those strokes from that image.  Use the
+            # image's mean colour so the field is not drawn white (measured
+            # VectorFieldsAndTrackers, +2.58, 4832 white px vs CE's 768).
+            try:
+                _bg = background_image_rgb(mob)
+            except Exception:
+                _bg = None
+            if _bg is not None:
+                sr, sg, sb = _bg
         if sr == 0 and sg == 0 and sb == 0:
             sr, sg, sb = fr, fg, fb
             if is_text and sr == 0 and sg == 0 and sb == 0:
@@ -424,7 +454,7 @@ class TextMixin:
         try:
             so = float(mob.stroke_rgbas[:, 3].max())
         except Exception:
-            so = mob.get_stroke_opacity() if hasattr(mob, 'get_stroke_opacity') else 1.0
+            so = get_opacity(mob, 'stroke', 1.0)
         if so <= 0:
             try:
                 for fm in mob.family_members_with_points():
@@ -438,7 +468,18 @@ class TextMixin:
         # stroke_alpha uses so (max stroke-rgba alpha) — consistent
         # with how fill_alpha uses fa (fill-rgba alpha from first element)
         stroke_alpha = min(1.0, so * a)
-        stroke_w = max(1.0, sw) if sw > 0 else 0
+        if exact_width and sw > 0:
+            # Warped lines arrive here from `_send_line`; give them the exact
+            # sub-pixel width (native's strip is `width+1` px, so use the next
+            # integer up plus a compensating alpha -- see _send_line).  NOT
+            # applied in general: dimming the outline of a filled shape measured
+            # worse than leaving it over-thick (ThreeDSurfaceLab -0.56 -> -2.08
+            # with it on).
+            stroke_w = max(1.0, float(int(math.ceil(sw - 1e-6)) - 1))
+            stroke_width_alpha = min(1.0, sw / (stroke_w + 1.0))
+        else:
+            stroke_w = max(1.0, sw) if sw > 0 else 0
+            stroke_width_alpha = 1.0
         # Default per-vertex stroke alpha; the latex write-stroke synthesis
         # overrides this to fade the outline out as the fill comes in.
         stroke_point_alpha = a
@@ -533,7 +574,7 @@ class TextMixin:
                 for i, (px, py) in enumerate(stroke_pts):
                     coords[i * 2] = px
                     coords[i * 2 + 1] = py
-                    alphas[i] = stroke_point_alpha
+                    alphas[i] = stroke_point_alpha * stroke_width_alpha
                 self.dll.AddLineStrip(coords, alphas, len(stroke_pts), int(stroke_w), sri, sgi, sbi, 1.0)
 
     def _send_text_stroke(self, mob, a, w, h, parent_offset=None):

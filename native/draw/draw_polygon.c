@@ -33,7 +33,14 @@ void BuildVerticesFromPolygons(const PolygonObj* polygons, int count) {
            fanning a concave polygon from a boundary vertex overfills its
            notches. For convex shapes both origins cover the same area, so there
            is no visual discontinuity at the end of a Create. */
-        if (p->r != 0 || p->g != 0 || p->b != 0) {
+/* A fill is present whenever the caller passed fill alpha -- the fill COLOUR may
+   legitimately be pure black (ConfigDrivenScene's swatch is filled with
+   `config.background_color`, which defaults to black), so the colour must not
+   double as "no fill".  Testing r|g|b != 0 silently dropped every black-filled
+   shape and let the grey plate behind it show through (measured: same lit count
+   but +2.77 mean luma in ConfigDrivenScene).  Every AddPolygon call site on the
+   Python side only reaches here when the mobject really has a fill. */
+        if (p->alpha > 0.0001f) {
             float fan_x, fan_y;
             if (drawn >= perimeter - 0.001f) {
                 float cx = 0.0f, cy = 0.0f;

@@ -1,4 +1,5 @@
 import ctypes
+import hashlib
 import inspect
 import os
 import re
@@ -15,6 +16,8 @@ from manim import (
     Arc, Ellipse, Point, Text, VGroup, Group, OUT, ORIGIN, WHITE
 )
 from manim.animation.transform import Transform as _ManimTransform
+from manim.mobject.types.image_mobject import AbstractImageMobject
+from manim.mobject.types.point_cloud_mobject import PMobject
 from manim.animation.transform import FadeTransform as _ManimFadeTransform
 
 from real_time_manim.rate_functions import (
@@ -530,13 +533,130 @@ class BITMAPFILEHEADER(ctypes.Structure):
     ]
 
 
+def _setup_anim_scene(anim, scene):
+    """Give a manim animation its scene, the way manim's ``Scene.play`` does.
+
+    manim calls ``Animation._setup_scene(scene)`` before ``begin()``: it stores
+    ``anim.scene`` (``AddTextWordByWord`` reads it, and so do other manim
+    classes) and, for introducers, adds the animation's mobject to the scene.
+    RTM drives manim's animation classes directly, so it has to do the same --
+    otherwise such an animation dies with "has no attribute 'scene'".
+
+    Returns True when the animation learned about the scene.
+    """
+    setup = getattr(anim, "_setup_scene", None)
+    if callable(setup):
+        try:
+            setup(scene)
+        except Exception:
+            pass
+    # manim 0.21's hook stores anim.scene itself; 0.20's only registers
+    # introducers' mobjects, so make sure the attribute is there either way.
+    if getattr(anim, "scene", None) is None:
+        try:
+            anim.scene = scene
+        except Exception:
+            return False
+    return getattr(anim, "scene", None) is scene
+
+
+def _drive_mobject_updaters(scene, dt, patch_group=None, unpatch_group=None):
+    """Run every mobject updater on ``scene``, as manim does once per frame.
+
+    Updaters are *stateful* -- they accumulate over frames -- so this is only
+    meaningful while playing forward.  A seek should pass ``dt=0`` to re-anchor
+    instead of replaying history, which is what ``Timeline`` does.
+
+    ``patch_group``/``unpatch_group`` are optional hooks for the VGroup rotate
+    machinery, which lives in ``play()`` as closures over its per-frame state
+    (``_anim_alpha``, ``_prev_vg_rotation``); the play loop passes them, the
+    timeline path does not need them.
+    """
+    if patch_group is not None:
+        for mob in scene.mobjects:
+            if isinstance(mob, (VGroup, Group)) and getattr(mob, 'updaters', None):
+                patch_group(mob)
+
+    for mob in reversed(scene.mobjects):
+        if getattr(mob, 'updaters', None) and not getattr(mob, 'updating_suspended', False):
+            for updater in mob.updaters:
+                nparams = len(inspect.signature(updater).parameters)
+                if nparams == 0:
+                    updater()
+                elif nparams == 1:
+                    updater(mob)
+                else:
+                    updater(mob, dt)
+
+    if unpatch_group is not None:
+        for mob in scene.mobjects:
+            if isinstance(mob, (VGroup, Group)):
+                unpatch_group(mob)
+
+
+# Stable texture slot for the phase-5.4 camera fallback: the rasterised frame
+# is re-uploaded whenever its content digest changes, but always through
+# this one token (image tokens from vulkan_image start at 1, so no clash).
+_RASTER_TOKEN = 0xCA11E4A5
+
+
+def _raster_debug(message):
+    """Append a line to $RTM_RASTER_DEBUG when that is set (phase-5.4 tracing)."""
+    import os
+    path = os.environ.get("RTM_RASTER_DEBUG")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+    except Exception:
+        pass
+
+# native AddPolygon stores at most this many vertices and silently drops any
+# polygon that exceeds it (see native/shared_types.h MAX_POLYGON_VERTS and the
+# guard in platform.c).  Send larger polygons down the bezier path instead.
+NATIVE_MAX_POLYGON_VERTS = 64
+
+
+def container_subs(mob):
+    """The children of a container mobject.
+
+    manim's ``Mobject.__iter__`` yields *self first* when the mobject has points
+    (``it.chain([self] if self.has_points() else [], self.submobjects)``), so
+    ``enumerate(mob)`` / ``len(list(mob))`` on a point-bearing VGroup hands the
+    container back to itself -- a 978-frame recursion in HeatDiagramPlot, and an
+    off-by-one in the progress segmentation.  Iterate ``submobjects`` instead.
+    """
+    return getattr(mob, "submobjects", None) or ()
+
+
 class MLWindow(ShapeMixin, TextMixin):
-    def __init__(self, w=1920, h=1080):
+    # When True, play() records a timeline instead of rendering (see play()).
+    _schedule_mode = False
+    # Windows created while this is True are built hidden (never shown), so
+    # offline work -- frame export, fast record, batch rendering -- does not pop
+    # windows onto the desktop.  Set it around a scene run, then restore.
+    _hidden_default = False
+    # Every constructed window is registered here (used by frames.FrameServer
+    # to grab the window a scene created for itself).
+    _registry = []
+
+    def __init__(self, w=1920, h=1080, hidden=None):
+        if hidden is None:
+            hidden = bool(getattr(type(self), '_hidden_default', False))
+        self.hidden = bool(hidden)
         self.win_w = w
         self.win_h = h
         self.frame_count = 0
         self.scene = None
         self._active_anims = []
+        # Schedule mode (2.0.0): when the class flag _schedule_mode is True,
+        # play() records animations on a global timeline instead of rendering,
+        # so any frame can later be produced on demand via build_timeline().
+        self._sched = []          # list of (start_seconds, animation)
+        self._cursor = 0.0        # current end of the recorded timeline
+        self._defer_close = bool(getattr(type(self), '_schedule_mode', False))
+        type(self)._registry.append(self)
         self._recording = False
         self._record_dir = None
         self._record_frame_idx = 0
@@ -661,6 +781,7 @@ class MLWindow(ShapeMixin, TextMixin):
             ctypes.c_float, ctypes.c_float,
             ctypes.c_int, ctypes.c_int, ctypes.c_int,
             ctypes.c_float,
+            ctypes.c_float,
         ]
         self.dll.AddText.restype = None
         self.dll.AddText.argtypes = [
@@ -683,8 +804,40 @@ class MLWindow(ShapeMixin, TextMixin):
         self.dll.SaveScreenshot.restype = ctypes.c_int
         self.dll.SaveScreenshot.argtypes = [ctypes.c_char_p]
 
-        if self.dll.Vulkan_Init(w, h) != 1:
-            raise RuntimeError("Vulkan_Init failed")
+        # Textured quads (plan 4.4B): one stable token per mobject owning a GPU
+        # texture slot, refreshed only when the pixel digest changes.
+        self.dll.AddImageQuad.restype = None
+        self.dll.AddImageQuad.argtypes = [
+            ctypes.c_ulonglong, ctypes.c_ulonglong,
+            ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_float), ctypes.c_float,
+        ]
+
+        # Frame clear colour (manim's `camera.background_color`).  Optional: a DLL
+        # built before this existed simply keeps clearing to black.
+        _set_background = getattr(self.dll, 'SetBackgroundColor', None)
+        if _set_background is not None:
+            _set_background.restype = None
+            _set_background.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self._set_background = _set_background
+
+        self.dll.Vulkan_SetWindowVisible.restype = None
+        self.dll.Vulkan_SetWindowVisible.argtypes = [ctypes.c_int]
+        self.dll.Vulkan_InitEx.restype = ctypes.c_int
+        self.dll.Vulkan_InitEx.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+
+        init_ex = getattr(self.dll, 'Vulkan_InitEx', None)
+        if self.hidden and init_ex is not None:
+            # Create the window without ever showing it: offline work (frame
+            # export, fast record) must not pop a window onto the desktop.
+            if not init_ex(w, h, 1):
+                raise RuntimeError("Vulkan_InitEx failed")
+        else:
+            if self.dll.Vulkan_Init(w, h) != 1:
+                raise RuntimeError("Vulkan_Init failed")
+            if self.hidden:
+                # Older DLL without hidden creation: hide right after building.
+                self.set_visible(False)
 
         if sys.platform == "darwin":
             font_paths = [
@@ -708,8 +861,158 @@ class MLWindow(ShapeMixin, TextMixin):
         if not font_loaded:
             raise RuntimeError("Failed to load any font")
 
+    def _publish_background_color(self, scene):
+        """Hand native the frame's clear colour.
+
+        manim lets a scene override it (`self.camera.background_color`, falling back
+        to `config.background_color`); the native side used to hard-code black, so a
+        scene with a light background rendered on black (measured on the gallery logo
+        scene: CE luma 220 vs RTM 9.5, the largest mismatch in the suite).
+        """
+        setter = getattr(self, "_set_background", None)
+        if setter is None:
+            return
+        camera = getattr(scene, "camera", None)
+        colour = getattr(camera, "background_color", None)
+        if colour is None:
+            try:
+                from manim import config as _config
+                colour = _config["background_color"]
+            except Exception:
+                return
+        try:
+            if isinstance(colour, str):
+                from manim.utils.color.core import ManimColor
+                colour = ManimColor(colour)
+            rgb = colour.to_rgb() if hasattr(colour, "to_rgb") else colour
+            values = [float(v) for v in list(rgb)[:3]]
+        except Exception:
+            return
+        if len(values) == 3:
+            setter(*values)
+
+    @staticmethod
+    def _camera_needs_raster(scene, cam):
+        """True for a Camera subclass that redefines how a frame is captured.
+
+        Only *unhandled* subclasses qualify (plan 5.4): a Camera that overrides
+        ``capture_mobjects``/``get_frame`` can apply arbitrary per-pixel effects that
+        no vector pipeline can express, but the ones RTM already models properly --
+        MovingCamera (5.1), ThreeDCamera (5.2) -- must keep the vector path, or every
+        camera scene would silently become a slow full-screen rasterisation.
+        """
+        try:
+            from manim.camera.camera import Camera as _BaseCamera
+        except Exception:                              # pragma: no cover
+            return False
+        if type(cam) is _BaseCamera:
+            return False
+        handled = set()
+        for module, names in (
+                ("manim.camera.moving_camera", ("MovingCamera",)),
+                ("manim.camera.three_d_camera", ("ThreeDCamera", "SpecialThreeDCamera")),
+                ("manim.camera.mapping_camera", ("MappingCamera", "OldMultiCamera")),
+        ):
+            for name in names:
+                try:
+                    mod = __import__(module, fromlist=[name])
+                    handled.add(getattr(mod, name))
+                except Exception:
+                    pass
+        # A camera that renders *other cameras* into image mobjects composites a
+        # second viewport inside its own frame (ZoomedScene's MultiCamera does
+        # this in capture_mobjects, inset included).  There is no vector
+        # equivalent, and it must be checked before the MovingCamera exemption
+        # below -- MultiCamera *is* a MovingCamera.  The list is empty until
+        # activate_zooming() runs, so un-zoomed scenes keep the vector path.
+        if getattr(cam, "image_mobjects_from_cameras", None):
+            return True
+        if isinstance(cam, tuple(handled)) or getattr(cam, "zoomed_display", None) is not None:
+            return False
+        for klass in type(cam).__mro__:
+            if klass is _BaseCamera:
+                break
+            if "capture_mobjects" in klass.__dict__ or "get_frame" in klass.__dict__:
+                return True
+        return False
+
+    def _rasterise_custom_camera(self, scene):
+        """Draw a custom camera's frame as one textured quad (plan 5.4).
+
+        The scene's *own* camera does the rasterising, so whatever the subclass does
+        to the pixels is included by construction.  Correct but slow: one
+        rasterisation per frame, which is the accepted price of a fallback.
+        Returns True when it drew the frame.
+        """
+        cam = getattr(scene, "camera", None)
+        needs = cam is not None and self._camera_needs_raster(scene, cam)
+        _raster_debug(f"camera={type(cam).__name__ if cam is not None else None} "
+                      f"needs_raster={needs}")
+        if not needs:
+            return False
+        try:
+            reset = getattr(cam, "reset", None)
+            if callable(reset):
+                reset()                                # clear the previous frame
+            # Rasterise at the window's own resolution.  manim's camera is built
+            # from config.pixel_* (1920x1080 by default in this harness) while
+            # the window is 854x480, so the fallback was rasterising ~5x the
+            # pixels and only then downscaling: moving/zoomed scenes cost seconds
+            # per frame (MovingZoomedSceneAround's 180 frames exceeded the 600 s
+            # harness timeout) and a downscaled raster is blurrier than CE's own
+            # 854x480 render.
+            try:
+                if (int(cam.pixel_width) != self.win_w
+                        or int(cam.pixel_height) != self.win_h):
+                    cam.reset_pixel_shape(self.win_h, self.win_w)
+            except Exception:
+                pass
+            cam.capture_mobjects(list(scene.mobjects))
+            pixels = np.asarray(cam.pixel_array, dtype=np.float32)
+        except Exception as exc:
+            _raster_debug(f"  capture failed: {type(exc).__name__}: {exc}")
+            return False                               # fall back to the vector path
+        if pixels.ndim != 3 or pixels.shape[2] < 3:
+            _raster_debug(f"  unusable pixel_array: {getattr(pixels, 'shape', None)}")
+            return False
+        _raster_debug(f"  pixels {pixels.shape} min={float(pixels.min()):.3f} "
+                      f"max={float(pixels.max()):.3f} mean={float(pixels.mean()):.3f}")
+
+        rgb = pixels[..., :3]
+        if float(rgb.max()) <= 1.0 + 1e-3:              # manim hands back 0..1 floats
+            rgb = rgb * 255.0
+        image = np.empty(pixels.shape[:2] + (4,), dtype=np.uint8)
+        image[..., :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+        # The rasterised frame is already composited over the background, and
+        # manim's own writer takes the RGB and ignores the alpha channel.  RTM
+        # draws it as a texture blended with SRC_ALPHA, so a camera alpha below
+        # 255 dimmed the whole frame (measured MovingZoomedSceneAround: every
+        # white texel came back (251,253,250) instead of (255,255,255) and
+        # (10,10,10) became (4,6,3), a uniform -1.9% and 220 -> 756 distinct
+        # colours).  Force it opaque to match CE.
+        image[..., 3] = 255
+
+        height, width = image.shape[:2]
+        data = np.ascontiguousarray(image)
+        buf = (ctypes.c_ubyte * data.nbytes).from_buffer_copy(data.tobytes())
+        quad = (ctypes.c_float * 8)(
+            0.0, 0.0, float(self.win_w), 0.0,
+            float(self.win_w), float(self.win_h), 0.0, float(self.win_h))
+        key = int.from_bytes(hashlib.blake2b(data.tobytes(), digest_size=8).digest(),
+                             "little")
+        self.dll.AddImageQuad(_RASTER_TOKEN, key, buf, int(width), int(height), quad, 1.0)
+        return True
+
     def sync(self, scene, angle=0.0):
+        # Phase 5: publish this frame's camera viewport (None for a plain Camera,
+        # so non-camera scenes keep the fixed default frame).
+        from real_time_manim.camera_state import set_viewport_from_scene
+        set_viewport_from_scene(scene)
         self.dll.ClearShapes()
+        self._publish_background_color(scene)
+        # Phase 5.4: a custom camera's frame comes back as pixels, not geometry.
+        if self._rasterise_custom_camera(scene):
+            return
         skip_ids = getattr(self, '_skip_mob_ids', None)
         # Also skip any root that is a descendant of another root (prevents double render)
         def _search(node, target):
@@ -728,34 +1031,76 @@ class MLWindow(ShapeMixin, TextMixin):
                 if _search(other, r):
                     extra_skip.add(id(r))
                     break
+        # The camera frame is a helper mobject, not scene content (Phase 5.1).
+        cam_frame = getattr(getattr(scene, "camera", None), "frame", None)
+        if cam_frame is not None:
+            extra_skip.add(id(cam_frame))
         if skip_ids is None:
             skip_ids = extra_skip
         else:
             skip_ids |= extra_skip
         # Same-font Text roots on one visual line that need baseline alignment.
         self._row_text_ids = self._text_row_ids(scene, skip_ids)
+        # manim's ThreeDCamera leaves fixed-in-frame mobjects unprojected
+        # (transform_points_pre_display returns their points unchanged), so a
+        # 3D scene's title/caption stays put instead of being rotated away.  RTM
+        # had no such path at all: every root went through the 3D rotation and
+        # the caption landed off-frame (measured: FixedInFrameMObjectTest and
+        # the captions of ThreeDSurfaceLab / PolyhedraShowcase missing).
+        from real_time_manim.camera_state import (
+            set_viewport, get_viewport, Viewport, DEFAULT_FRAME_HEIGHT)
+        fixed_ids = set()
+        cam = getattr(scene, "camera", None)
+        for fixed in getattr(cam, "fixed_in_frame_mobjects", ()) or ():
+            fixed_ids.add(id(fixed))
         for mob in scene.mobjects:
             if skip_ids and id(mob) in skip_ids:
                 continue
-            self._send(mob, angle, parent_alpha=1.0)
+            if fixed_ids and id(mob) in fixed_ids:
+                saved = get_viewport()
+                set_viewport(Viewport((0.0, 0.0), DEFAULT_FRAME_HEIGHT))
+                try:
+                    self._send(mob, angle, parent_alpha=1.0)
+                finally:
+                    set_viewport(saved)
+            else:
+                self._send(mob, angle, parent_alpha=1.0)
 
     def _glyph_baseline(self, mob):
         """Approximate the x-height baseline of a Text from its glyph bottoms.
 
         Descender glyphs (g/p/j/y/q...) are the minority of deepest bottoms;
         the shallow half of letter bottoms cluster on the typographic baseline.
+
+        Returns ``None`` for a multi-line Text -- the whole baseline heuristic
+        assumes ONE visual line of words ("same-font words sharing a center
+        after arrange() fall onto one baseline"), and applying it to a tall
+        block moves the entire block: measured on ``FlagMappingScene``'s
+        20-line body it produced dy = -2.55 units (-153 px), so most of the
+        block was drawn below the frame (glyph first points out to y=600 in a
+        480 px window, d(last) -1.59).  A tall block is detected by comparing
+        its height with its tallest glyph, which is scale-free.
         """
         bottoms = []
+        glyph_heights = []
         stack = list(getattr(mob, 'submobjects', []))
         while stack:
             s = stack.pop()
             pts = getattr(s, 'points', None)
             if pts is not None and len(pts):
                 bottoms.append(float(pts[:, 1].min()))
+                glyph_heights.append(float(pts[:, 1].max() - pts[:, 1].min()))
             if getattr(s, 'submobjects', None):
                 stack.extend(s.submobjects)
         if not bottoms:
             return None
+        tallest = max(glyph_heights) if glyph_heights else 0.0
+        if tallest > 0.0:
+            try:
+                if float(mob.height) > 2.2 * tallest:
+                    return None
+            except Exception:
+                pass
         bottoms.sort()
         n = len(bottoms)
         shallow = bottoms[max(0, int(n * 0.5)):]
@@ -859,7 +1204,25 @@ class MLWindow(ShapeMixin, TextMixin):
                     return False
         return True
 
-    def _send(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False):
+    def _send(self, *args, **kwargs):
+        """Entry point: guard against a container that iterates itself.
+
+        The real fix is ``container_subs`` (iterate ``submobjects``); this keeps a
+        future mistake from turning into a RecursionError.
+        """
+        stack = getattr(self, '_send_stack', None)
+        if stack is None:
+            stack = self._send_stack = set()
+        key = id(args[0]) if args else None
+        if key in stack:
+            return
+        stack.add(key)
+        try:
+            return self._send_impl(*args, **kwargs)
+        finally:
+            stack.discard(key)
+
+    def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False):
         w, h = self.win_w, self.win_h
         own_alpha = get_anim_opacity(mob)
         a = parent_alpha * own_alpha
@@ -933,7 +1296,8 @@ class MLWindow(ShapeMixin, TextMixin):
                         except Exception:
                             pass
             vgroup_progress = getattr(mob, '_vulkan_progress', 1.0)
-            num_subs = len(list(mob)) if hasattr(mob, '__len__') else 0
+            subs = container_subs(mob)
+            num_subs = len(subs)
             about = getattr(mob, '_rotation_about_point', None)
             is_3d = getattr(mob, '_rotation_3d', False)
             vgroup_center = np.array(mob.get_center(), dtype=float)
@@ -961,7 +1325,7 @@ class MLWindow(ShapeMixin, TextMixin):
                         if need_gp:
                             del sub._grow_point
                 return
-            for i, sub in enumerate(mob):
+            for i, sub in enumerate(subs):
                 sub_offset = offset
                 if about is not None and rot != 0.0:
                     sub_center = np.array(sub.get_center(), dtype=float)
@@ -1046,6 +1410,15 @@ class MLWindow(ShapeMixin, TextMixin):
 
         screen_rot = -rot
 
+        # Images have no rgba arrays and four corner points, so the shape
+        # senders below cannot express them (they used to fall through to
+        # _send_vmobject as an opaque white quad).  Plan 4.4B routes them to the
+        # native texture pipeline instead.
+        if isinstance(mob, AbstractImageMobject) and not is_text:
+            from real_time_manim.vulkan_image import send_image
+            if send_image(self, mob, a):
+                return
+
         # For squares/rectangles whose points are already rotated (e.g. by
         # .animate.rotate()), the native rect dispatcher computes from the
         # axis-aligned width/height and would lose the true corner geometry.
@@ -1053,6 +1426,7 @@ class MLWindow(ShapeMixin, TextMixin):
         # the fill stays a full convex quad instead of going through Bezier
         # tessellation.
         if isinstance(mob, (Square, Rectangle)) and not is_text:
+            drawn = False
             try:
                 # Always route axis-aligned quads through the polygon path.
                 # This keeps fills solid both for .animate.rotate() (points already
@@ -1064,9 +1438,20 @@ class MLWindow(ShapeMixin, TextMixin):
                     rot_override=screen_rot,
                     parent_offset=parent_offset,
                 )
-                return
+                drawn = True
             except Exception:
-                pass
+                drawn = False
+            if drawn:
+                # A Rectangle may carry submobjects -- manim's SampleSpace turns
+                # its divided parts into children -- and manim's family walk
+                # paints parent first, then children on top.  Returning here
+                # without walking them dropped the divisions entirely (the
+                # SampleSpace showed only its base fill; charts d(last) -6.33).
+                for sub in getattr(mob, 'submobjects', ()) or ():
+                    self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
+                               parent_transforming=parent_transforming,
+                               parent_is_text=is_text)
+                return
 
         if isinstance(mob, Square):
             self._send_square(mob, a, w, h, screen_rot, parent_offset)
@@ -1077,19 +1462,50 @@ class MLWindow(ShapeMixin, TextMixin):
         elif isinstance(mob, Dot):
             self._send_dot(mob, a, w, h)
         elif isinstance(mob, Circle):
-            self._send_circle(mob, a, w, h, screen_rot, parent_offset)
+            # same reasoning as the Arc branch: a partially drawn circle keeps the
+            # real radius on the point path (native progress counts segments of a
+            # full-radius circle, and `mob.width/2` is the chord early on).
+            _c_progress = getattr(mob, '_vulkan_progress', 1.0)
+            if 0.0 < _c_progress < 1.0:
+                self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
+                                    rot, is_text=is_text)
+            else:
+                self._send_circle(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Arrow):
             self._send_arrow(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, DashedLine):
-            self._send_dashed_line(mob, a, w, h)
+            self._send_dashed_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Line):
             self._send_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Arc):
-            self._send_arc(mob, a, w, h)
-        elif isinstance(mob, Polygon):
-            self._send_polygon(mob, mob.get_vertices(), a)
-        elif isinstance(mob, Polygram):
-            self._send_polygon(mob, mob.get_vertices(), a)
+            # `_send_arc` reads mob.radius / start_angle -- construction-time
+            # attributes that a partial draw (`Create`) or a scale does not
+            # update, so an arc that is being drawn or morphed has to go through
+            # the point path, which tessellates the actual points and honours
+            # `_vulkan_progress` (plan 4.2).
+            _arc_progress = getattr(mob, '_vulkan_progress', 1.0)
+            if 0.0 < _arc_progress < 1.0 or getattr(mob, '_transforming', False):
+                self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
+                                    rot, is_text=is_text)
+            else:
+                self._send_arc(mob, a, w, h)
+        elif isinstance(mob, (Polygon, Polygram)):
+            # native AddPolygon *silently drops* any polygon with more than
+            # MAX_POLYGON_VERTS (64) vertices (platform.c: `vert_count <=
+            # MAX_POLYGON_VERTS`), and its fill loop also indexes edge_lens[64].
+            # Axes.get_area() returns an 84-vertex Polygon, so the whole filled
+            # area disappeared (GraphAreaPlot lit 8782 vs CE 27905).  Route the
+            # big ones through the bezier path, which tessellates and fills up
+            # to 1024 segments.
+            _verts = mob.get_vertices()
+            if _verts is not None and len(_verts) > NATIVE_MAX_POLYGON_VERTS:
+                self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
+                                    rot, is_text=is_text)
+            else:
+                self._send_polygon(mob, _verts, a)
+        elif isinstance(mob, PMobject):
+            # 点云/PMobject：逐点画，别走贝塞尔填充（实测会糊成实心，ink 差 4 倍）
+            self._send_point_cloud(mob, a, w, h, rot=rot, parent_offset=parent_offset)
         elif isinstance(mob, Point):
             self._send_point(mob, a, w, h)
         else:
@@ -1131,6 +1547,186 @@ class MLWindow(ShapeMixin, TextMixin):
         return mobjects
 
     def play(self, *animations, **kwargs):
+        """Timeline-driven playback (2.0.0).
+
+        Animations are scheduled on one Timeline and every frame is produced by
+        evaluating that schedule at time ``t`` -- the same O(1) ``render_at``
+        path that powers seeking.  The legacy fork-aware pipeline is preserved
+        as :meth:`_play_legacy` for reference during the migration.
+        """
+        if not self.scene:
+            return
+
+        if type(self)._schedule_mode:
+            self._schedule_play(animations, kwargs)
+            return
+
+        from real_time_manim.timeline import Timeline
+        from manim.mobject.mobject import _AnimationBuilder
+
+        # resolve .animate builders
+        resolved = []
+        for anim in animations:
+            if isinstance(anim, _AnimationBuilder):
+                anim.anim_args['suspend_mobject_updating'] = False
+                resolved.append(anim.build())
+            else:
+                resolved.append(anim)
+        animations = tuple(resolved)
+
+        # Add() only makes mobjects visible; it is not a timed animation.
+        add_mobs = []
+        for anim in animations:
+            add_mobs.extend(self._extract_add_mobjects(anim))
+        real_anims = [a for a in animations if not isinstance(a, Add)]
+
+        # manim resolves a lone Wait's frozen-vs-stepping decision inside its
+        # renderer, which RTM replaces -- so do it here, before the timeline is
+        # built, because it decides whether the wait is counted int() or ceil().
+        from real_time_manim.timeline import resolve_static_wait
+        resolve_static_wait(self.scene, real_anims)
+
+        # shared kwargs
+        if 'run_time' in kwargs:
+            for a in real_anims:
+                a.run_time = kwargs['run_time']
+        if 'rate_func' in kwargs:
+            for a in real_anims:
+                a.rate_func = kwargs['rate_func']
+
+        for mob in add_mobs:
+            set_anim_opacity(mob, 1.0)
+            if mob not in self.scene.mobjects:
+                self.scene.mobjects.append(mob)
+
+        # make sure every animated mobject is present in the scene
+        for a in real_anims:
+            m = getattr(a, 'mobject', None)
+            if m is not None and m not in self.scene.mobjects:
+                self.scene.mobjects.append(m)
+            for mob in (getattr(a, 'mobjects', None) or []):
+                if mob not in self.scene.mobjects:
+                    self.scene.mobjects.append(mob)
+            cur = getattr(a, 'cursor', None)
+            if cur is not None and cur not in self.scene.mobjects:
+                self.scene.mobjects.append(cur)
+
+        tl = Timeline(self, self.scene)
+        for a in real_anims:
+            tl.add(a, 0.0)
+        tl.finalize()
+
+        self._run_timeline(tl, real_anims)
+
+    def _run_timeline(self, tl, anims=None):
+        """Walk a finalized Timeline forward, drawing and capturing each frame.
+
+        The frame count comes from ``timeline.ce_frame_count`` so a recording has
+        exactly as many frames as manim would emit for the same play -- ceil for an
+        animation, truncation for a wait.  Rounding both to nearest drifted by a
+        frame per segment.
+        """
+        from real_time_manim.timeline import ce_frame_count
+        fps = self._fast_record_fps if self._fast_record else 30
+        dt = 1.0 / fps
+        if anims is None:
+            anims = [e.get("anim") for e in getattr(tl, "_entries", [])]
+        n_frames = ce_frame_count(anims, tl.duration, fps)
+
+        if self._fast_record:
+            self._fast_record_sim_time = time.time()
+            self._last_frame_time = self._fast_record_sim_time - dt
+
+        for k in range(n_frames):
+            frame_start = time.time()
+            tl.render_at(k * dt)
+
+            if self._fast_record:
+                if getattr(self, '_fast_record_count_only', False):
+                    pass
+                elif getattr(self, '_fast_record_pipe_mode', True):
+                    self._capture_screenshot_to_pipe()
+                else:
+                    self.screenshot(os.path.join(
+                        self._fast_record_path,
+                        f"frame_{self._fast_record_frame_idx:06d}.bmp"))
+                self._fast_record_frame_idx += 1
+            else:
+                self._capture_frame()
+                elapsed = time.time() - frame_start
+                if elapsed < dt:
+                    time.sleep(dt - elapsed)
+
+        for entry in tl._entries:
+            anim = entry['anim']
+            if hasattr(anim, 'clean_up_from_scene'):
+                try:
+                    anim.clean_up_from_scene(self.scene)
+                except Exception:
+                    pass
+
+    def _schedule_play(self, animations, kwargs):
+        """Record a play() call on the global timeline instead of rendering.
+
+        Mobjects are still added to the scene (so everything exists for later
+        evaluation) but nothing is drawn.  Later, ``build_timeline()`` turns the
+        whole recording into a Timeline whose every frame can be produced on
+        demand.
+        """
+        from manim.mobject.mobject import _AnimationBuilder
+
+        resolved = []
+        for anim in animations:
+            if isinstance(anim, _AnimationBuilder):
+                anim.anim_args['suspend_mobject_updating'] = False
+                resolved.append(anim.build())
+            else:
+                resolved.append(anim)
+        animations = tuple(resolved)
+
+        add_mobs = []
+        for anim in animations:
+            add_mobs.extend(self._extract_add_mobjects(anim))
+        real = [a for a in animations if not isinstance(a, Add)]
+
+        if 'run_time' in kwargs:
+            for a in real:
+                a.run_time = kwargs['run_time']
+        if 'rate_func' in kwargs:
+            for a in real:
+                a.rate_func = kwargs['rate_func']
+
+        for mob in add_mobs:
+            set_anim_opacity(mob, 1.0)
+            if mob not in self.scene.mobjects:
+                self.scene.mobjects.append(mob)
+        for a in real:
+            m = getattr(a, 'mobject', None)
+            if m is not None and m not in self.scene.mobjects:
+                self.scene.mobjects.append(m)
+            for mob in (getattr(a, 'mobjects', None) or []):
+                if mob not in self.scene.mobjects:
+                    self.scene.mobjects.append(mob)
+            cur = getattr(a, 'cursor', None)
+            if cur is not None and cur not in self.scene.mobjects:
+                self.scene.mobjects.append(cur)
+
+        duration = max((float(getattr(a, 'run_time', 1.0) or 1.0) for a in real),
+                       default=0.0)
+        for a in real:
+            self._sched.append((self._cursor, a))
+        self._cursor += duration
+
+    def build_timeline(self):
+        """Turn the recorded schedule into a Timeline (begin() once)."""
+        from real_time_manim.timeline import Timeline
+        tl = Timeline(self, self.scene)
+        for start, anim in self._sched:
+            tl.add(anim, start)
+        tl.finalize()
+        return tl
+
+    def _play_legacy(self, *animations, **kwargs):
         if not self.scene:
             return
 
@@ -1416,6 +2012,7 @@ class MLWindow(ShapeMixin, TextMixin):
                 # by the previous animation's target setup at line 513.
                 if getattr(a, 'mobject', None) is not None:
                     set_anim_opacity(a.mobject, 1.0)
+                _setup_anim_scene(a, self.scene)
                 a.start_time = self._fast_record_sim_time if self._fast_record else time.time()
                 a.begin()
                 tm = getattr(a, 'target_mobject', None)
@@ -1626,26 +2223,9 @@ class MLWindow(ShapeMixin, TextMixin):
                                 sub.points = (sub.points - pivot) @ rot_matrix.T + pivot
                     _prev_vg_rotation[id(mob)] = vg_rot
 
-            for mob in self.scene.mobjects:
-                if isinstance(mob, (VGroup, Group)) and getattr(mob, 'updaters', None):
-                    _patch_vgroup(mob)
-
-            for mob in reversed(self.scene.mobjects):
-                if hasattr(mob, 'updaters') and mob.updaters and not getattr(mob, 'updating_suspended', False):
-                    for updater in mob.updaters:
-                        nparams = len(inspect.signature(updater).parameters)
-                        if nparams == 0:
-                            updater()
-                        elif nparams == 1:
-                            updater(mob)
-                        else:
-                            updater(mob, dt)
+            _drive_mobject_updaters(self.scene, dt, _patch_vgroup, _unpatch_vgroup)
 
             clear_anim_rotation_delta()
-
-            for mob in self.scene.mobjects:
-                if isinstance(mob, (VGroup, Group)) and id(mob) in _orig_vgroup_rotate:
-                    _unpatch_vgroup(mob)
 
             if self._fast_record:
                 seg = self._fast_record_segment
@@ -1659,9 +2239,15 @@ class MLWindow(ShapeMixin, TextMixin):
                     if getattr(self, '_fast_record_count_only', False):
                         pass  # count only — no GPU
                     else:
+                        # Queue this frame's state first, then draw + capture it:
+                        # tick() renders whatever is queued, so drawing before
+                        # sync() would capture the previous frame.  The readback
+                        # request must also be armed before the draw, so the
+                        # frame copies itself out while it still owns the image.
+                        self.sync(self.scene)
+                        self.request_readback()
                         if not self.tick():
                             break
-                        self.sync(self.scene)
                         if getattr(self, '_fast_record_pipe_mode', True):
                             self._capture_screenshot_to_pipe()
                         else:
@@ -1672,9 +2258,10 @@ class MLWindow(ShapeMixin, TextMixin):
                 
                 self._fast_record_frame_idx += 1
             else:
+                self.sync(self.scene)
+                self.request_readback()
                 if not self.tick():
                     break
-                self.sync(self.scene)
                 self._capture_frame()
 
             frame_count += 1
@@ -1706,6 +2293,18 @@ class MLWindow(ShapeMixin, TextMixin):
     def screenshot(self, path):
         path_bytes = path.encode('utf-8') if isinstance(path, str) else path
         return self.dll.SaveScreenshot(path_bytes)
+
+    def request_readback(self):
+        """Arm the next drawn frame to copy itself for readback.
+
+        Must be called *before* the tick that draws the frame you want.  A
+        presented swapchain image is owned by the presentation engine, so
+        copying it afterwards returns undefined pixels; the engine copies the
+        frame while it still owns it instead.
+        """
+        fn = getattr(self.dll, 'Vulkan_RequestReadback', None)
+        if fn is not None:
+            fn()
 
     def screenshot_printwindow(self, path):
         if sys.platform != "win32":
@@ -1811,6 +2410,15 @@ class MLWindow(ShapeMixin, TextMixin):
                 "-framerate", str(fps),
                 "-i", "-",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                # Keep the frames full-range: the default limited-range
+                # conversion scales Y by 219/255 and the CLI's swscale truncates
+                # where manim's own encoder rounds, so a flat #808080 rendered
+                # correctly (verified from the DLL's own readback) decoded one
+                # level low -- and the chroma round trip amplified that into a
+                # (-4,-2,-5) RGB offset that pushed the flat scenes just outside
+                # tolerance.
+                "-vf", "scale=out_range=pc",
+                "-color_range", "pc",
                 "-crf", "18", "-preset", "fast",
                 self._fast_record_path,
             ]
@@ -1820,16 +2428,74 @@ class MLWindow(ShapeMixin, TextMixin):
                 f"manim_fast_{os.getpid()}_{id(self)}.bmp")
             print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps → {path}")
 
+    def set_visible(self, visible=True):
+        """Show or hide the window after it was created.
+
+        Used to build a window hidden (offline frame export / fast record) and
+        only reveal it when a human is meant to watch (FrameServer.show_frame).
+        """
+        visible = bool(visible)
+        fn = getattr(self.dll, 'Vulkan_SetWindowVisible', None)
+        if fn is not None:
+            fn(1 if visible else 0)
+        elif sys.platform == "win32":
+            # Older DLL without the export: hide/show by window title.
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, "Real Time Manim")
+            if hwnd:
+                user32.ShowWindow(hwnd, 5 if visible else 0)  # SW_SHOW / SW_HIDE
+        self.hidden = not visible
+
     def close(self):
+        if getattr(self, '_defer_close', False):
+            return                    # keep the window alive for on-demand frames
+        self._unregister()
         self.dll.Vulkan_Shutdown()
 
+    def _unregister(self):
+        """Drop this window from the class registry.
+
+        Every constructed MLWindow registers itself there; without this a process
+        that opens many windows (batch runs, harnesses) keeps them all alive.
+        Pure bookkeeping -- safe to call in any state, no GPU involved.
+        """
+        reg = type(self)._registry
+        while self in reg:
+            reg.remove(self)
+
     def _capture_screenshot_to_pipe(self):
-        """SaveScreenshot → parse BMP → pipe BGR to ffmpeg."""
+        """SaveScreenshot → parse BMP → pipe tightly packed BGR to ffmpeg.
+
+        BMP rows are padded to a 4-byte boundary ((w*3 + 3) & ~3 == 2564 bytes
+        at 854 px wide), but ffmpeg's ``bgr24`` with ``-video_size w x h`` expects
+        tightly packed rows.  Piping the payload verbatim therefore lands every
+        row 2 bytes late, which shears the picture horizontally by ~0.67 px per
+        row -- a vertical line comes out as a diagonal.  The padding has to be
+        stripped here (this is what _fast_row_padded exists for).
+        """
         tmp = self._fast_tmp_bmp
         self.dll.SaveScreenshot(tmp.encode('utf-8'))
         with open(tmp, 'rb') as f:
             f.seek(54)
-            self._ffmpeg.stdin.write(f.read())
+            data = f.read()
+
+        row_size = self._fast_row_size                 # w * 3, what ffmpeg wants
+        padded = self._fast_row_padded                 # what the BMP carries
+        if padded == row_size:
+            self._ffmpeg.stdin.write(data)
+            return
+
+        height = self._fast_h
+        try:
+            import numpy as np
+            rows = np.frombuffer(data, dtype=np.uint8, count=padded * height)
+            self._ffmpeg.stdin.write(rows.reshape(height, padded)[:, :row_size].tobytes())
+        except Exception:                              # numpy unavailable
+            out = bytearray(row_size * height)
+            for y in range(height):
+                src = y * padded
+                out[y * row_size:(y + 1) * row_size] = data[src:src + row_size]
+            self._ffmpeg.stdin.write(bytes(out))
 
     def _finish_fast_record(self):
         """Finish recording: close ffmpeg pipe or report BMP count."""

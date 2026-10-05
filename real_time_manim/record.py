@@ -50,12 +50,28 @@ def _default_out_path() -> str:
 # scene normalisation
 # --------------------------------------------------------------------------
 
+def scene_lifecycle(scene) -> None:
+    """Run a scene the way Manim does: ``setup()`` first, then ``construct()``.
+
+    Manim's own ``Scene.render()`` calls ``setup()`` before ``construct()``.
+    RTM used to call ``construct()`` alone, so everything a scene prepares in
+    ``setup()`` was missing -- ``LinearTransformationScene`` (``moving_vectors``),
+    ``ZoomedScene`` (``zoomed_display``), ``MovingCameraScene`` (``camera.frame``)
+    and any user ``setup()`` hook.
+    """
+    # Phase 6: capture Scene.add_sound so the recorder can mux a real track
+    from real_time_manim import audio_track
+    audio_track.install_add_sound_hook(scene)
+    scene.setup()
+    scene.construct()
+
+
 def _as_runner(scene: Union[type, Any, Callable[[], None]]) -> Callable[[], None]:
     """Turn a Scene subclass / Scene instance / callable into a no-arg runner.
 
     Scenes in real-time-manim drive themselves via ``construct()`` and close
     their own :class:`MLWindow`, so the runner is just: create (if needed) and
-    call ``construct()``.
+    run the scene's lifecycle.
     """
     if isinstance(scene, type):
         if not hasattr(scene, "construct"):
@@ -63,9 +79,9 @@ def _as_runner(scene: Union[type, Any, Callable[[], None]]) -> Callable[[], None
                 "scene looks like a class but has no construct(); pass a Scene "
                 "subclass, a Scene instance, or a no-arg callable."
             )
-        return lambda: scene().construct()
+        return lambda: scene_lifecycle(scene())
     if hasattr(scene, "construct"):
-        return scene.construct
+        return lambda: scene_lifecycle(scene)
     if callable(scene):
         return scene
     raise TypeError(
@@ -161,24 +177,39 @@ class _AutoRecord:
 
 def _run(scene, out_path: str, on_init, on_close,
          verbose: bool, overwrite: bool, count_only: bool,
-         cleanup: bool = True) -> Dict[str, Any]:
+         cleanup: bool = True, hidden: Optional[bool] = None) -> Dict[str, Any]:
     runner = _as_runner(scene)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     _guard_overwrite(out_path, overwrite, count_only)
+    from real_time_manim import audio_track
+    audio_track.reset()
     rec = _AutoRecord(out_path, on_init, on_close, verbose=verbose)
-    with rec:
-        runner()
+    # ``hidden`` decides whether the scene's windows are *created* hidden (never
+    # shown, so nothing pops onto the desktop) -- not merely hidden afterwards.
+    from real_time_manim.vulkan_bind import MLWindow
+    prev_hidden = MLWindow._hidden_default
+    if hidden is not None:
+        MLWindow._hidden_default = bool(hidden)
+    try:
+        with rec:
+            runner()
+    finally:
+        MLWindow._hidden_default = prev_hidden
     # Rendering leaves transient manim media/Tex output behind; clear it for the
     # caller so they never have to remember to.  Opt out via cleanup=False.
     if cleanup:
         from real_time_manim.util import clear_media
         clear_media(verbose=verbose)
-    files = rec.windows if rec.windows else _produced_files(out_path)
+    files = [f for f in (rec.windows if rec.windows else _produced_files(out_path))
+             if os.path.exists(f)]
+    # Phase 6: attach the sounds the scene registered (copy the video stream).
+    muxed = audio_track.apply_sounds(files, verbose=verbose)
     return {
         "out_path": out_path,
         "windows": rec.windows,
-        "files": [f for f in files if os.path.exists(f)],
+        "files": files,
+        "with_audio": muxed,
     }
 
 
@@ -260,7 +291,8 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
     fps:
         Output frame rate passed to ``enable_fast_record``.
     hidden:
-        Hide the Vulkan window while capturing (default True).
+        Build the window hidden and never show it (default True), so an offline
+        capture never pops a window onto the desktop.  Pass False to watch.
     count_only:
         Probe mode — count frames without capturing or GPU-rendering.
     segment:
@@ -288,4 +320,4 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
 
     return _run(scene, out_path if out_path is not None else _default_out_path(),
                 on_init, on_close, verbose, overwrite, count_only=count_only,
-                cleanup=cleanup)
+                cleanup=cleanup, hidden=hidden)

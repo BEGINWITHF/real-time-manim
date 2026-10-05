@@ -61,8 +61,8 @@ void Mac_FreeReadbackBuffer(void);
       (float x, float y, float radius, float start_angle, float angle, int r, int g, int b, float stroke_width, float alpha), \
       (x, y, radius, start_angle, angle, r, g, b, stroke_width, alpha)) \
     X(PointObj,    g_points,       g_point_count,       CMD_POINT,       AddPoint,       \
-      (float x, float y, int r, int g, int b, float alpha), \
-      (x, y, r, g, b, alpha))
+      (float x, float y, int r, int g, int b, float alpha, float radius), \
+      (x, y, r, g, b, alpha, radius))
 
 #define DECL_POOL(type, pool, count, cmd, ...) \
     static type pool[MAX_SHAPES];              \

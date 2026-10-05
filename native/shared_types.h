@@ -9,6 +9,15 @@
 #define MAX_POLYGON_VERTS 64
 #endif
 
+/* Multisample anti-aliasing.  manim's Cairo renderer antialiases every edge;
+   this renderer rasterised hard-edged, which is the whole reason shapes came
+   out with ~0.91 px of ink where CE spreads the same line over two rows (the
+   "13 scenes within |d|<2" bucket).  The swapchain image is the resolve
+   target, so nothing downstream changes. */
+#ifndef MSAA_SAMPLE_COUNT
+#define MSAA_SAMPLE_COUNT 8
+#endif
+
 typedef struct {
     float x, y, hw, hh, rot;
     int r, g, b;
@@ -74,7 +83,25 @@ typedef struct {
     float x, y;
     int r, g, b;
     float alpha;
+    // Dot radius in pixels (<=0 -> default).  manim draws a PMobject point as a
+    // 4 px *diameter* disc (measured), while this used to be a fixed 4 px radius,
+    // i.e. four times the area.
+    float radius;
 } PointObj;
+
+#ifndef MAX_IMAGE_QUADS
+#define MAX_IMAGE_QUADS 64
+#endif
+
+// A textured quad submitted by the Python side (see AddImageQuad).  Corners are
+// in window pixels, ordered top-left, top-right, bottom-right, bottom-left --
+// the same order the texture coordinates run.  ``token`` identifies the pixel
+// data so the same image is uploaded once and reused across frames.
+typedef struct {
+    unsigned long long token;
+    float xy[8];
+    float opacity;
+} ImageQuad;
 
 #ifndef MAX_TEXT_LEN
 #define MAX_TEXT_LEN 512

@@ -1,4 +1,5 @@
 #include "vulkan_core.h"
+#include "vulkan_texture.h"
 #include "draw_common.h"
 
 #define VK_CHECK(call) do { \
@@ -35,6 +36,12 @@ uint32_t g_swapchain_img_count = 0;
 VkRenderPass g_render_pass = VK_NULL_HANDLE;
 
 VkFramebuffer *g_framebuffers = NULL;
+
+/* Multisampled colour target each frame renders into; the render pass resolves
+   it into the swapchain image (see CreateRenderPass). */
+VkImage g_msaa_img = VK_NULL_HANDLE;
+VkDeviceMemory g_msaa_mem = VK_NULL_HANDLE;
+VkImageView g_msaa_view = VK_NULL_HANDLE;
 
 VkPipelineLayout g_pipeline_layout = VK_NULL_HANDLE;
 
@@ -428,15 +435,20 @@ void CreateImageViews(void) {
 
 static void CreateRenderPass(void) {
 
+    /* Attachment 0 is the multisampled colour target, attachment 1 is the
+       swapchain image it resolves into.  Rendering into a 4x target and letting
+       the hardware resolve gives every edge -- line, polygon, glyph box -- the
+       antialiasing manim's Cairo renderer has always had.  The resolve target
+       keeps finalLayout PRESENT_SRC_KHR, so present and readback are unchanged. */
     VkAttachmentDescription att = {0};
 
     att.format = g_swapchain_fmt;
 
-    att.samples = VK_SAMPLE_COUNT_1_BIT;
+    att.samples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
 
     att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 
-    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 
     att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 
@@ -444,13 +456,27 @@ static void CreateRenderPass(void) {
 
     att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    att.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    att.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription resolve = att;
+    resolve.samples = VK_SAMPLE_COUNT_1_BIT;
+    resolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    resolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    resolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentDescription atts[2] = { att, resolve };
 
     VkAttachmentReference ref = {0};
 
     ref.attachment = 0;
 
     ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference resolve_ref = {0};
+
+    resolve_ref.attachment = 1;
+
+    resolve_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkSubpassDescription sub = {0};
 
@@ -459,6 +485,8 @@ static void CreateRenderPass(void) {
     sub.colorAttachmentCount = 1;
 
     sub.pColorAttachments = &ref;
+
+    sub.pResolveAttachments = &resolve_ref;
 
     VkSubpassDependency dep = {0};
 
@@ -476,9 +504,9 @@ static void CreateRenderPass(void) {
 
     rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 
-    rpci.attachmentCount = 1;
+    rpci.attachmentCount = 2;
 
-    rpci.pAttachments = &att;
+    rpci.pAttachments = atts;
 
     rpci.subpassCount = 1;
 
@@ -592,7 +620,7 @@ static void CreateGraphicsPipeline(void) {
 
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 
-    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    ms.rasterizationSamples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
 
     VkPipelineColorBlendAttachmentState cba = {0};
 
@@ -667,7 +695,49 @@ static void CreateGraphicsPipeline(void) {
 
 }
 
+static void CreateMSAATarget(void) {
+
+    VkImageCreateInfo ici = {0};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = g_swapchain_fmt;
+    ici.extent = (VkExtent3D){ g_swapchain_ext.width, g_swapchain_ext.height, 1 };
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VK_CHECK(vkCreateImage(g_dev, &ici, NULL, &g_msaa_img));
+
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(g_dev, g_msaa_img, &mr);
+
+    VkMemoryAllocateInfo mai = {0};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = mr.size;
+    mai.memoryTypeIndex = FindMemoryType(mr.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK_CHECK(vkAllocateMemory(g_dev, &mai, NULL, &g_msaa_mem));
+    VK_CHECK(vkBindImageMemory(g_dev, g_msaa_img, g_msaa_mem, 0));
+
+    VkImageViewCreateInfo vci = {0};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = g_msaa_img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = g_swapchain_fmt;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    VK_CHECK(vkCreateImageView(g_dev, &vci, NULL, &g_msaa_view));
+
+}
+
 void CreateFramebuffers(void) {
+
+    CreateMSAATarget();
 
     g_framebuffers = malloc(sizeof(VkFramebuffer) * g_swapchain_img_count);
 
@@ -679,9 +749,13 @@ void CreateFramebuffers(void) {
 
         fci.renderPass = g_render_pass;
 
-        fci.attachmentCount = 1;
+        /* Attachment order must match CreateRenderPass: the multisampled
+           target first, the resolve target (the swapchain image) second. */
+        VkImageView views[2] = { g_msaa_view, g_swapchain_img_views[i] };
 
-        fci.pAttachments = &g_swapchain_img_views[i];
+        fci.attachmentCount = 2;
+
+        fci.pAttachments = views;
 
         fci.width = g_swapchain_ext.width;
 
@@ -817,6 +891,8 @@ void Render_Init(void *metal_layer, int width, int height) {
 
     CreateVertexBuffer();
 
+    Tex_CreateResources();
+
     g_is_ready = true;
 
 }
@@ -850,6 +926,19 @@ void CleanupSwapchain(void) {
     }
     free(g_swapchain_img_views);
     free(g_swapchain_imgs);
+
+    if (g_msaa_view != VK_NULL_HANDLE) {
+        vkDestroyImageView(g_dev, g_msaa_view, NULL);
+        g_msaa_view = VK_NULL_HANDLE;
+    }
+    if (g_msaa_img != VK_NULL_HANDLE) {
+        vkDestroyImage(g_dev, g_msaa_img, NULL);
+        g_msaa_img = VK_NULL_HANDLE;
+    }
+    if (g_msaa_mem != VK_NULL_HANDLE) {
+        vkFreeMemory(g_dev, g_msaa_mem, NULL);
+        g_msaa_mem = VK_NULL_HANDLE;
+    }
 
     vkDestroySwapchainKHR(g_dev, g_swapchain, NULL);
 }
@@ -912,6 +1001,8 @@ void Render_Cleanup(void) {
     vkFreeCommandBuffers(g_dev, g_cmd_pool, g_cmd_buf_count, g_cmd_bufs);
     free(g_cmd_bufs);
     vkDestroyCommandPool(g_dev, g_cmd_pool, NULL);
+
+    Tex_DestroyResources();
 
     vkDestroyPipeline(g_dev, g_pipeline, NULL);
     vkDestroyPipelineLayout(g_dev, g_pipeline_layout, NULL);

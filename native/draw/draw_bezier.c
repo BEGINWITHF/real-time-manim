@@ -2,9 +2,17 @@
 #include "../shared_types.h"
 #include <math.h>
 
-#define MAX_BEZIER_PATHS 512
+#define MAX_BEZIER_PATHS 8192
 #define MAX_BEZIER_SEGMENTS 1024
 #define BEZIER_SAMPLES 64
+/* Segments live in one shared pool and a path only stores its offset, so a
+   path costs ~1 KB instead of 32 KB.  The old layout was one inline
+   CubicSeg[1024] per path, which capped the path list at 512 -- and a
+   glyph-per-path Text scene makes ~870 AddBezierPath calls per frame, so the
+   tail of every long text block was silently dropped (measured:
+   ConfigFileRoundtrip drew only its top ~12 of 19 lines, lit 10236 vs CE
+   20135, d(last) -3.05). */
+#define MAX_BEZIER_SEG_POOL 393216
 
 typedef struct {
     float px[4];
@@ -12,7 +20,7 @@ typedef struct {
 } CubicSeg;
 
 typedef struct {
-    CubicSeg segs[MAX_BEZIER_SEGMENTS];
+    int seg_start;                 /* offset into g_seg_pool */
     int num_segs;
     int sr, sg, sb;
     float stroke_width;
@@ -28,8 +36,12 @@ typedef struct {
 } BezierPathObj;
 
 static BezierPathObj bezier_paths[MAX_BEZIER_PATHS];
+static CubicSeg g_seg_pool[MAX_BEZIER_SEG_POOL];
 static int bezier_path_count = 0;
+static int g_seg_pool_used = 0;
 static float g_fill_pts[MAX_BEZIER_SEGMENTS * BEZIER_SAMPLES + 1][2];
+
+#define BP_SEG(bp, i) (g_seg_pool[(bp)->seg_start + (i)])
 
 __declspec(dllexport) void AddBezierPath(
     const float *points, int num_points,
@@ -40,9 +52,13 @@ __declspec(dllexport) void AddBezierPath(
     if (bezier_path_count >= MAX_BEZIER_PATHS) return;
     if (num_points < 8) return;
 
-    BezierPathObj *bp = &bezier_paths[bezier_path_count];
     int num_segs = num_points / 4;
     if (num_segs > MAX_BEZIER_SEGMENTS) num_segs = MAX_BEZIER_SEGMENTS;
+    if (g_seg_pool_used + num_segs > MAX_BEZIER_SEG_POOL) return;
+
+    BezierPathObj *bp = &bezier_paths[bezier_path_count];
+    bp->seg_start = g_seg_pool_used;
+    g_seg_pool_used += num_segs;
     bp->num_segs = num_segs;
     bp->sr = sr; bp->sg = sg; bp->sb = sb;
     bp->stroke_width = stroke_width;
@@ -56,16 +72,16 @@ __declspec(dllexport) void AddBezierPath(
     for (int i = 0; i < num_segs; i++) {
         int off = i * 4 * 3;
         for (int j = 0; j < 4; j++) {
-            bp->segs[i].px[j] = points[off + j * 3 + 0];
-            bp->segs[i].py[j] = points[off + j * 3 + 1];
+            BP_SEG(bp, i).px[j] = points[off + j * 3 + 0];
+            BP_SEG(bp, i).py[j] = points[off + j * 3 + 1];
         }
     }
 
     bp->sub_count = 1;
     bp->sub_seg_start[0] = 0;
     for (int si = 0; si < num_segs - 1; si++) {
-        float dx = bp->segs[si].px[3] - bp->segs[si + 1].px[0];
-        float dy = bp->segs[si].py[3] - bp->segs[si + 1].py[0];
+        float dx = BP_SEG(bp, si).px[3] - BP_SEG(bp, si + 1).px[0];
+        float dy = BP_SEG(bp, si).py[3] - BP_SEG(bp, si + 1).py[0];
         if (dx * dx + dy * dy > 40.0f) {
             if (bp->sub_count < 128) {
                 bp->sub_seg_start[bp->sub_count++] = si + 1;
@@ -77,8 +93,8 @@ __declspec(dllexport) void AddBezierPath(
         int end = (s < bp->sub_count - 1) ? bp->sub_seg_start[s + 1] : num_segs;
         float area = 0;
         for (int si = start; si < end; si++) {
-            float x0 = bp->segs[si].px[0], y0 = bp->segs[si].py[0];
-            float x3 = bp->segs[si].px[3], y3 = bp->segs[si].py[3];
+            float x0 = BP_SEG(bp, si).px[0], y0 = BP_SEG(bp, si).py[0];
+            float x3 = BP_SEG(bp, si).px[3], y3 = BP_SEG(bp, si).py[3];
             area += (x0 * y3 - x3 * y0);
         }
         bp->sub_winding[s] = (area >= 0) ? 1 : -1;
@@ -127,7 +143,7 @@ static void tessellate_stroke(BezierPathObj *bp) {
     float wind = (bp->sub_count > 0) ? (float)bp->sub_winding[0] : 1.0f;
 
     if (total_segs > 0 && full_segs >= 0) {
-        const CubicSeg *s0 = &bp->segs[0];
+        const CubicSeg *s0 = &BP_SEG(bp, 0);
         float tx0, ty0;
         sample_cubic(s0, 0.0f, &prev_x, &prev_y);
         tangent_cubic(s0, 0.0f, &tx0, &ty0);
@@ -139,7 +155,7 @@ static void tessellate_stroke(BezierPathObj *bp) {
     }
 
     for (int si = 0; si <= full_segs && si < total_segs; si++) {
-        const CubicSeg *s = &bp->segs[si];
+        const CubicSeg *s = &BP_SEG(bp, si);
         int n = BEZIER_SAMPLES;
         int end_n = (si == full_segs && partial_t > 0.001f) ? (int)(partial_t * n + 0.5f) : n;
         if (end_n < 1) end_n = 1;
@@ -229,7 +245,7 @@ static void tessellate_fill(BezierPathObj *bp) {
         int end = (s < bp->sub_count - 1) ? bp->sub_seg_start[s + 1] : bp->num_segs;
 
         for (int si = start; si < end; si++) {
-            const CubicSeg *seg = &bp->segs[si];
+            const CubicSeg *seg = &BP_SEG(bp, si);
             for (int i = 0; i < BEZIER_SAMPLES; i++) {
                 float t = (float)i / (float)BEZIER_SAMPLES;
                 sample_cubic(seg, t, &g_fill_pts[total_pts][0], &g_fill_pts[total_pts][1]);
@@ -343,4 +359,5 @@ void BuildVerticesFromBezierPaths(void) {
         }
     }
     bezier_path_count = 0;
+    g_seg_pool_used = 0;
 }

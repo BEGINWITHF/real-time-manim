@@ -1,5 +1,5 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
-from real_time_manim.animations.grow_arrow import GrowArrow
+from real_time_manim.animations.grow_arrow import GrowArrow, color_to_rgb
 from real_time_manim.animations.base import Animation
 
 
@@ -33,7 +33,7 @@ class GrowFromEdge(GrowArrow):
         mob._grow_scale = 0.0
         mob._grow_point = self._grow_point
         if self.point_color:
-            self._pc = (float(self.point_color[0]), float(self.point_color[1]), float(self.point_color[2]))
+            self._pc = color_to_rgb(self.point_color)
             if hasattr(mob, 'fill_rgbas') and len(mob.fill_rgbas) > 0:
                 mob.fill_rgbas[:, 0] = self._pc[0]
                 mob.fill_rgbas[:, 1] = self._pc[1]

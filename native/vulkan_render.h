@@ -29,6 +29,7 @@ int Render_IsReady(void);
 #define CMD_ARC 6
 #define CMD_POINT 7
 #define CMD_TEXT 8
+#define CMD_IMAGE 9
 
 typedef struct {
     int type;

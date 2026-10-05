@@ -1,5 +1,6 @@
 #include "vulkan_core.h"
 #include "vulkan_render.h"
+#include "vulkan_texture.h"
 #include "draw_common.h"
 
 #ifdef __APPLE__
@@ -7,6 +8,18 @@
 // consumed by Render_DrawFrame at submit time (mac-only, two-phase readback).
 static int g_readback_copied = 0;
 #endif
+
+// Cleared background colour, linear RGB 0..1.  manim lets a scene override it
+// (`self.camera.background_color`), so it is published per frame from Python
+// instead of being hard-coded -- measured: the gallery logo scene's light grey
+// background came out black (CE luma 220 vs RTM 9.5).
+float g_clear_rgb[3] = {0.0f, 0.0f, 0.0f};
+
+void Render_SetBackgroundColor(float r, float g, float b) {
+    g_clear_rgb[0] = r < 0.0f ? 0.0f : (r > 1.0f ? 1.0f : r);
+    g_clear_rgb[1] = g < 0.0f ? 0.0f : (g > 1.0f ? 1.0f : g);
+    g_clear_rgb[2] = b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b);
+}
 
 float g_vertices[MAX_VERTICES * 6];
 uint32_t g_vertex_count = 0;
@@ -35,6 +48,7 @@ void Render_DrawScene(const Rect* rects, int rect_count,
                       const DrawCmd* cmds, int cmd_count) {
 
     g_vertex_count = 0;
+    Tex_BeginFrame();
 
     for (int i = 0; i < cmd_count; i++) {
         int idx = cmds[i].index;
@@ -66,11 +80,15 @@ void Render_DrawScene(const Rect* rects, int rect_count,
             case CMD_TEXT:
                 if (idx < text_count) BuildVerticesFromTexts(&texts[idx], 1);
                 break;
+            case CMD_IMAGE:
+                BuildVerticesFromImageQuad(idx);
+                break;
         }
     }
 
     BuildVerticesFromBezierPaths();
     BuildVerticesFromLineStrips();
+    Tex_EndFrame();
 
     if (g_vertex_count > 0) {
         update_vertex_buffer(g_vertices, g_vertex_count * 6 * sizeof(float));
@@ -84,7 +102,7 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
 
     vkBeginCommandBuffer(cmd_buf, &begin_info);
 
-    VkClearValue clear_color = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    VkClearValue clear_color = {{{g_clear_rgb[0], g_clear_rgb[1], g_clear_rgb[2], 1.0f}}};
     VkRenderPassBeginInfo render_pass_info = {0};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_info.renderPass = g_render_pass;
@@ -109,7 +127,9 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
     VkDeviceSize offsets[] = { 0 };
     vkCmdBindVertexBuffers(cmd_buf, 0, 1, vertex_buffers, offsets);
 
-    if (vertex_count > 0) {
+    if (Tex_ItemCount() > 0) {
+        Tex_RecordInterleaved(cmd_buf, vertex_count);
+    } else if (vertex_count > 0) {
         vkCmdDraw(cmd_buf, vertex_count, 1, 0, 0);
     }
 
@@ -159,6 +179,13 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
         __atomic_store_n(&g_readback_requested, 0, __ATOMIC_SEQ_CST);
         g_readback_copied = 1;
     }
+#endif
+
+#ifdef _WIN32
+    // Windows readback: copy the image into the staging buffer inside this
+    // command buffer, before present -- afterwards the presentation engine owns
+    // the image and reading it gives undefined (observed: stale/black) pixels.
+    Platform_RecordReadbackCopy(cmd_buf, img_idx, g_current_frame);
 #endif
 
     vkEndCommandBuffer(cmd_buf);

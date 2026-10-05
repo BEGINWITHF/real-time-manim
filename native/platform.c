@@ -1,6 +1,7 @@
 #include "platform.h"
 #include "vulkan_render.h"
 #include "vulkan_core.h"
+#include "vulkan_texture.h"
 #include "shared_types.h"
 #include <stdio.h>
 #include <string.h>
@@ -41,6 +42,9 @@ static int g_draw_cmd_count = 0;
 
 static double g_aspect_ratio = 16.0 / 9.0;
 static int g_min_width = 320;
+// Window icon loaded for the current window; destroyed in Vulkan_Shutdown so a
+// long batch does not leak one GDI/USER handle per window.
+static HICON g_win_icon = NULL;
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     (void)lpvReserved;
@@ -54,7 +58,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
-            PostQuitMessage(0);
+            // Deliberately NO PostQuitMessage here: WM_QUIT is posted to the
+            // *thread* queue, so a scene that closes one window and opens
+            // another would have the stale quit consumed by the new window's
+            // first Vulkan_Tick -- which then skips that frame's draw entirely
+            // (observed as a black first frame).  Tick detects a dead window
+            // through IsWindow(g_hwnd) instead.
             return 0;
         case WM_SIZE:
             if (wParam != SIZE_MINIMIZED && g_is_ready) {
@@ -115,12 +124,34 @@ static HICON LoadWindowIcon(void) {
         wcscat_s(ico, MAX_PATH, L"logo.ico");
         HICON icon = (HICON)LoadImageW(NULL, ico, IMAGE_ICON, 0, 0,
                                        LR_LOADFROMFILE | LR_DEFAULTSIZE);
-        if (icon) return icon;
+        if (icon) {
+            // Keep it so Vulkan_Shutdown can DestroyIcon it: a batch that opens
+            // many windows would otherwise leak one GDI/USER handle per window.
+            g_win_icon = icon;
+            return icon;
+        }
     }
     return NULL;
 }
 
 __declspec(dllexport) int Vulkan_Init(int w, int h) {
+    return Vulkan_InitEx(w, h, 0);
+}
+
+// Show or hide the window after creation.  SW_SHOW also brings it to front so
+// an interactive viewer (FrameServer.show_frame) actually sees it.
+__declspec(dllexport) void Vulkan_SetWindowVisible(int visible) {
+    if (!g_hwnd || !IsWindow(g_hwnd)) return;
+    if (visible) {
+        ShowWindow(g_hwnd, SW_SHOW);
+        UpdateWindow(g_hwnd);
+        SetForegroundWindow(g_hwnd);
+    } else {
+        ShowWindow(g_hwnd, SW_HIDE);
+    }
+}
+
+__declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
     SetProcessDPIAware();
     g_hinst = GetModuleHandleW(NULL);
     g_aspect_ratio = (double)w / (double)h;
@@ -162,8 +193,12 @@ __declspec(dllexport) int Vulkan_Init(int w, int h) {
         return 0;
     }
 
-    ShowWindow(g_hwnd, SW_SHOW);
-    UpdateWindow(g_hwnd);
+    if (!hidden) {
+        ShowWindow(g_hwnd, SW_SHOW);
+        UpdateWindow(g_hwnd);
+    }
+    // When hidden, the window exists (and renders/presents) but is never shown,
+    // so offline frame export / fast record do not disturb the desktop.
     return 1;
 }
 
@@ -232,9 +267,9 @@ __declspec(dllexport) void AddArc(float x, float y, float radius, float start_an
     }
 }
 
-__declspec(dllexport) void AddPoint(float x, float y, int r, int g, int b, float alpha) {
+__declspec(dllexport) void AddPoint(float x, float y, int r, int g, int b, float alpha, float radius) {
     if (g_point_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
-        g_points[g_point_count] = (PointObj){ x, y, r, g, b, alpha };
+        g_points[g_point_count] = (PointObj){ x, y, r, g, b, alpha, radius };
         g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POINT, g_point_count };
         g_point_count++;
     }
@@ -259,6 +294,21 @@ __declspec(dllexport) void AddText(float x, float y, int r, int g, int b, float 
     }
 }
 
+__declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long long digest, const unsigned char *rgba, int w, int h, const float *xy8, float opacity) {
+    if (g_image_quad_count >= MAX_IMAGE_QUADS || g_draw_cmd_count >= MAX_DRAW_CMDS) return;
+    if (Tex_Ensure(token, digest, rgba, w, h) < 0) return;         // upload failed / table full
+    ImageQuad *q = &g_image_quads[g_image_quad_count];
+    q->token = token;
+    q->opacity = opacity;
+    for (int i = 0; i < 8; i++) q->xy[i] = xy8[i];
+    g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_IMAGE, g_image_quad_count };
+    g_image_quad_count++;
+}
+
+__declspec(dllexport) void SetBackgroundColor(float r, float g, float b) {
+    Render_SetBackgroundColor(r, g, b);
+}
+
 __declspec(dllexport) void ClearShapes(void) {
     g_rect_count = 0;
     g_circle_count = 0;
@@ -269,6 +319,7 @@ __declspec(dllexport) void ClearShapes(void) {
     g_arc_count = 0;
     g_point_count = 0;
     g_text_count = 0;
+    g_image_quad_count = 0;
     g_draw_cmd_count = 0;
 }
 
@@ -309,17 +360,44 @@ __declspec(dllexport) int Vulkan_Tick(void) {
 }
 
 static void FreeScreenshotBuffer(void);
+// Reused command buffer for the readback copy.  It is owned by g_cmd_pool, so it
+// must be dropped (not used again) once the pool is destroyed -- see
+// Vulkan_Shutdown; otherwise a second window in the same process resets a
+// dangling handle (vkResetCommandBuffer: Invalid commandBuffer).
+static VkCommandBuffer g_ss_cmd = VK_NULL_HANDLE;
+// In-frame readback state (see Vulkan_RequestReadback / Platform_RecordReadbackCopy)
+static volatile int g_ss_arm = 0;   // armed by Vulkan_RequestReadback()
+static int g_ss_copied = 0;         // a frame has copied into g_ss_buf
 
 __declspec(dllexport) void Vulkan_Shutdown(void) {
     FreeScreenshotBuffer();
+    // g_ss_cmd belongs to g_cmd_pool, which Render_Cleanup destroys; drop the
+    // handle so a later window in this process allocates a fresh one instead of
+    // resetting a dangling command buffer.
+    g_ss_cmd = VK_NULL_HANDLE;
+    g_ss_arm = 0;
+    g_ss_copied = 0;
     Render_Cleanup();
     if (g_hwnd && IsWindow(g_hwnd)) {
         DestroyWindow(g_hwnd);
         g_hwnd = NULL;
     }
     UnregisterClassW(L"ManimVulkanClass", g_hinst);
+    if (g_win_icon) {
+        DestroyIcon(g_win_icon);      // else every window leaks a GDI/USER handle
+        g_win_icon = NULL;
+    }
+    // Drop any WM_QUIT left over from this window (e.g. the user hit Alt+F4),
+    // so the next window in this process starts with a clean message queue.
+    MSG quit;
+    while (PeekMessageW(&quit, NULL, WM_QUIT, WM_QUIT, PM_REMOVE)) {
+    }
 }
 
+// Index of the swapchain image the last drawn frame was rendered into; set by
+// vulkan_draw.c on every present and read by SaveScreenshot/SaveScreenshotRaw.
+// On this (Windows) platform this is the definition; the macOS build defines it
+// in vulkan_init.c's non-Windows branch, and vulkan_core.h declares it extern.
 uint32_t g_last_img_idx = 0;
 
 // Persistent staging buffer for SaveScreenshot readback (allocated once,
@@ -406,15 +484,93 @@ static void FreeScreenshotBuffer(void) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// In-frame readback -- the reliable path.
+//
+// An image handed to the presentation engine by vkQueuePresentKHR is no longer
+// ours: copying it afterwards yields *undefined* content (observed as stale or
+// black frames, and as pixels that changed with the call order).  So a readback
+// is requested up front and performed by the frame's OWN command buffer, before
+// present, while the image is still ours and fully rendered.  This is the same
+// design the macOS build uses.
+// ---------------------------------------------------------------------------
+static uint32_t g_ss_frame = 0;     // in-flight slot of that frame (its fence)
+
+__declspec(dllexport) void Vulkan_RequestReadback(void) {
+    if (!g_is_ready || !g_swapchain) return;
+    int w = (int)g_swapchain_ext.width;
+    int h = (int)g_swapchain_ext.height;
+    if (w <= 0 || h <= 0) return;
+    if (!EnsureScreenshotBuffer((VkDeviceSize)w * (VkDeviceSize)h * 4)) return;
+    g_ss_copied = 0;
+    g_ss_arm = 1;
+}
+
+// Called by the renderer from inside the frame's command buffer (after the
+// render pass, before present).  No-op unless a readback was requested.
+int Platform_RecordReadbackCopy(VkCommandBuffer cmd,
+                                uint32_t img_idx,
+                                uint32_t frame_idx) {
+    if (!g_ss_arm || g_ss_buf == VK_NULL_HANDLE) return 0;
+    if (img_idx >= g_swapchain_img_count) return 0;
+
+    VkImageMemoryBarrier b = {0};
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = g_swapchain_imgs[img_idx];
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b.subresourceRange.levelCount = 1;
+    b.subresourceRange.layerCount = 1;
+    b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, NULL, 0, NULL, 1, &b);
+
+    VkBufferImageCopy region = {0};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = (VkExtent3D){ g_swapchain_ext.width, g_swapchain_ext.height, 1 };
+    vkCmdCopyImageToBuffer(cmd, g_swapchain_imgs[img_idx],
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_ss_buf, 1, &region);
+
+    VkImageMemoryBarrier b2 = b;
+    b2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b2.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b2.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    b2.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, NULL, 0, NULL, 1, &b2);
+
+    g_ss_arm = 0;
+    g_ss_copied = 1;
+    g_ss_frame = frame_idx;
+    return 1;
+}
+
 // Copy the last presented swapchain image into a host-visible staging buffer.
+// Reuses ONE persistent command buffer (per-frame vkAllocate/vkFreeCommandBuffers
+// was slow) and is submitted on the same queue the render used, so a single
+// wait is enough.
 static void CopySwapchainImageToBuffer(uint32_t img_idx, VkBuffer dst, int w, int h) {
-    VkCommandBufferAllocateInfo ai = {0};
-    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = g_cmd_pool;
-    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(g_dev, &ai, &cmd);
+    if (g_ss_cmd == VK_NULL_HANDLE) {
+        VkCommandBufferAllocateInfo ai = {0};
+        ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        ai.commandPool = g_cmd_pool;
+        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        if (vkAllocateCommandBuffers(g_dev, &ai, &g_ss_cmd) != VK_SUCCESS) {
+            g_ss_cmd = VK_NULL_HANDLE;
+            return;
+        }
+    } else {
+        vkResetCommandBuffer(g_ss_cmd, 0);
+    }
+    VkCommandBuffer cmd = g_ss_cmd;
 
     VkCommandBufferBeginInfo bi = {0};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -462,15 +618,22 @@ static void CopySwapchainImageToBuffer(uint32_t img_idx, VkBuffer dst, int w, in
     si.pCommandBuffers = &cmd;
     vkQueueSubmit(g_gfx_queue, 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(g_gfx_queue);
-    vkFreeCommandBuffers(g_dev, g_cmd_pool, 1, &cmd);
 }
 
 // Convert the BGRA swapchain readback (g_ss_map, w*h*4 bytes) into BGR.
 // The mapped GPU buffer reads slowly byte-by-byte on Intel iGPUs, so we first
 // bulk-copy the raw bytes into CPU cache (vectorized memcpy) and convert there.
+static unsigned char *g_conv_buf = NULL;
+static VkDeviceSize g_conv_size = 0;
 static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
     VkDeviceSize raw_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
-    unsigned char *raw = (unsigned char *)malloc((size_t)raw_size);
+    if (g_conv_size < raw_size) {
+        free(g_conv_buf);
+        g_conv_buf = (unsigned char *)malloc((size_t)raw_size);
+        g_conv_size = raw_size;
+    }
+    if (g_conv_buf == NULL) return;
+    unsigned char *raw = g_conv_buf;
     memcpy(raw, g_ss_map, (size_t)raw_size);
     int rowBytes = ((w * 3 + 3) & ~3);
     for (int y = 0; y < h; y++) {
@@ -482,7 +645,6 @@ static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
             dst[x * 3 + 2] = row[x * 4 + 2];  // R
         }
     }
-    free(raw);
 }
 
 // SaveScreenshot reads the swapchain framebuffer directly (independent of the
@@ -490,7 +652,6 @@ static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
 // solid white because Vulkan swapchain content is not present in the window DC.
 __declspec(dllexport) int SaveScreenshot(const char *path) {
     if (!g_is_ready || !g_swapchain) return 0;
-    vkQueueWaitIdle(g_gfx_queue);
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
     if (w <= 0 || h <= 0) return 0;
@@ -498,7 +659,17 @@ __declspec(dllexport) int SaveScreenshot(const char *path) {
     VkDeviceSize img_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (!EnsureScreenshotBuffer(img_size)) return 0;
 
-    CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
+    if (g_ss_copied) {
+        // Reliable path: the frame copied its own image before present; its
+        // fence tells us when the copy is done (host-coherent memory, no flush).
+        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
+        g_ss_copied = 0;
+    } else {
+        // Fallback: the last presented image, copied after the fact.  The spec
+        // leaves its content undefined (presentation engine owns it) and it has
+        // been observed to come back stale -- request a readback before drawing.
+        CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
+    }
 
     int rowBytes = ((w * 3 + 3) & ~3);
     unsigned char *bgr = (unsigned char *)malloc((size_t)rowBytes * (size_t)h);
@@ -535,7 +706,6 @@ __declspec(dllexport) int SaveScreenshot(const char *path) {
 // padding). Returns 1 on success and sets *out_size to w*h*3.
 __declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int *out_size) {
     if (!g_is_ready || !g_swapchain || !out) return 0;
-    vkQueueWaitIdle(g_gfx_queue);
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
     if (w <= 0 || h <= 0) return 0;
@@ -543,7 +713,18 @@ __declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int *out_size) {
     VkDeviceSize img_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (!EnsureScreenshotBuffer(img_size)) return 0;
 
-    CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
+    if (g_ss_copied) {
+        // Reliable path: the frame copied its own image before present; its
+        // fence tells us when the copy is done (host-coherent memory, no flush).
+        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
+        g_ss_copied = 0;
+    } else {
+        // Fallback: the last presented image, copied after the fact.  The spec
+        // leaves its content undefined (the presentation engine owns it) and it
+        // has been observed to come back stale -- request a readback before the
+        // draw when the exact frame matters.
+        CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
+    }
 
     int rowBytes = ((w * 3 + 3) & ~3);
     ConvertBGRAtoBGR(w, h, out);
