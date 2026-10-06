@@ -1028,7 +1028,29 @@ class ShapeMixin:
                 frame_height = float(viewport.height) or 8.0
         except Exception:
             pass
-        return max(0.5, (float(h) / 30.0) / frame_height)
+        return max(0.5, (float(h) / 30.0) / frame_height * self._point_width_scale(mob))
+
+    @staticmethod
+    def _point_width_scale(mob):
+        """Scale for a point cloud whose points are not the default 4px wide.
+
+        The radius above is calibrated for manim's default point `stroke_width`
+        of 4.  `PointCloudDot` builds its points with `stroke_width = 2`
+        (measured), i.e. half the diameter -- drawing those at the default merged
+        its 216 spiral points into a solid disc where CE shows a separated
+        lattice (measured PointCloudMobjects: 2103 px of excess ink, all of it
+        inside the cloud's own box, against CE's dotted spiral).
+        """
+        width = 4.0
+        try:
+            raw = mob.get_stroke_width()
+            if isinstance(raw, (int, float)) and raw > 0:
+                width = float(raw)
+            elif hasattr(raw, "__len__") and len(raw) > 0 and float(raw[0]) > 0:
+                width = float(raw[0])
+        except Exception:
+            pass
+        return width / 4.0
 
     def _send_point_cloud(self, mob, a, w, h, rot=0.0, parent_offset=None):
         """PMobject 家族：每个点画成一个点，而不是一条填充路径。
