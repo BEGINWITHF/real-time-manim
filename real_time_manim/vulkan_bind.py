@@ -1053,9 +1053,14 @@ class MLWindow(ShapeMixin, TextMixin):
         cam = getattr(scene, "camera", None)
         for fixed in getattr(cam, "fixed_in_frame_mobjects", ()) or ():
             fixed_ids.add(id(fixed))
-        for mob in scene.mobjects:
+        cam_images = self._camera_image_prefixes(cam, roots)
+        for _idx, mob in enumerate(roots):
             if skip_ids and id(mob) in skip_ids:
                 continue
+            if _idx in cam_images:
+                # An image that reads the camera's array only shows what was
+                # already drawn into it (report R10-5).
+                self._rasterise_camera_prefix(cam, roots, _idx)
             if fixed_ids and id(mob) in fixed_ids:
                 saved = get_viewport()
                 set_viewport(Viewport((0.0, 0.0), DEFAULT_FRAME_HEIGHT))
@@ -1065,6 +1070,114 @@ class MLWindow(ShapeMixin, TextMixin):
                     set_viewport(saved)
             else:
                 self._send(mob, angle, parent_alpha=1.0)
+
+    @staticmethod
+    def _camera_image_prefixes(cam, roots):
+        """Indices of the roots that display the camera's own pixel array.
+
+        ``ImageMobjectFromCamera.get_pixel_array()`` returns
+        ``scene.camera.pixel_array`` **live** (manim
+        ``image_mobject.py:336``), and manim's renderer walks
+        ``camera.capture_mobjects(list(scene.mobjects))`` in list order, so by
+        the time it reaches such an image the array already holds the
+        background plus everything drawn before it: the image is a copy of the
+        scene as drawn so far.
+
+        RTM draws vectors on the GPU and never writes that array
+        (``_rasterise_custom_camera`` explicitly exempts a plain ``Camera``),
+        so ``send_image`` uploaded the cleared background -- black, invisible.
+        Measured on ImagesAndSvg (report R10-5): 2172 px of CE content missing,
+        three blobs whose bboxes map back onto the swatch / badge / quad
+        through ``from_camera``'s box, and one unchanged texture key for all 19
+        visible frames under ``RTM_TEX_DEBUG``.
+        """
+        if cam is None:
+            return {}
+        live = getattr(cam, "pixel_array", None)
+        if live is None:
+            return {}
+        out = set()
+        for i, mob in enumerate(roots):
+            if not isinstance(mob, AbstractImageMobject):
+                continue
+            getter = getattr(mob, "get_pixel_array", None)
+            if getter is None:
+                continue
+            try:
+                if getter() is live:
+                    out.add(i)
+            except Exception:
+                continue
+        return out
+
+    def _dbg_arrow(self, mob, where, parent_transforming):
+        """Env-gated trace of which Arrow branch ran (R10-6 diagnosis only).
+
+        Set ``RTM_ARROW_DEBUG=<path>`` to append one line per Arrow dispatch:
+        which branch took it, the transform/progress flags, and whether it is a
+        double-headed arrow.  No-op when the variable is absent.
+        """
+        try:
+            import os
+            path = os.environ.get("RTM_ARROW_DEBUG")
+            if not path:
+                return
+            st = getattr(mob, "start_tip", None)
+            has_start = bool(st is not None and st in mob)
+            subs = [type(s).__name__ for s in getattr(mob, "submobjects", [])]
+            try:
+                from real_time_manim.state import get_anim_opacity as _gao
+                ao = _gao(mob)
+            except Exception:
+                ao = "<n/a>"
+            fo = getattr(mob, "fill_opacity", "<n/a>")
+            try:
+                fra = float(mob.fill_rgbas[:, 3].max())
+            except Exception:
+                fra = "<n/a>"
+            hb = hasattr(mob, "_vulkan_progress_upper")
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(
+                    "%s where=%s transforming=%s parent=%s progress=%s "
+                    "has_start_tip=%s subs=%s anim_op=%s fill_op=%s "
+                    "fo_rgbas=%s has_bounds=%s\n"
+                    % (type(mob).__name__, where,
+                       getattr(mob, "_transforming", None), parent_transforming,
+                       getattr(mob, "_vulkan_progress", 1.0), has_start, subs,
+                       ao, fo, fra, hb))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _dbg_emit(tag, text):
+        """Env-gated free-form emission log (R10-6 diagnosis)."""
+        try:
+            import os
+            path = os.environ.get("RTM_ARROW_DEBUG")
+            if not path:
+                return
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("%s %s\n" % (tag, text))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _rasterise_camera_prefix(cam, roots, upto):
+        """Replay ``roots[:upto]`` into the camera array, exactly as CE had it.
+
+        CE reaches that array mid-``capture_mobjects``; this reproduces the
+        state it saw: clear to the background, then draw only the roots that
+        precede the image.  A root that comes *after* it must stay out -- that
+        is what makes the copy a prefix and not the whole frame.
+        """
+        try:
+            reset = getattr(cam, "reset", None)
+            if callable(reset):
+                reset()
+            cam.capture_mobjects(list(roots[:upto]))
+            return True
+        except Exception:
+            return False
 
     def _glyph_baseline(self, mob):
         """Approximate the x-height baseline of a Text from its glyph bottoms.
@@ -1403,6 +1516,7 @@ class MLWindow(ShapeMixin, TextMixin):
                 # that never gets drawn. Route through _send_arrow instead.
                 if isinstance(mob, Arrow):
                     screen_rot = -rot
+                    self._dbg_arrow(mob, "transforming", parent_transforming)
                     self._send_arrow(mob, a, w, h, screen_rot, None if is_text else parent_offset)
                     return
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset, 0.0, is_text=is_text)
@@ -1467,9 +1581,30 @@ class MLWindow(ShapeMixin, TextMixin):
                 return
 
         if isinstance(mob, Square):
-            self._send_square(mob, a, w, h, screen_rot, parent_offset)
+            if not _quad_flat:
+                # _quad_flat is False when the points are genuinely curved, and
+                # the comment above promises those "fall through to the point
+                # path, which tessellates the arcs".  They did not: the dispatch
+                # below is class-based, so _send_square rebuilt an axis-aligned
+                # quad from side_length.  A Square that became a circle
+                # (MobjectPositioningAndStyling's ghost) has class Square but
+                # 32 bezier points -- it was drawn as the wrong shape and the
+                # scene's A collapsed 0.859 -> 0.001.  Send them to the generic
+                # renderer instead, which is what the comment promised.
+                self._send_vmobject(mob, a, w, h,
+                                    None if is_text else parent_offset, rot,
+                                    is_text=is_text)
+            else:
+                self._send_square(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Rectangle):
-            self._send_rectangle(mob, a, w, h, screen_rot, parent_offset)
+            if not _quad_flat:
+                # same: a RoundedRectangle must reach the bezier tessellator,
+                # not _send_rectangle's axis-aligned width/height quad.
+                self._send_vmobject(mob, a, w, h,
+                                    None if is_text else parent_offset, rot,
+                                    is_text=is_text)
+            else:
+                self._send_rectangle(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Ellipse):
             self._send_ellipse(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Dot):
@@ -1477,15 +1612,52 @@ class MLWindow(ShapeMixin, TextMixin):
         elif isinstance(mob, Circle):
             # same reasoning as the Arc branch: a partially drawn circle keeps the
             # real radius on the point path (native progress counts segments of a
-            # full-radius circle, and `mob.width/2` is the chord early on).
+            # full-radius circle, and on a cut arc `mob.get_center()` is the arc's
+            # own bbox centre, not the circle's, so `|get_start() - get_center()|`
+            # is not the radius -- `_send_circle` now derives the radius from the
+            # on-curve start instead of `mob.width`, which also measured the
+            # off-curve handles and inflated a rotating circle by 3.46 %).
             _c_progress = getattr(mob, '_vulkan_progress', 1.0)
-            if 0.0 < _c_progress < 1.0:
+            # A Circle inside a 3D scene is not a circle on screen.  At phi=70 a
+            # horizontal cap projects to a 60x21 px ELLIPSE, while `_send_circle`
+            # draws a full-radius disc from `mob.width` -- measured on
+            # SolidPrimitives3D: the Cylinder's two end caps bulged ~21 px past
+            # the body at BOTH ends (957 + 883 px of excess fill).  When the
+            # camera carries a rotation, hand the mobject to the point path,
+            # which projects every point (and its z) individually.
+            _vp3d = False
+            try:
+                from real_time_manim.camera_state import get_viewport
+                _vp = get_viewport()
+                _vp3d = _vp is not None and _vp.rotation is not None
+            except Exception:
+                _vp3d = False
+            if _vp3d or 0.0 < _c_progress < 1.0:
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)
             else:
                 self._send_circle(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Arrow):
+            self._dbg_arrow(mob, "main", parent_transforming)
             self._send_arrow(mob, a, w, h, screen_rot, parent_offset)
+            # `_send_arrow` draws the shaft AND `mob.tip`, which is why Arrow
+            # is left out of the family walk below ("Arrow is already fully
+            # handled by _send_arrow").  True for `tip`, false for anything
+            # else: a LabeledArrow carries a SECOND submobject, its `Label`,
+            # that nothing drew at all (report R10-2 -- BracesAndLabels' last
+            # row, `flow`: CE 329 px of glyphs, RTM 0; label_probe.py shows
+            # `_send(flow)` emitting AddLine x2 + AddBezierPath x1 only).  Walk
+            # every submobject except the tip, so report #9's tip stays drawn
+            # exactly once.
+            _arrow_tip = getattr(mob, "tip", None)
+            for _sub in mob.submobjects:
+                if _sub is _arrow_tip:
+                    continue
+                self._dbg_arrow(_sub, "walk", parent_transforming)
+                self._send(_sub, rot, parent_alpha=a,
+                           parent_offset=parent_offset,
+                           parent_transforming=parent_transforming,
+                           parent_is_text=is_text)
         elif isinstance(mob, DashedLine):
             self._send_dashed_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Line):
@@ -1496,8 +1668,23 @@ class MLWindow(ShapeMixin, TextMixin):
             # update, so an arc that is being drawn or morphed has to go through
             # the point path, which tessellates the actual points and honours
             # `_vulkan_progress` (plan 4.2).
+            #
+            # A fill-bearing arc has to take that road too: `_send_arc` has only
+            # a stroke branch -- it never reads `fill_rgbas` -- and
+            # `_stroke_width` turns manim's `stroke_width=0` into 0.0 px, so a
+            # fill-only arc submitted NOTHING at all and the element never
+            # appeared (report #8: ArcsAndCurves' Sector CE 2626 px vs RTM 0,
+            # AnnularSector CE 2124 px vs RTM 0; the missing area equals the
+            # shoelace of the points we dropped).  manim builds both with
+            # fill_opacity=1 and stroke_width=0, which is the normal way to
+            # make a filled wedge.
             _arc_progress = getattr(mob, '_vulkan_progress', 1.0)
-            if 0.0 < _arc_progress < 1.0 or getattr(mob, '_transforming', False):
+            try:
+                _arc_fill = float(mob.fill_rgbas[:, 3].max())
+            except Exception:
+                _arc_fill = 0.0
+            if (0.0 < _arc_progress < 1.0 or _arc_fill > 0.0
+                    or getattr(mob, '_transforming', False)):
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)
             else:
@@ -1639,7 +1826,7 @@ class MLWindow(ShapeMixin, TextMixin):
         animation, truncation for a wait.  Rounding both to nearest drifted by a
         frame per segment.
         """
-        from real_time_manim.timeline import ce_frame_count
+        from real_time_manim.timeline import _is_manim_animation, ce_frame_count
         fps = self._fast_record_fps if self._fast_record else 30
         dt = 1.0 / fps
         if anims is None:
@@ -1672,6 +1859,21 @@ class MLWindow(ShapeMixin, TextMixin):
 
         for entry in tl._entries:
             anim = entry['anim']
+            # manim's Scene.play_internal finishes before cleaning up:
+            #
+            #     for animation in self.animations:
+            #         animation.finish()
+            #         animation.clean_up_from_scene(self)
+            #
+            # clean_up_from_scene calls _on_finish, NOT finish(), so omitting it
+            # here left every animated mobject permanently updating_suspended --
+            # _drive_mobject_updaters then skipped it on every later frame, which
+            # froze PolygonOnAxes for 47 frames (an always_redraw rectangle whose
+            # ValueTracker kept animating but never reached the screen).  finish()
+            # also applies interpolate(1), which ce_frame_count's exclusive arange
+            # end never reaches on its own.
+            if _is_manim_animation(anim) and hasattr(anim, "finish"):
+                anim.finish()
             if hasattr(anim, 'clean_up_from_scene'):
                 try:
                     anim.clean_up_from_scene(self.scene)

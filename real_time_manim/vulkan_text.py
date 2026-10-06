@@ -1,6 +1,6 @@
 import ctypes
 import math
-from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb, get_opacity
+from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb, get_opacity, point_path_bounds, shaded_fill_rgb
 from real_time_manim.animations import get_anim_opacity
 
 
@@ -146,6 +146,88 @@ class TextMixin:
             cy = mob.get_center()[1]
         sx, sy = manim_to_screen(cx, cy, w, h)
         self.dll.AddText(sx, sy, base_r, base_g, base_b, font_px, 1.0, text_str.encode('utf-8'), alpha)
+
+    def _small_path_chords(self, flat, n):
+        """Straight runs to stroke for a path carrying fewer than 8 points.
+
+        ``flat`` is screen-space control points as x,y,z triples.  A VMobject
+        stores its path as runs of four control points per cubic -- or
+        ``1 + 3k`` when it was built curve by curve -- so a FOUR-point path is
+        ONE cubic segment, not a polygon.  Chords straight between the raw
+        control points are only right when the segment really is straight:
+        ``ArcsAndCurves``' ``CubicBezier(-1L, -0.4L+0.9U, 0.4R-0.9U, 1R)`` has
+        4 points and was stroked as the 36 x 108 px triangle through its
+        handles while CE draws the 27 x 31 px curve (report R10-1; probe
+        bezier_probe.py, three AddLine exactly along p0->p1->p2->p3).
+
+        Curved segments are sampled with the same length-aware rule the
+        8-plus-point path uses (STEP_PX = 3, 8..256 samples), so both branches
+        agree on where a cubic lies; a segment whose handles sit on its chord
+        stays one chord, which keeps a straight glyph or Line costing a single
+        primitive instead of `samples`.
+        """
+        straight_px = 0.75   # handles this close to the chord are invisible
+        step_px = 3.0        # same rule as the tessellation below (vulkan_text)
+        stride = None
+        n_seg = 0
+        if n % 4 == 0:
+            stride, n_seg = 4, n // 4
+        elif (n - 1) % 3 == 0:
+            stride, n_seg = 3, (n - 1) // 3
+        if stride is None:
+            # Not a cubic layout (5 or 6 anchors): the raw points ARE the path.
+            return [(flat[i * 3], flat[i * 3 + 1],
+                     flat[(i + 1) * 3], flat[(i + 1) * 3 + 1])
+                    for i in range(n - 1)]
+        runs = []
+        for si in range(n_seg):
+            idx = si * stride
+            if idx + 3 >= n:
+                break
+            p0x, p0y = flat[idx * 3], flat[idx * 3 + 1]
+            p1x, p1y = flat[(idx + 1) * 3], flat[(idx + 1) * 3 + 1]
+            p2x, p2y = flat[(idx + 2) * 3], flat[(idx + 2) * 3 + 1]
+            p3x, p3y = flat[(idx + 3) * 3], flat[(idx + 3) * 3 + 1]
+            dx, dy = p3x - p0x, p3y - p0y
+            chord = math.hypot(dx, dy)
+            if chord > 1e-9:
+                # distance of a handle from the chord LINE: the curve lies in
+                # the convex hull of its control points, so it cannot leave it.
+                off1 = abs(dx * (p0y - p1y) - (p0x - p1x) * dy) / chord
+                off2 = abs(dx * (p0y - p2y) - (p0x - p2x) * dy) / chord
+            else:
+                off1 = math.hypot(p1x - p0x, p1y - p0y)
+                off2 = math.hypot(p2x - p0x, p2y - p0y)
+            if max(off1, off2) <= straight_px:
+                seg = [(p0x, p0y), (p3x, p3y)]
+            else:
+                cpoly = (math.hypot(p1x - p0x, p1y - p0y)
+                         + math.hypot(p2x - p1x, p2y - p1y)
+                         + math.hypot(p3x - p2x, p3y - p2y))
+                est = (cpoly + chord) * 0.5
+                samples = int(max(8.0, min(256.0, math.ceil(est / step_px))))
+                seg = []
+                for s in range(samples + 1):
+                    t = s / samples
+                    u = 1.0 - t
+                    seg.append((u * u * u * p0x + 3 * u * u * t * p1x
+                                + 3 * u * t * t * p2x + t * t * t * p3x,
+                                u * u * u * p0y + 3 * u * u * t * p1y
+                                + 3 * u * t * t * p2y + t * t * t * p3y))
+            # Stitch onto the previous run only when the anchor really is the
+            # same point; a `1 + 3k` path shares it, a run of independent
+            # 4-point segments does not and must not get a chord between them.
+            if runs and (abs(runs[-1][-1][0] - seg[0][0]) < 1e-6
+                         and abs(runs[-1][-1][1] - seg[0][1]) < 1e-6):
+                runs[-1].extend(seg[1:])
+            else:
+                runs.append(seg)
+        chords = []
+        for run in runs:
+            for i in range(len(run) - 1):
+                chords.append((run[i][0], run[i][1],
+                               run[i + 1][0], run[i + 1][1]))
+        return chords
 
     def _send_vmobject(self, mob, a, w, h, parent_offset=None, rot=0.0, is_text=False, exact_width=False):
         try:
@@ -293,7 +375,7 @@ class TextMixin:
                         px1 += parent_offset[0]; py1 += parent_offset[1]
                     sx0, sy0 = manim_to_screen(px0, py0, w, h)
                     sx1, sy1 = manim_to_screen(px1, py1, w, h)
-                    self.dll.AddLine(sx0, sy0, sx1, sy1, max(1, round(sw)), sri, sgi, sbi, a)
+                    self._emit_stroke(sx0, sy0, sx1, sy1, sw, sri, sgi, sbi, a)
                 return
             cx, cy, _ = mob.get_center()
             cos_a = math.cos(rot)
@@ -374,20 +456,41 @@ class TextMixin:
                         sr, sg, sb = float(srgbas[0][0]), float(srgbas[0][1]), float(srgbas[0][2])
                 except Exception:
                     pass
+                # `a` is RTM's own animation registry (`state.py`), which
+                # manim's FadeIn never writes -- a fade travels through
+                # stroke_rgbas instead (report R10-3).  This branch used `a`
+                # alone, so ArcsAndCurves' 4-point CubicBezier -- one cubic
+                # segment, i.e. exactly this path -- was stroked at full
+                # brightness on frame 0 of FadeIn(top) and never ramped, while
+                # CE is empty for 5 frames and only then fades in (report
+                # R10-4).  The >=8 branch already uses
+                # `stroke_alpha = min(1, so * a)`; do the same here, and skip
+                # the stroke when none of it is visible.
+                try:
+                    so = float(mob.stroke_rgbas[:, 3].max())
+                except Exception:
+                    so = get_opacity(mob, 'stroke', 1.0)
+                stroke_alpha = min(1.0, so * a)
                 sw = self._stroke_width(mob)
                 sri = int(sr * 255 * a)
                 sgi = int(sg * 255 * a)
                 sbi = int(sb * 255 * a)
-                for i in range(n - 1):
-                    x0, y0 = flat[i * 3], flat[i * 3 + 1]
-                    x1, y1 = flat[(i + 1) * 3], flat[(i + 1) * 3 + 1]
-                    self.dll.AddLine(x0, y0, x1, y1, max(1, round(sw)), sri, sgi, sbi, a)
+                # `_small_path_chords`, not raw points: below 8 points the
+                # path may still be a cubic (4 points = ONE segment), and
+                # chords through its handles drew the control hull instead of
+                # the curve (report R10-1).
+                if stroke_alpha > 0.004:
+                    for x0, y0, x1, y1 in self._small_path_chords(flat, n):
+                        self._emit_stroke(x0, y0, x1, y1, sw, sri, sgi, sbi,
+                                          stroke_alpha)
             return
 
         fr, fg, fb, fa = 0, 0, 0, 0
+        _fa_measured = False
         try:
             frgbas = mob.get_fill_rgbas()
             if len(frgbas) > 0:
+                _fa_measured = True
                 # manim keeps a *gradient* fill as several stops -- e.g.
                 # `set_sheen(0.4, RIGHT)` leaves [dim, bright].  Reading only
                 # stop 0 painted every gradient/sheen fill at its darkest stop
@@ -404,15 +507,33 @@ class TextMixin:
         except Exception:
             pass
         if fr == 0 and fg == 0 and fb == 0:
+            # The fill colour is literally black, which is ambiguous: it may be
+            # the real colour or just "unset".  Take the colour from
+            # `get_color()`, but do NOT touch `fa` when the rgba data was read
+            # -- `fa` is the mobject's own fill opacity and the only thing that
+            # carries a fade.  Forcing it to 1.0 made a faded-out glyph fill at
+            # full strength: GraphMobjects' six vertex labels flashed for one
+            # frame before each FadeIn (report R10-3, fill_alpha 1.0 with
+            # fa 0.0).  Only a mobject with no fill rgba data at all falls back
+            # to "paint it".
             try:
                 c = mob.get_color()
                 fr, fg, fb = float(c[0]), float(c[1]), float(c[2])
-                fa = 1.0
+                if not _fa_measured:
+                    fa = 1.0
             except Exception:
                 fr, fg, fb = 1.0, 1.0, 1.0
-                fa = 1.0
+                if not _fa_measured:
+                    fa = 1.0
             if is_text and fr == 0 and fg == 0 and fb == 0:
                 fr, fg, fb = 1.0, 1.0, 1.0
+
+        # A `shade_in_3d` face is lit by the ThreeDCamera's light source;
+        # without this every face of a 3D solid takes its flat colour (see
+        # vulkan_util.shaded_fill_rgb).  No-op outside a rotated 3D viewport.
+        _lit = shaded_fill_rgb(mob)
+        if _lit is not None:
+            fr, fg, fb = _lit[0] / 255.0, _lit[1] / 255.0, _lit[2] / 255.0
 
         sr, sg, sb, sa = 1, 1, 1, 1
         try:
@@ -477,6 +598,19 @@ class TextMixin:
             # with it on).
             stroke_w = max(1.0, float(int(math.ceil(sw - 1e-6)) - 1))
             stroke_width_alpha = min(1.0, sw / (stroke_w + 1.0))
+        elif sw > 0 and getattr(mob, 'shade_in_3d', False):
+            # A 3D face's own outline is thin and usually a light grey.  manim
+            # draws a Surface's quad borders at `stroke_width` (0.5 by default),
+            # i.e. 0.3 px at 480p, but `max(1.0, sw)` turned that into a 2 px
+            # quad (native's strip is `width + 1` px) -- so every quad border of
+            # a Sphere/Cone came out as a fat white mesh.  Measured on
+            # SolidPrimitives3D: 57 % of the sphere's lit pixels were the stroke
+            # grey (187,187,187) against CE's 1 %, and the fills were buried
+            # under it.  Give it the exact sub-pixel width, the same rule
+            # `_send_line` uses; `stroke_width_alpha` rides the per-vertex alpha
+            # at the AddLineStrip below.
+            stroke_w = max(0.0, float(int(math.ceil(sw - 1e-6)) - 1))
+            stroke_width_alpha = min(1.0, sw / (stroke_w + 1.0))
         else:
             stroke_w = max(1.0, sw) if sw > 0 else 0
             stroke_width_alpha = 1.0
@@ -484,34 +618,57 @@ class TextMixin:
         # overrides this to fade the outline out as the fill comes in.
         stroke_point_alpha = a
 
-        progress = getattr(mob, '_vulkan_progress', 1.0)
-        has_bounds = hasattr(mob, '_vulkan_progress_upper')
-        if has_bounds:
-            progress_lower = getattr(mob, '_vulkan_progress_lower', 0.0)
-            progress_upper = getattr(mob, '_vulkan_progress_upper', 1.0)
-        else:
-            progress_lower = 0.0
-            progress_upper = progress
-        sri = round(sr * 255 * stroke_alpha)
-        sgi = round(sg * 255 * stroke_alpha)
-        sbi = round(sb * 255 * stroke_alpha)
+        # The native fill window and the stroke walk below must agree, and both
+        # are fractions OF mob's points -- which manim's ShowPartial has already
+        # cut when render_hooks tagged the mobject (see point_path_bounds).
+        progress_lower, progress_upper = point_path_bounds(mob)
+        progress = progress_upper
+        # Straight alpha.  native blends `colour * alpha + dst * (1 - alpha)`
+        # (vulkan_init.c:633), so the colour must stay full-strength and the
+        # mobject's stroke opacity rides in the alpha -- exactly the rule the
+        # bezier fill code already documents (native/draw/draw_bezier.c:234:
+        # "Baking opacity into the colour ... made low-opacity fills render as
+        # BLACK instead of transparent -- the colour approached 0 while alpha
+        # stayed ~1").  Folding `stroke_alpha` into the colour here, with the
+        # blend alpha left at `a`, submits an OPAQUE dark stroke that REPLACES
+        # whatever it lands on.  Measured on ApplyTransformAnimations: at frame
+        # 83 FadeTransform's source ring is at stroke opacity 0.154 and is
+        # drawn after the target square (native builds every AddLineStrip after
+        # every AddLine, vulkan_draw.c:89-90), so it erased the middle of all
+        # four edges -- 269 ink against CE's 442.
+        sri = round(sr * 255)
+        sgi = round(sg * 255)
+        sbi = round(sb * 255)
         fri = round(fr * 255)
         fgi = round(fg * 255)
         fbi = round(fb * 255)
 
         show_fill = 1 if fill_alpha > 0.01 and progress_lower == 0.0 else 0
-        do_stroke = stroke_alpha > 0.01 and stroke_w > 0
+        # Gate on the ORIGINAL `sw`, never the rounded `stroke_w`: the sub-pixel
+        # rule above legitimately yields stroke_w == 0 for a thin outline, and
+        # gating on it would drop the stroke entirely -- the width lives in
+        # `stroke_width_alpha` instead.
+        do_stroke = stroke_alpha > 0.01 and sw > 0
 
         if is_text and fill_alpha > 0.01:
             do_stroke = False
 
         if not do_stroke and getattr(mob, '_transforming', False) and sw > 0 and not is_text:
-            sr, sg, sb = fr, fg, fb
-            stroke_alpha = max(stroke_alpha, a)
-            sri = round(sr * 255 * stroke_alpha)
-            sgi = round(sg * 255 * stroke_alpha)
-            sbi = round(sb * 255 * stroke_alpha)
-            do_stroke = True
+            # Silhouette for a morphing shape that has no stroke of its own.
+            # It must NOT fire when manim has faded the whole mobject away:
+            # `a` is the animation-registry value, which deliberately stays 1.0
+            # for a container animation (see `_is_container`), so the old
+            # `max(stroke_alpha, a)` resurrected FadeTransform's vanishing
+            # source as a fully opaque ring painted over the finished square
+            # (measured frame 85: 573 ink against CE's 360).  Only a mobject
+            # that is still visible -- through its fill -- earns the outline.
+            if max(stroke_alpha, fill_alpha) > 0.01:
+                sr, sg, sb = fr, fg, fb
+                stroke_alpha = 1.0
+                sri = round(sr * 255)
+                sgi = round(sg * 255)
+                sbi = round(sb * 255)
+                do_stroke = True
 
         # LaTeX glyphs (VMobjectFromSVGPath) carry no stroke (sw == 0), and the
         # native tessellate_fill pops the whole fill in at once.  During a
@@ -524,6 +681,10 @@ class TextMixin:
                 and getattr(mob, '_write_active', False)):
             stroke_point_alpha = max(0.0, 1.0 - fill_alpha * 1.2) * a
             sr, sg, sb = fr, fg, fb
+            # colour is the glyph's fill colour, full strength: the fade-out is
+            # carried entirely by `stroke_point_alpha`, so `stroke_alpha` (the
+            # glyph's own stroke opacity, i.e. 0 here) must not multiply it.
+            stroke_alpha = 1.0
             sri = round(sr * 255)
             sgi = round(sg * 255)
             sbi = round(sb * 255)
@@ -574,7 +735,11 @@ class TextMixin:
                 for i, (px, py) in enumerate(stroke_pts):
                     coords[i * 2] = px
                     coords[i * 2 + 1] = py
-                    alphas[i] = stroke_point_alpha * stroke_width_alpha
+                    # `stroke_alpha` is the mobject's own stroke opacity and is
+                    # NOT in the colour any more (straight alpha above), so it
+                    # belongs here: total = opacity * animation * width.
+                    alphas[i] = min(1.0, stroke_alpha * stroke_point_alpha
+                                    * stroke_width_alpha)
                 self.dll.AddLineStrip(coords, alphas, len(stroke_pts), int(stroke_w), sri, sgi, sbi, 1.0)
 
     def _send_text_stroke(self, mob, a, w, h, parent_offset=None):

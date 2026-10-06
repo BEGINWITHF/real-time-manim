@@ -247,6 +247,16 @@ class Timeline:
         """Set every animation's mobjects to their state at time ``t`` (no draw)."""
         if not self._prepared:
             raise RuntimeError("call finalize()/prepare() first")
+        # Every entry is evaluated at every t, including those whose start has
+        # not been reached: evaluate_animation clamps a negative time to alpha 0,
+        # and writing that start state is what makes the result a *pure function
+        # of t*.  Skipping unstarted entries looked like a fix for the staggered-
+        # schedule clobbering, but it makes the frame depend on which times were
+        # rendered before it -- see tests/test_frame_access.py, which went red.
+        # The real defect upstream of that clobbering is finalize() calling
+        # begin() on every entry before any playback, so a later entry captures
+        # the initial scene state instead of the state its predecessor finished
+        # in; that is tracked separately.
         for entry in self._entries:
             evaluate_animation(entry["anim"], t - entry["start"])
 

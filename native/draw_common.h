@@ -8,11 +8,15 @@ extern float g_vertices[];
 extern uint32_t g_vertex_count;
 extern VkExtent2D g_swapchain_ext;
 
-#ifdef _WIN32
-#define MAX_VERTICES 1048576
-#else
+/* The bezier *fill* emits vertices proportional to the filled **area**, so the
+ * budget has to be a per-frame vertex count, not a shape count: at 1080p a
+ * single Surface scene needs > 2 M vertices.  The old Windows value (1 048 576)
+ * overran at ~1.3 M px, and `PushVertex` drops silently on overflow -- measured
+ * on ThreeDSurfacePlot: lit pixels 71 068 at 854x480 (correct) but only 147 396
+ * at 1920x1080 against CE's 355 469, i.e. the fills were being discarded from
+ * the point the cap was hit (which also reads as "the lighting comes and goes"
+ * and "only half of the shape").  Windows now matches the other platforms. */
 #define MAX_VERTICES 4194304
-#endif
 
 static inline void ToNDC(float px, float py, float *nx, float *ny) {
     *nx = (px / (float)g_swapchain_ext.width) * 2.0f - 1.0f;

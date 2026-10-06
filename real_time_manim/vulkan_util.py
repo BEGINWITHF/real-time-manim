@@ -8,17 +8,16 @@ def manim_to_screen(x, y, w=800, h=600, z=0.0):
     # MovingCameraScene) that viewport is published per frame and every sender
     # funnels through here, so the camera finally affects what is drawn.
     try:
-        from real_time_manim.camera_state import get_viewport
+        from real_time_manim.camera_state import get_viewport, screen_scale
         _vp = get_viewport()
+        s = screen_scale(w, h)
     except Exception:                            # pragma: no cover
         _vp = None
+        s = float(h) / 8.0
     if _vp is not None:
         return _vp.project(x, y, w, h, z)
-    frame_width = w * 8.0 / h
-    sx = w / frame_width
-    sy = h / 8.0
     cx, cy = w / 2.0, h / 2.0
-    return float(cx + x * sx), float(cy - y * sy)
+    return float(cx + x * s), float(cy - y * s)
 
 
 def rotate_point(x, y, cx, cy, angle):
@@ -31,6 +30,37 @@ def rotate_point(x, y, cx, cy, angle):
     nx = dx * cos_a - dy * sin_a + cx
     ny = dx * sin_a + dy * cos_a + cy
     return nx, ny
+
+
+def point_path_bounds(mob):
+    """The ``(lower, upper)`` a *point-path* sender should draw from ``mob``.
+
+    Point-path senders (``_send_vmobject``, ``_send_polygon``, ``_send_arc``)
+    tessellate ``mob.get_points()`` and then walk a fraction of **that** path.
+    Two things can already have shortened those points:
+
+    * manim's own ``ShowPartial.interpolate_submobject`` calls
+      ``pointwise_become_partial`` with the eased bound, so for a native
+      ``Create``/``Uncreate`` the geometry *is* the animation -- walking a
+      further ``_vulkan_progress`` fraction of it drew
+      ``progress * geometry`` instead of ``geometry`` (measured: ``Uncreate``
+      rises to a mid-animation peak and returns to 0, which only a product can
+      produce, and frame 25 of AnimationCreationBasics drew 0 px where CE drew
+      589).  ``render_hooks._write_progress`` marks those mobjects
+      ``_vulkan_points_partial`` and the whole cut path is drawn.
+    * an explicit bounds window (``ShowPassingFlash``) -- an intentional clip,
+      so it wins over a stale tag.
+
+    Untagged mobjects keep the plain channel: RTM's own animations never
+    truncate the points and carry their partial state in the channel alone
+    (``animations/create.py``), so they must keep composing as before.
+    """
+    if hasattr(mob, "_vulkan_progress_upper"):
+        return (float(getattr(mob, "_vulkan_progress_lower", 0.0)),
+                float(getattr(mob, "_vulkan_progress_upper", 1.0)))
+    if getattr(mob, "_vulkan_points_partial", False):
+        return 0.0, 1.0
+    return 0.0, float(getattr(mob, "_vulkan_progress", 1.0))
 
 
 def get_fill_rgb(mob, alpha=1.0):
@@ -76,6 +106,80 @@ def get_fill_rgb_raw(mob):
     if fo <= 0:
         return 0, 0, 0
     return 255, 255, 255
+
+
+def _shade_one(rgb, point, unit_normal, light_source):
+    """manim's ``get_shaded_rgb`` -- ``rgb + 0.5*(normal . to_light)**3``.
+
+    A negative dot means the face points away, and manim halves the (already
+    negative) term, so a face turned from the light darkens rather than glowing.
+    """
+    to_light = np.asarray(light_source, dtype=float) - np.asarray(point, dtype=float)
+    norm = float(np.linalg.norm(to_light))
+    if norm <= 1e-12:
+        return np.asarray(rgb, dtype=float)
+    light = 0.5 * float(np.dot(unit_normal, to_light / norm)) ** 3
+    if light < 0.0:
+        light *= 0.5
+    return np.asarray(rgb, dtype=float) + light
+
+
+def _corner_normal(points, index):
+    """manim's ``get_3d_vmob_unit_normal`` for one corner of a face."""
+    n = len(points)
+    if n <= 4:
+        return np.array([0.0, 1.0, 0.0])
+    im3 = index - 3 if index > 2 else (n - 4)
+    ip3 = index + 3 if index < (n - 3) else 3
+    a = points[ip3] - points[index]
+    b = points[im3] - points[index]
+    normal = np.cross(a, b)
+    length = float(np.linalg.norm(normal))
+    if length <= 1e-12:
+        return np.array([0.0, 1.0, 0.0])
+    return normal / length
+
+
+def shaded_fill_rgb(mob):
+    """A ``shade_in_3d`` face's lit fill colour, or ``None`` when it does not apply.
+
+    ``ThreeDCamera.modified_rgbas`` shades a face's start- and end-corner colours
+    from the face's own unit normal and the camera's light source.  Without it
+    every face of a Cube / Polyhedron / Prism takes the same colour -- measured
+    on SolidPrimitives3D, CE's three cube faces read luma 68 / 82 / 90 where RTM
+    drew a flat 80, i.e. the solids had no visible 3D form at all.
+
+    The two corner colours are averaged because the native fill is a single
+    colour here; manim's own two stops are nearly equal on a planar face, so the
+    average reproduces its constant per-face shade.
+    """
+    try:
+        from real_time_manim.camera_state import get_viewport
+        viewport = get_viewport()
+    except Exception:
+        return None
+    if viewport is None or getattr(viewport, "rotation", None) is None:
+        return None
+    if not getattr(mob, "shade_in_3d", False):
+        return None
+    light_source = getattr(viewport, "light_source", None)
+    if light_source is None:
+        return None
+    try:
+        rgbas = np.asarray(mob.get_fill_rgbas(), dtype=float)
+        points = np.asarray(mob.get_points(), dtype=float)
+    except Exception:
+        return None
+    if len(rgbas) == 0 or len(points) < 4:
+        return None
+    start = 0
+    end = ((len(points) - 1) // 6) * 3
+    first = _shade_one(rgbas[0][:3], points[start],
+                       _corner_normal(points, start), light_source)
+    last = _shade_one(rgbas[min(1, len(rgbas) - 1)][:3], points[end],
+                      _corner_normal(points, end), light_source)
+    lit = np.clip((first + last) / 2.0, 0.0, 1.0) * 255.0
+    return int(lit[0]), int(lit[1]), int(lit[2])
 
 
 def get_stroke_rgb(mob):
