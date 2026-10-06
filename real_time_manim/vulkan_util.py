@@ -124,6 +124,42 @@ def _shade_one(rgb, point, unit_normal, light_source):
     return np.asarray(rgb, dtype=float) + light
 
 
+def _unit_normal(v1, v2, tol=1e-6):
+    """manim's ``utils.space_ops.get_unit_normal``.
+
+    The non-obvious branch is the aligned one: on a `Surface` cell the two
+    tangent vectors are frequently *parallel* (adjacent control points along a
+    single edge), and manim then rotates the shared direction 90 degrees toward
+    +Z instead of giving up.  Returning a constant up-vector there made the
+    first corner of every cell shade from a fixed direction, so the cell lost
+    its highlight -- measured on SolidPrimitives3D's Sphere, manim shades one
+    cell (88,218,249) -> (28,158,189) while the up-vector version gave
+    (29,159,190) -> (28,158,189), flattening the whole surface.
+    """
+    u1 = np.asarray(v1, dtype=float)
+    u2 = np.asarray(v2, dtype=float)
+    div1 = float(np.max(np.abs(u1))) if u1.size else 0.0
+    div2 = float(np.max(np.abs(u2))) if u2.size else 0.0
+    if div1 == 0.0:
+        if div2 == 0.0:
+            return np.array([0.0, -1.0, 0.0])          # manim: DOWN
+        u = u2 / div2
+    elif div2 == 0.0:
+        u = u1 / div1
+    else:
+        u1, u2 = u1 / div1, u2 / div2
+        cp = np.cross(u1, u2)
+        cp_norm = float(np.sqrt(np.sum(cp * cp)))
+        if cp_norm > tol:
+            return cp / cp_norm
+        u = u1
+    if abs(u[0]) < tol and abs(u[1]) < tol:
+        return np.array([0.0, -1.0, 0.0])              # manim: DOWN
+    # Rotate u 90 degrees toward the Z axis: (u x [0,0,1]) x u.
+    cp = np.array([-u[0] * u[2], -u[1] * u[2], u[0] * u[0] + u[1] * u[1]])
+    return cp / float(np.sqrt(np.sum(cp * cp)))
+
+
 def _corner_normal(points, index):
     """manim's ``get_3d_vmob_unit_normal`` for one corner of a face."""
     n = len(points)
@@ -133,11 +169,7 @@ def _corner_normal(points, index):
     ip3 = index + 3 if index < (n - 3) else 3
     a = points[ip3] - points[index]
     b = points[im3] - points[index]
-    normal = np.cross(a, b)
-    length = float(np.linalg.norm(normal))
-    if length <= 1e-12:
-        return np.array([0.0, 1.0, 0.0])
-    return normal / length
+    return _unit_normal(a, b)
 
 
 def shaded_fill_rgb(mob):
