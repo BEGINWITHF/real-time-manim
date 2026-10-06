@@ -214,6 +214,53 @@ def shaded_fill_rgb(mob):
     return int(lit[0]), int(lit[1]), int(lit[2])
 
 
+def shaded_fill_gradient(mob, w, h):
+    """``(c1, c2, p1, p2)`` for a ``shade_in_3d`` face, or ``None``.
+
+    manim shades a face with two stops -- its start- and end-corner colours --
+    and Cairo interpolates across the path.  ``shaded_fill_rgb`` averages them
+    for callers that take a single colour; this returns both stops plus the
+    projected corner positions so the native bezier fill can interpolate the
+    same way.  Without it the peak of a curved surface is clipped: CE's Sphere
+    limb reaches luma 249 where the averaged colour tops out near 195.
+    """
+    try:
+        from real_time_manim.camera_state import get_viewport
+        viewport = get_viewport()
+    except Exception:
+        return None
+    if viewport is None or getattr(viewport, "rotation", None) is None:
+        return None
+    if not getattr(mob, "shade_in_3d", False):
+        return None
+    light_source = getattr(viewport, "light_source", None)
+    if light_source is None:
+        return None
+    try:
+        rgbas = np.asarray(mob.get_fill_rgbas(), dtype=float)
+        points = np.asarray(mob.get_points(), dtype=float)
+    except Exception:
+        return None
+    if len(rgbas) == 0 or len(points) < 4:
+        return None
+    start = 0
+    end = ((len(points) - 1) // 6) * 3
+    last_rgb = rgbas[min(1, len(rgbas) - 1)][:3]
+    first = np.clip(_shade_one(rgbas[0][:3], points[start],
+                               _corner_normal(points, start), light_source),
+                    0.0, 1.0) * 255.0
+    second = np.clip(_shade_one(last_rgb, points[end],
+                                _corner_normal(points, end), light_source),
+                     0.0, 1.0) * 255.0
+    sx1, sy1 = manim_to_screen(points[start][0], points[start][1], w, h,
+                               points[start][2])
+    sx2, sy2 = manim_to_screen(points[end][0], points[end][1], w, h,
+                               points[end][2])
+    return ((int(first[0]), int(first[1]), int(first[2])),
+            (int(second[0]), int(second[1]), int(second[2])),
+            (sx1, sy1), (sx2, sy2))
+
+
 def get_stroke_rgb(mob):
     try:
         rgbas = mob.get_stroke_rgbas()

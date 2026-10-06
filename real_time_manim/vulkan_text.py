@@ -1,6 +1,6 @@
 import ctypes
 import math
-from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb, get_opacity, point_path_bounds, shaded_fill_rgb
+from real_time_manim.vulkan_util import manim_to_screen, get_fill_rgb, get_opacity, point_path_bounds, shaded_fill_rgb, shaded_fill_gradient
 from real_time_manim.animations import get_anim_opacity
 
 
@@ -42,6 +42,7 @@ class TextMixin:
                     sr, sg, sb, 3.0,
                     sr, sg, sb, 1.0,
                     1.0, 1, 1, alpha,
+                    sr, sg, sb, 0.0, 0.0, 0.0, 0.0,
                 )
             except Exception as e:
                 import traceback
@@ -93,6 +94,7 @@ class TextMixin:
                 sr, sg, sb, stroke_width,
                 base_r, base_g, base_b, fill_alpha,
                 stroke_progress, show_stroke, 1 if fill_alpha > 0 else 0, alpha,
+                base_r, base_g, base_b, 0.0, 0.0, 0.0, 0.0,
             )
 
     def _send_text_bitmap(self, mob, w, h, alpha=1.0):
@@ -693,11 +695,25 @@ class TextMixin:
 
         arr = (ctypes.c_float * len(flat))(*flat)
         n = (n // 4) * 4
+        _grad = shaded_fill_gradient(mob, w, h)
+        if _grad is not None:
+            # manim's two shaded stops, interpolated across the path: use the
+            # FIRST stop as the fill colour and hand the native the second one
+            # plus the projected corner axis (see shaded_fill_gradient).
+            _c1, _c2, _p1, _p2 = _grad
+            fri, fgi, fbi = _c1
+            _fr2, _fg2, _fb2 = _c2
+            _gx1, _gy1 = _p1
+            _gx2, _gy2 = _p2
+        else:
+            _fr2, _fg2, _fb2 = fri, fgi, fbi
+            _gx1 = _gy1 = _gx2 = _gy2 = 0.0
         self.dll.AddBezierPath(
             arr, n,
             sri, sgi, sbi, stroke_w,
             fri, fgi, fbi, fill_alpha,
             progress, 0, show_fill, a,
+            _fr2, _fg2, _fb2, _gx1, _gy1, _gx2, _gy2,
         )
 
         if do_stroke:

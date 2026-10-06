@@ -29,7 +29,7 @@ __declspec(dllexport) void AddArc(float x, float y, float radius, float start_an
 __declspec(dllexport) void AddPoint(float x, float y, int r, int g, int b, float alpha, float radius);
 __declspec(dllexport) void AddText(float x, float y, int r, int g, int b, float font_size, float opacity, const char* text, float alpha);
 __declspec(dllexport) int Text_LoadFont(const unsigned char *data, int data_len);
-__declspec(dllexport) void AddBezierPath(const float *points, int num_points, int sr, int sg, int sb, float stroke_width, int fr, int fg, int fb, float fill_opacity, float progress, int show_stroke, int show_fill, float alpha);
+__declspec(dllexport) void AddBezierPath(const float *points, int num_points, int sr, int sg, int sb, float stroke_width, int fr, int fg, int fb, float fill_opacity, float progress, int show_stroke, int show_fill, float alpha, int fr2, int fg2, int fb2, float gx1, float gy1, float gx2, float gy2);
 // Textured quad: ``rgba`` (w*h*4 bytes) is uploaded once under ``token`` and
 // reused for later frames; ``xy8`` holds the four corners in window pixels, in
 // top-left, top-right, bottom-right, bottom-left order.

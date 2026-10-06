@@ -799,6 +799,9 @@ class MLWindow(ShapeMixin, TextMixin):
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float,
             ctypes.c_float, ctypes.c_int, ctypes.c_int,
             ctypes.c_float,
+            # second fill stop + its screen-space axis (straight-alpha gradient)
+            ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,
         ]
 
         self.dll.SaveScreenshot.restype = ctypes.c_int
