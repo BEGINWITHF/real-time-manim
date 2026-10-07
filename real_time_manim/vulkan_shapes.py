@@ -1020,6 +1020,14 @@ class ShapeMixin:
         众数 4px），native 过去是固定半径 4px（面积 4 倍）。这里给 480p/默认视口下
         2px，并按可见高度等比缩放——与描边同一套规则，所以相机 zoom 时点一起放大。
         """
+        # manim draws a PMobject point as a FIXED ~4 px disc -- measured: the
+        # modal lit run is 4 px at BOTH 854x480 and 1920x1080 -- so the radius
+        # must NOT scale with the surface height.  The old `h / 30` term made it
+        # grow with the window: at 1080p that drew 19 px dots against CE's 4 px
+        # and gave PointCloudMobjects 2.2x CE's ink (lit 31272 vs 13992).  Only
+        # the *visible frame height* may scale it, which is what a zooming
+        # camera changes; 16.0 is the 480p-calibrated 2 px radius re-expressed
+        # against the default frame height of 8.
         frame_height = 8.0
         try:
             from real_time_manim.camera_state import get_viewport
@@ -1028,7 +1036,7 @@ class ShapeMixin:
                 frame_height = float(viewport.height) or 8.0
         except Exception:
             pass
-        return max(0.5, (float(h) / 30.0) / frame_height * self._point_width_scale(mob))
+        return max(0.5, (16.0 / frame_height) * self._point_width_scale(mob))
 
     @staticmethod
     def _point_width_scale(mob):
