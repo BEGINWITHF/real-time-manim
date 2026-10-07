@@ -41,4 +41,20 @@ static inline int PushVertex(float px, float py, float r, float g, float b, floa
     return 1;
 }
 
+/* Draw order.  Render_DrawScene replays the command list, so every primitive
+ * has to get an entry in it -- in the order it was submitted, which is
+ * manim's own order (a mobject's fill, then its stroke, then the next
+ * mobject).  The bezier fill and the line-strip stroke used to be flushed
+ * AFTER the whole list (vulkan_draw.c:89-90), so every stroke landed on top
+ * of every fill and every earlier fill landed on top of a later shape: a
+ * Sphere's quad borders showed through its own fill (read as "the surface
+ * fill is see-through"), an earlier mobject's outline painted over a later
+ * mobject's body, and a bezier fill covered a later rect/circle/text.
+ * Values 0..9 live in vulkan_render.h. */
+#define CMD_BEZIER 10
+#define CMD_LINE_STRIP 11
+
+/* Implemented by platform.c / platform_mac.m, which own the command list. */
+void DrawCmd_Push(int type, int index);
+
 #endif

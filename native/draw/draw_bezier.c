@@ -60,7 +60,8 @@ __declspec(dllexport) void AddBezierPath(
     if (num_segs > MAX_BEZIER_SEGMENTS) num_segs = MAX_BEZIER_SEGMENTS;
     if (g_seg_pool_used + num_segs > MAX_BEZIER_SEG_POOL) return;
 
-    BezierPathObj *bp = &bezier_paths[bezier_path_count];
+    int cmd_index = bezier_path_count;
+    BezierPathObj *bp = &bezier_paths[cmd_index];
     bp->seg_start = g_seg_pool_used;
     g_seg_pool_used += num_segs;
     bp->num_segs = num_segs;
@@ -106,6 +107,9 @@ __declspec(dllexport) void AddBezierPath(
         bp->sub_winding[s] = (area >= 0) ? 1 : -1;
     }
     bezier_path_count++;
+    /* Keep this path at its submission position instead of in a trailing
+       flush, so the next mobject's fill can cover it. */
+    DrawCmd_Push(CMD_BEZIER, cmd_index);
 }
 
 static void sample_cubic(const CubicSeg *s, float t, float *ox, float *oy) {
@@ -378,16 +382,26 @@ done_sample_all:
     }
 }
 
-void BuildVerticesFromBezierPaths(void) {
-    for (int i = 0; i < bezier_path_count; i++) {
-        BezierPathObj *bp = &bezier_paths[i];
-        if (bp->show_fill && bp->fill_opacity > 0.001f) {
-            tessellate_fill(bp);
-        }
-        if (bp->show_stroke && bp->stroke_width > 0.001f) {
-            tessellate_stroke(bp);
-        }
+void BuildVerticesFromBezierPathAt(int i) {
+    BezierPathObj *bp = &bezier_paths[i];
+    if (bp->show_fill && bp->fill_opacity > 0.001f) {
+        tessellate_fill(bp);
     }
+    if (bp->show_stroke && bp->stroke_width > 0.001f) {
+        tessellate_stroke(bp);
+    }
+}
+
+/* Called once the frame's command list has been replayed: paths that were
+   dropped (queue full) are discarded rather than drawn a frame late. */
+void ResetBezierPaths(void) {
     bezier_path_count = 0;
     g_seg_pool_used = 0;
+}
+
+void BuildVerticesFromBezierPaths(void) {
+    for (int i = 0; i < bezier_path_count; i++) {
+        BuildVerticesFromBezierPathAt(i);
+    }
+    ResetBezierPaths();
 }

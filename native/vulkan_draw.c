@@ -33,8 +33,10 @@ void BuildVerticesFromDashedLines(const DashedLineObj *lines, int count);
 void BuildVerticesFromArcs(const ArcObj *arcs, int count);
 void BuildVerticesFromPoints(const PointObj *points, int count);
 void BuildVerticesFromTexts(const TextObj *texts, int count);
-void BuildVerticesFromBezierPaths(void);
-void BuildVerticesFromLineStrips(void);
+void BuildVerticesFromBezierPathAt(int i);
+void BuildVerticesFromLineStripAt(int si);
+void ResetBezierPaths(void);
+void ResetLineStrips(void);
 
 void Render_DrawScene(const Rect* rects, int rect_count,
                       const Circle* circles, int circle_count,
@@ -83,11 +85,19 @@ void Render_DrawScene(const Rect* rects, int rect_count,
             case CMD_IMAGE:
                 BuildVerticesFromImageQuad(idx);
                 break;
+            case CMD_BEZIER:
+                BuildVerticesFromBezierPathAt(idx);
+                break;
+            case CMD_LINE_STRIP:
+                BuildVerticesFromLineStripAt(idx);
+                break;
         }
     }
 
-    BuildVerticesFromBezierPaths();
-    BuildVerticesFromLineStrips();
+    /* Everything above replayed in submission order; drop whatever the
+       command queue could not hold instead of drawing it a frame late. */
+    ResetBezierPaths();
+    ResetLineStrips();
     Tex_EndFrame();
 
     if (g_vertex_count > 0) {
