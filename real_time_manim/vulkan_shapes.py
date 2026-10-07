@@ -136,9 +136,11 @@ class ShapeMixin:
             # `stroke_width = 0` means no stroke even though the rgba alpha is
             # 1.0 (same trap as `_send_polygon`'s fill-only shapes).
             cr, cg, cb = self._stroke_color(mob)
-            cr = int(cr * so)
-            cg = int(cg * so)
-            cb = int(cb * so)
+            # The stroke opacity rides the ALPHA, not the colour: native blends
+            # straight-alpha (colour*alpha + dst*(1-alpha)), so baking `so` in
+            # hard-replaced the background and a stroke over a non-black backdrop
+            # stayed black while it faded in (same trap _send_polygon documents).
+            a = a * so
             sw = self._stroke_width(mob)
             tl = self._rotate_point(sx - half, sy - half, sx, sy, rot)
             tr = self._rotate_point(sx + half, sy - half, sx, sy, rot)
@@ -207,9 +209,11 @@ class ShapeMixin:
         if so > 0 and self._stroke_width(mob) > 0:
             # see _send_square: stroke_width 0 must not draw a border
             cr, cg, cb = self._stroke_color(mob)
-            cr = int(cr * so)
-            cg = int(cg * so)
-            cb = int(cb * so)
+            # The stroke opacity rides the ALPHA, not the colour: native blends
+            # straight-alpha (colour*alpha + dst*(1-alpha)), so baking `so` in
+            # hard-replaced the background and a stroke over a non-black backdrop
+            # stayed black while it faded in (same trap _send_polygon documents).
+            a = a * so
             sw = self._stroke_width(mob)
             tl = self._rotate_point(sx - hw, sy - hh, sx, sy, rot)
             tr = self._rotate_point(sx + hw, sy - hh, sx, sy, rot)
@@ -275,9 +279,11 @@ class ShapeMixin:
         if so > 0 and self._stroke_width(mob) > 0:
             # see _send_square: stroke_width 0 must not draw a border
             cr, cg, cb = self._stroke_color(mob)
-            cr = int(cr * so)
-            cg = int(cg * so)
-            cb = int(cb * so)
+            # The stroke opacity rides the ALPHA, not the colour: native blends
+            # straight-alpha (colour*alpha + dst*(1-alpha)), so baking `so` in
+            # hard-replaced the background and a stroke over a non-black backdrop
+            # stayed black while it faded in (same trap _send_polygon documents).
+            a = a * so
             sw = self._stroke_width(mob)
             # Match legacy behavior: fixed segment tessellation (segs=48)
             segs = 48
@@ -380,9 +386,11 @@ class ShapeMixin:
         sw_manim = get_stroke_w(mob)
         if so > 0 and sw_manim > 0:
             cr, cg, cb = self._stroke_color(mob)
-            cr = int(cr * so)
-            cg = int(cg * so)
-            cb = int(cb * so)
+            # The stroke opacity rides the ALPHA, not the colour: native blends
+            # straight-alpha (colour*alpha + dst*(1-alpha)), so baking `so` in
+            # hard-replaced the background and a stroke over a non-black backdrop
+            # stayed black while it faded in (same trap _send_polygon documents).
+            a = a * so
             sw = self._stroke_width(mob)
             # Match legacy behavior: fixed segment tessellation (segs=48)
             segs = 48
