@@ -976,8 +976,8 @@ class ShapeMixin:
                 return
             self._stroke_polyline_with_progress(
                 flat, True, progress_lower, progress_upper,
-                int(br * so), int(bg * so), int(bb * so),
-                bw, alpha)
+                br, bg, bb,
+                bw, alpha * so)
         else:
             flat = []
             for v in verts:
@@ -1010,8 +1010,8 @@ class ShapeMixin:
                 # the rgba alpha reads 1.0 (see the fill-only branch above).
                 self._stroke_polyline_with_progress(
                     flat, True, progress_lower, progress_upper,
-                    int(br * so), int(bg * so), int(bb * so),
-                    bw, alpha)
+                    br, bg, bb,
+                    bw, alpha * so)
 
     def _dot_radius(self, mob, h):
         """PMobject / Point 的点半径（像素）。
