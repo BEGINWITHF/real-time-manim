@@ -630,6 +630,50 @@ def container_subs(mob):
     return getattr(mob, "submobjects", None) or ()
 
 
+def depth_key(mob, viewport):
+    """One mobject's camera-space depth, exactly as manim scores it.
+
+    ``ThreeDCamera.get_mobjects_to_display`` flattens the whole scene family
+    and paints it ``sorted`` by ``np.dot(mob.get_center(), rot.T)[2]`` -- the
+    cell nearest the camera gets the largest key and is therefore painted
+    last, on top.  Mobjects that are not ``shade_in_3d`` score ``inf`` so text
+    and 2D overlays always end up above the 3D content.
+    """
+    if not getattr(mob, "shade_in_3d", False):
+        return math.inf
+    rot = viewport.rotation
+    try:
+        c = mob.get_center()
+    except Exception:
+        return math.inf
+    return float(rot[2][0] * c[0] + rot[2][1] * c[1] + rot[2][2] * c[2])
+
+
+def depth_order(items):
+    """``(original_index, mobject)`` pairs in manim's ThreeDCamera paint order.
+
+    Returns the input untouched (original order) outside a rotated 3D viewport,
+    so 2D scenes keep painting exactly as before.  The original index travels
+    with each mobject because callers still need it: camera-rasterised images
+    index into the scene's mobject list, and the VGroup progress split keys the
+    partial reveal off the family position, not the paint position.
+
+    Measured on ThreeDLightSourcePosition: a ``Sphere`` builds its cells
+    back-hemisphere-first, so RTM painted the unlit back cells over the lit
+    front ones -- top-half luma 161 (CE) against 88 (RTM), a hard seam where
+    the painter's order flips, while the shading maths itself was identical.
+    """
+    try:
+        from real_time_manim.camera_state import get_viewport
+        viewport = get_viewport()
+    except Exception:
+        viewport = None
+    if viewport is None or getattr(viewport, "rotation", None) is None:
+        return list(enumerate(items))
+    return sorted(enumerate(items),
+                  key=lambda pair: (depth_key(pair[1], viewport), pair[0]))
+
+
 class MLWindow(ShapeMixin, TextMixin):
     # When True, play() records a timeline instead of rendering (see play()).
     _schedule_mode = False
@@ -1057,7 +1101,8 @@ class MLWindow(ShapeMixin, TextMixin):
         for fixed in getattr(cam, "fixed_in_frame_mobjects", ()) or ():
             fixed_ids.add(id(fixed))
         cam_images = self._camera_image_prefixes(cam, roots)
-        for _idx, mob in enumerate(roots):
+        # Paint order follows manim's ThreeDCamera depth sort (see depth_order).
+        for _idx, mob in depth_order(roots):
             if skip_ids and id(mob) in skip_ids:
                 continue
             if _idx in cam_images:
@@ -1426,7 +1471,7 @@ class MLWindow(ShapeMixin, TextMixin):
             if parent_offset is not None:
                 offset = offset + parent_offset
             if is_3d:
-                for sub in mob.family_members_with_points():
+                for _i, sub in depth_order(mob.family_members_with_points()):
                     if hasattr(sub, 'points') and len(sub.points) > 0:
                         pg_gs, pg_gp = getattr(mob, '_grow_scale', None), getattr(mob, '_grow_point', None)
                         need_gs = pg_gs is not None and not hasattr(sub, '_grow_scale')
@@ -1441,7 +1486,7 @@ class MLWindow(ShapeMixin, TextMixin):
                         if need_gp:
                             del sub._grow_point
                 return
-            for i, sub in enumerate(subs):
+            for i, sub in depth_order(subs):
                 sub_offset = offset
                 if about is not None and rot != 0.0:
                     sub_center = np.array(sub.get_center(), dtype=float)
@@ -1577,7 +1622,7 @@ class MLWindow(ShapeMixin, TextMixin):
                 # paints parent first, then children on top.  Returning here
                 # without walking them dropped the divisions entirely (the
                 # SampleSpace showed only its base fill; charts d(last) -6.33).
-                for sub in getattr(mob, 'submobjects', ()) or ():
+                for _i, sub in depth_order(getattr(mob, 'submobjects', ()) or ()):
                     self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
                                parent_transforming=parent_transforming,
                                parent_is_text=is_text)
@@ -1653,7 +1698,7 @@ class MLWindow(ShapeMixin, TextMixin):
             # every submobject except the tip, so report #9's tip stays drawn
             # exactly once.
             _arrow_tip = getattr(mob, "tip", None)
-            for _sub in mob.submobjects:
+            for _i, _sub in depth_order(mob.submobjects):
                 if _sub is _arrow_tip:
                     continue
                 self._dbg_arrow(_sub, "walk", parent_transforming)
@@ -1724,7 +1769,7 @@ class MLWindow(ShapeMixin, TextMixin):
         # already fully handled by _send_arrow.
         if (not isinstance(mob, (Text, VGroup, Group, MathTexPart, Arrow, DashedLine))
                 and hasattr(mob, 'submobjects') and mob.submobjects):
-            for sub in mob.submobjects:
+            for _i, sub in depth_order(mob.submobjects):
                 self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
                            parent_transforming=parent_transforming, parent_is_text=is_text)
 
