@@ -721,12 +721,26 @@ class TextMixin:
             vis_start = int(seg_count * progress_lower)
             vis_end = int(seg_count * progress_upper)
             stroke_pts = []
+            # One strip per contour: several disjoint contours live in the same
+            # point list (`VMobject.start_new_path`), and walking them as a
+            # single polyline bridges them with one straight line -- measured on
+            # BooleanOperations/MatchersAndBooleanOps, where the Exclusion
+            # result grew a diagonal across its own hole.  native splits on the
+            # very same rule when it tessellates a bezier stroke
+            # (draw_bezier.c:91: squared jump > 40).
+            runs = []
+            prev_pt = None
             for si in range(vis_start, min(seg_count, vis_end + 1)):
                 idx = si * 4
                 p0x, p0y = flat[idx*3], flat[idx*3+1]
                 p1x, p1y = flat[(idx+1)*3], flat[(idx+1)*3+1]
                 p2x, p2y = flat[(idx+2)*3], flat[(idx+2)*3+1]
                 p3x, p3y = flat[(idx+3)*3], flat[(idx+3)*3+1]
+                if prev_pt is not None and (
+                        (p0x - prev_pt[0]) ** 2 + (p0y - prev_pt[1]) ** 2) > 40.0:
+                    if len(stroke_pts) >= 2:
+                        runs.append(stroke_pts)
+                    stroke_pts = []
                 # flat holds screen-space control points.  Subdivide each cubic
                 # to roughly STEP_PX screen pixels per straight run so strongly
                 # curved outlines (e.g. a Square warped by exp -> a wide arc,
@@ -745,7 +759,10 @@ class TextMixin:
                     bx = u*u*u*p0x + 3*u*u*t*p1x + 3*u*t*t*p2x + t*t*t*p3x
                     by = u*u*u*p0y + 3*u*u*t*p1y + 3*u*t*t*p2y + t*t*t*p3y
                     stroke_pts.append((bx, by))
+                prev_pt = (p3x, p3y)
             if len(stroke_pts) >= 2:
+                runs.append(stroke_pts)
+            for stroke_pts in runs:
                 coords = (ctypes.c_float * (len(stroke_pts) * 2))()
                 alphas = (ctypes.c_float * len(stroke_pts))()
                 for i, (px, py) in enumerate(stroke_pts):
