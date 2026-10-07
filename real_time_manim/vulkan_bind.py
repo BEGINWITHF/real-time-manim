@@ -675,6 +675,14 @@ def depth_order(items):
 
 
 class MLWindow(ShapeMixin, TextMixin):
+    # This renderer supports exactly ONE output format: 1920x1080 at 60 fps.
+    # Anything smaller is refused rather than silently accepted, because a small
+    # window hides resolution-bound defects completely -- the native per-frame
+    # vertex cap is only reached past ~1.3 M px, so a Surface scene that lost 60%
+    # of its fills at 1080p looked perfect at 480p for months.
+    SUPPORTED_WIDTH = 1920
+    SUPPORTED_HEIGHT = 1080
+    SUPPORTED_FPS = 60
     # When True, play() records a timeline instead of rendering (see play()).
     _schedule_mode = False
     # Windows created while this is True are built hidden (never shown), so
@@ -685,7 +693,13 @@ class MLWindow(ShapeMixin, TextMixin):
     # to grab the window a scene created for itself).
     _registry = []
 
-    def __init__(self, w=1920, h=1080, hidden=None):
+    def __init__(self, w=SUPPORTED_WIDTH, h=SUPPORTED_HEIGHT, hidden=None):
+        # NB: a bare class-level name is NOT in scope inside a method body
+        # (class namespaces are not enclosing scopes) -- these must be `self.`.
+        if (int(w), int(h)) != (self.SUPPORTED_WIDTH, self.SUPPORTED_HEIGHT):
+            print(f"[rtm] forcing {self.SUPPORTED_WIDTH}x{self.SUPPORTED_HEIGHT}: "
+                  f"RTM supports high quality only (asked for {int(w)}x{int(h)})")
+            w, h = self.SUPPORTED_WIDTH, self.SUPPORTED_HEIGHT
         if hidden is None:
             hidden = bool(getattr(type(self), '_hidden_default', False))
         self.hidden = bool(hidden)
@@ -2638,6 +2652,10 @@ class MLWindow(ShapeMixin, TextMixin):
         """
         self._fast_record = True
         self._fast_record_path = os.path.abspath(path) if path else ""
+        if int(fps) != self.SUPPORTED_FPS:
+            print(f"[rtm] forcing {self.SUPPORTED_FPS} fps: RTM supports high "
+                  f"quality only (asked for {fps})")
+            fps = self.SUPPORTED_FPS
         self._fast_record_fps = fps
         self._fast_record_segment = segment
         self._fast_record_frame_idx = 0
@@ -2788,6 +2806,10 @@ class MLWindow(ShapeMixin, TextMixin):
         if self._recording:
             return
         self._record_path = os.path.abspath(path)
+        if int(fps) != self.SUPPORTED_FPS:
+            print(f"[rtm] forcing {self.SUPPORTED_FPS} fps: RTM supports high "
+                  f"quality only (asked for {fps})")
+            fps = self.SUPPORTED_FPS
         self._record_fps = fps
         self._record_dir = tempfile.mkdtemp(prefix="manim_record_")
         self._record_frame_idx = 0
