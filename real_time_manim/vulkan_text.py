@@ -49,6 +49,36 @@ class TextMixin:
                 print('[ERROR] _send_transformed_text: ' + str(e))
                 traceback.print_exc()
 
+    def _glyph_rgb(self, sub, default):
+        """A glyph's own colour, or ``default`` when it carries none.
+
+        manim writes a glyph's colour into its rgba arrays: that is where
+        ``t2c`` puts a markup colour and where an animation writes the colour
+        it interpolates towards (``.animate.set_color`` runs through
+        ``Mobject.interpolate_color``).  ``Text.get_color()`` is a different
+        thing entirely -- the container's own ``color`` attribute, which manim
+        leaves at ``#000000`` for a ``Text`` until somebody calls
+        ``set_color`` on it.  Painting every glyph from that turned a *written*
+        Text pure white: ``Write`` leaves ``_letter_alphas`` set, so the whole
+        line stayed on this writer afterwards and lost both its ``t2c`` colour
+        and its final ``set_color(YELLOW)`` (PlainTextAndMarkup: 0 saturated
+        pixels in the line where CE has 5295, still white where CE is yellow).
+        """
+        for getter in ("get_fill_rgbas", "get_stroke_rgbas"):
+            try:
+                stops = list(getattr(sub, getter)())
+            except Exception:
+                continue
+            if not stops:
+                continue
+            n = float(len(stops))
+            r = sum(float(s[0]) for s in stops) / n
+            g = sum(float(s[1]) for s in stops) / n
+            b = sum(float(s[2]) for s in stops) / n
+            if r != 0.0 or g != 0.0 or b != 0.0:
+                return int(round(r * 255)), int(round(g * 255)), int(round(b * 255))
+        return default
+
     def _send_text_write(self, mob, letter_alphas, w, h, alpha=1.0):
         try:
             c = mob.get_color()
@@ -57,6 +87,7 @@ class TextMixin:
             base_r, base_g, base_b = 255, 255, 255
         if base_r == 0 and base_g == 0 and base_b == 0:
             base_r, base_g, base_b = 255, 255, 255
+        base = (base_r, base_g, base_b)
         for i, sub in enumerate(mob.submobjects):
             sub_alpha = letter_alphas.get(i, 0.0)
             if sub_alpha <= 0.001:
@@ -85,16 +116,16 @@ class TextMixin:
             # completes it recedes INWARD (width shrinks 2px -> 0) instead of
             # popping off, so the letter ends with no sudden border
             # disappearance and no residual ring.
-            sr, sg, sb = base_r, base_g, base_b
+            sr, sg, sb = self._glyph_rgb(sub, base)
             stroke_width = 2.0 * stroke_fade
             show_stroke = 1 if stroke_width > 0.001 else 0
 
             self.dll.AddBezierPath(
                 arr, n,
                 sr, sg, sb, stroke_width,
-                base_r, base_g, base_b, fill_alpha,
+                sr, sg, sb, fill_alpha,
                 stroke_progress, show_stroke, 1 if fill_alpha > 0 else 0, alpha,
-                base_r, base_g, base_b, 0.0, 0.0, 0.0, 0.0,
+                sr, sg, sb, 0.0, 0.0, 0.0, 0.0,
             )
 
     def _send_text_bitmap(self, mob, w, h, alpha=1.0):

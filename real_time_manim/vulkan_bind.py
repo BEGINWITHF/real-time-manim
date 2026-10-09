@@ -560,6 +560,36 @@ def _setup_anim_scene(anim, scene):
     return getattr(anim, "scene", None) is scene
 
 
+def _run_mobject_updaters(mob, dt):
+    """Run ``mob``'s updaters and then every descendant's, as manim does.
+
+    manim drives this through ``Scene.update_mobjects`` -> ``Mobject.update(dt)``,
+    which recurses into ``submobjects``.  Walking only ``scene.mobjects`` ran the
+    updaters of *top-level* mobjects and silently skipped every nested one, so a
+    ``ValueTracker``-driven ``Integer`` living inside a ``VGroup`` never ticked
+    (measured: the counter stayed at 0 where CE reached 3).
+
+    Suspension prunes the whole subtree, exactly like ``Mobject.update``, which
+    returns before recursing when ``updating_suspended`` is set.
+    """
+    if getattr(mob, 'updating_suspended', False):
+        return
+    updaters = getattr(mob, 'updaters', None)
+    if updaters:
+        for updater in updaters:
+            nparams = len(inspect.signature(updater).parameters)
+            if nparams == 0:
+                updater()
+            elif nparams == 1:
+                updater(mob)
+            else:
+                updater(mob, dt)
+    # Snapshot: an updater may rebuild this mobject's children (DecimalNumber
+    # set_value does), which would otherwise mutate the list under the walk.
+    for sub in list(getattr(mob, 'submobjects', None) or ()):
+        _run_mobject_updaters(sub, dt)
+
+
 def _drive_mobject_updaters(scene, dt, patch_group=None, unpatch_group=None):
     """Run every mobject updater on ``scene``, as manim does once per frame.
 
@@ -578,15 +608,7 @@ def _drive_mobject_updaters(scene, dt, patch_group=None, unpatch_group=None):
                 patch_group(mob)
 
     for mob in reversed(scene.mobjects):
-        if getattr(mob, 'updaters', None) and not getattr(mob, 'updating_suspended', False):
-            for updater in mob.updaters:
-                nparams = len(inspect.signature(updater).parameters)
-                if nparams == 0:
-                    updater()
-                elif nparams == 1:
-                    updater(mob)
-                else:
-                    updater(mob, dt)
+        _run_mobject_updaters(mob, dt)
 
     if unpatch_group is not None:
         for mob in scene.mobjects:
@@ -1668,7 +1690,22 @@ class MLWindow(ShapeMixin, TextMixin):
             else:
                 self._send_rectangle(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Ellipse):
-            self._send_ellipse(mob, a, w, h, screen_rot, parent_offset)
+            # `_send_ellipse` rebuilds rx/ry from `mob.width/height`, i.e. from
+            # the bounding box of the points that exist, and then windows that
+            # by `_vulkan_progress`.  On a path manim's ShowPartial has already
+            # cut, that box is the DRAWN PART's -- half way through a Create the
+            # true ry is used at half value -- and the window cuts the result a
+            # second time.  Measured on CutEllipse: CE a full-height dome, RTM a
+            # flat one, mean|d| 2.38 against a 0.75 baseline.  Same rule as the
+            # Circle branch below: a shape that is being drawn comes off the
+            # point path, which renders the points that are actually there.
+            _e_progress = getattr(mob, '_vulkan_progress', 1.0)
+            if 0.0 < _e_progress < 1.0:
+                self._send_vmobject(mob, a, w, h,
+                                    None if is_text else parent_offset, rot,
+                                    is_text=is_text)
+            else:
+                self._send_ellipse(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Dot):
             self._send_dot(mob, a, w, h)
         elif isinstance(mob, Circle):
@@ -1941,6 +1978,20 @@ class MLWindow(ShapeMixin, TextMixin):
                     anim.clean_up_from_scene(self.scene)
                 except Exception:
                     pass
+
+        # manim's Scene.play_internal ends with
+        #
+        #     self.update_mobjects(0)
+        #
+        # -- i.e. one more updater pass *after* finish()/clean_up_from_scene().
+        # finish() applies interpolate(1) only here, at the very end of play(),
+        # and the scene's next play() may remove_updater first, so without this
+        # pass the camera frame's update_curve updater never sees the dot at
+        # alpha == 1.  Restore.begin() then captures a camera one pan-step
+        # behind and the boundary snaps by ~0.18 world units (44 px @1080p)
+        # before easing back over the following frames.  dt=0 only re-anchors
+        # (applies the updaters once) instead of accumulating time.
+        _drive_mobject_updaters(self.scene, 0.0)
 
     def _schedule_play(self, animations, kwargs):
         """Record a play() call on the global timeline instead of rendering.

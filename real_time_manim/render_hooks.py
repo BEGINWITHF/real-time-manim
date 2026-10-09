@@ -406,20 +406,31 @@ def _eased_sub_bound(anim, alpha):
         return None
 
 
+def _family_members(anim):
+    """Every member of ``anim``'s family whose points manim cuts.
+
+    ``get_all_families_zipped`` is the same iterator
+    ``Animation.interpolate_mobject`` walks: it yields
+    ``(member, starting_member)`` pairs over ``family_members_with_points``,
+    i.e. exactly the mobjects that receive ``pointwise_become_partial``.
+    """
+    try:
+        return [pair[0] for pair in anim.get_all_families_zipped()]
+    except Exception:
+        return []
+
+
 def _write_progress(anim, mob, alpha):
     """`Create` / `Uncreate` / `Write` / `DrawBorderThenFill` / `ShowIncreasingSubsets`."""
     bounds = getattr(anim, "_get_bounds", None)
     cut_points = False
     if callable(bounds):
+        cut_points = True
         sub = _eased_sub_bound(anim, alpha)
         if sub is None:                         # VGroup: keep the stagger driver
             lower, upper = bounds(alpha)
         else:
             lower, upper = bounds(sub)
-            # manim has already cut `mob`'s points down to exactly this bound
-            # (measured: geometry == manim bound to 3 dp), so the point path
-            # must draw them whole instead of walking `upper` of them again.
-            cut_points = True
     else:                                       # older/other manim: raw alpha
         lower, upper = 0.0, alpha
     # Only `_vulkan_progress` here: the lower/upper pair puts the senders into
@@ -429,6 +440,25 @@ def _write_progress(anim, mob, alpha):
     mob._vulkan_progress = float(upper)
     # Written on every call so the tag cannot outlive the writer that set it.
     mob._vulkan_points_partial = cut_points
+    # manim cuts EVERY member of the family, not just the mobject the writer
+    # is handed: `Animation.interpolate_mobject` walks `get_all_families_zipped`
+    # and gives each member its own `sub_alpha`, and `ShowPartial` then calls
+    # `pointwise_become_partial` on it.  Tag them all, so no member is windowed
+    # a second time by `_vulkan_progress`.  Tagging only the single-family case
+    # (the old rule) left the multi-member ones double-cut, because for them the
+    # channel holds the *stagger driver* (`_eased_sub_bound` returns None):
+    #
+    # * `Create(CurvedArrow)` -- body cut to 0.959 at alpha 0.4, then stroked
+    #   to 0.40 of that: measured on CutLineFamily, CE draws the whole arc
+    #   while RTM draws 40 % of it.
+    # * `Create(VGroup)` -- each child cut by manim at its own stagger value
+    #   and then cut again by `vulkan_bind`'s `clamp(p*N - i)` distribution.
+    if cut_points:
+        members = _family_members(anim)
+    else:
+        members = []
+    for member in members:
+        member._vulkan_points_partial = True
     # Letter-by-letter reveal (Write/DrawBorderThenFill) reads this map -- but
     # ONLY for text-like mobjects.  `vulkan_bind._send` switches a mobject with
     # `_letter_alphas` onto the per-glyph text path, so setting it on a container
@@ -492,6 +522,13 @@ def _write_passing_flash(anim, mob, alpha):
     mob._vulkan_progress_lower = lower
     mob._vulkan_progress_upper = upper
     mob._vulkan_progress = upper
+    # The flash walks a window over the mobject's COMPLETE contour, so the
+    # cut-path tag from an earlier Create on the same mobject no longer
+    # describes it: leaving it set made `_send_polygon` rebuild the polyline
+    # from that tag (a window over the cut groups, and no group split for a
+    # multi-group Polygram).  Every writer that changes what the points mean
+    # has to own the tag, exactly like `_write_progress` does.
+    mob._vulkan_points_partial = False
 
 
 def _write_transform(anim, mob, alpha):
@@ -642,6 +679,38 @@ def _write_fade(anim, mob, alpha):
 
 
 def _write_indicate(anim, mob, alpha):
+    """``Indicate`` already morphs its own swell -- never add a grow on top.
+
+    manim's ``Indicate`` is a ``Transform`` whose target is a copy scaled by
+    ``scale_factor`` (and recoloured), so the resize lives in ``mob.points``
+    before this hook runs.  Delegating to ``_write_grow`` wrote a *second*
+    scale, ``_grow_scale = raw alpha``, which starts at 0: the shape vanished
+    on the first frame of its own Indicate instead of swelling (measured:
+    IndicationAnimations frame 46 mean|d| 8.38, OptionalDependencyFallback
+    2.74, PolygramsAndMatchers 1.60 -- all reported as "grows from no size").
+    ``Flash`` and ``Circumscribe`` do not morph points, so they keep the grow
+    channel.
+
+    One exception: ``Blink`` is a ``Succession`` of ``UpdateFromFunc`` children
+    that only step the mobject's opacity on and off -- nothing in CE resizes
+    it, so the grow channel would scale the box from zero for its whole window
+    (IndicationAnimations frames 8-16: box drawn at 0/3/10% of its size,
+    mean|d| 6.16).  When *every* child resolves to the updater bucket the
+    container has no visual life of its own: relay the children and drop the
+    grow channels instead of writing them.
+    """
+    if isinstance(anim, _TRANSFORM_MORPH):
+        _write_transform(anim, mob, alpha)
+        return
+    kids = _children(anim)
+    if kids and all(_kind_of(k) == "updates" for k in kids):
+        for attr in ("_grow_scale", "_grow_point", "_grow_rot"):
+            if hasattr(mob, attr):
+                try:
+                    delattr(mob, attr)
+                except Exception:
+                    pass
+        return
     if not _is_container(mob):
         set_anim_opacity(mob, _mob_alpha(mob))
     _write_grow(anim, mob, alpha)
