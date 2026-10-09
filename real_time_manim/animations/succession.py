@@ -1,5 +1,6 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
 from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity
+from real_time_manim.rate_functions import _linear
 import numpy as np
 from manim.mobject.mobject import _AnimationBuilder
 from real_time_manim.animations.wait import Wait
@@ -17,7 +18,9 @@ class Succession(Animation):
         self.animations = resolved
         total = sum(a.run_time for a in self.animations)
         kwargs.pop('run_time', None)
-        super().__init__(run_time=total, rate_func=rate_func, **kwargs)
+        # manim's Succession defaults to rate_func=linear (composition.py);
+        # the base Animation default is _smooth, so pin it here.
+        super().__init__(run_time=total, rate_func=rate_func or _linear, **kwargs)
         self._begun = set()
 
     def begin(self, t):

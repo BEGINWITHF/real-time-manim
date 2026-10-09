@@ -642,8 +642,14 @@ class ShapeMixin:
                 tc = np.array(tip.get_center(), dtype=float)
                 d = tc - centre
                 ca, sa = math.cos(rot_orig), math.sin(rot_orig)
-                moved = centre + np.array([d[0] * ca - d[1] * sa,
-                                           d[0] * sa + d[1] * ca])
+                # Rotate about z, so the z component is unchanged.  Building
+                # only the xy part here was (3,) + (2,): every Arrow that
+                # turned -- scene 57's Rotating(about_point) -- raised a
+                # broadcast ValueError and killed the render.
+                rot_d = np.array([d[0] * ca - d[1] * sa,
+                                  d[0] * sa + d[1] * ca,
+                                  d[2] if d.size > 2 else 0.0])
+                moved = centre + rot_d
                 delta = moved - tc
                 if offset is None:
                     offset = np.zeros(3)
