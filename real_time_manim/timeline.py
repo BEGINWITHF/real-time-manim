@@ -212,7 +212,19 @@ class Timeline:
         """
         if self._prepared:
             raise RuntimeError("Timeline already finalized")
-        for entry in self._entries:
+        # Chronological order matters: manim's begin() captures the mobject's
+        # CURRENT state as that animation's start, so an entry must see every
+        # earlier entry already advanced to its own start time.  Capturing all
+        # the start states up front (the previous order) made a later play on
+        # the same mobject start from the scene's INITIAL state instead of
+        # where its predecessor finished -- visible on the staggered schedule
+        # `frames.FrameServer` builds (it records every play on one timeline),
+        # where every play was rendered from the initial state.
+        begun = []
+        for entry in sorted(self._entries, key=lambda e: e["start"]):
+            for prior in begun:
+                evaluate_animation(prior["anim"],
+                                   entry["start"] - prior["start"])
             anim = entry["anim"]
             if _is_manim_animation(anim):
                 # manim's Scene.play() gives every animation its scene before
@@ -229,6 +241,7 @@ class Timeline:
             # own, so install the adapter that derives them from its state.
             from real_time_manim.render_hooks import install_hooks
             install_hooks(anim)
+            begun.append(entry)
         self.duration = max(
             (e["start"] + e["run_time"] for e in self._entries), default=0.0)
         self._prepared = True
@@ -247,8 +260,26 @@ class Timeline:
         """Set every animation's mobjects to their state at time ``t`` (no draw)."""
         if not self._prepared:
             raise RuntimeError("call finalize()/prepare() first")
-        for entry in self._entries:
-            evaluate_animation(entry["anim"], t - entry["start"])
+        # Every entry must write *something* at every t, so the result stays a
+        # pure function of t (skipping the unstarted ones makes the frame depend
+        # on which times were rendered before it -- see tests/test_frame_access).
+        #
+        # Reset pass: an entry that has not started yet must restore the
+        # AUTHORED state of its mobjects.  With staggered starts its captured
+        # start state is the accumulator from its predecessors, and writing that
+        # before they have run would jump the picture ahead (at t=0 a chained
+        # second play would already show the first play's END value).  Descending
+        # start order, so the earliest-starting entry of a chain writes last:
+        # with nothing started, the authored state is what must stand.
+        for entry in sorted(self._entries, key=lambda e: e["start"],
+                            reverse=True):
+            if entry["start"] > t:
+                evaluate_animation(entry["anim"], -1.0)   # clamps to alpha 0
+        # Apply pass: the entries that have started, earliest first, so the one
+        # that started last wins -- exactly manim's play-a-sequence semantics.
+        for entry in sorted(self._entries, key=lambda e: e["start"]):
+            if entry["start"] <= t:
+                evaluate_animation(entry["anim"], t - entry["start"])
 
     def render_at(self, t, readback=False):
         """Evaluate at ``t``, draw that state, and present it.  O(1) in ``t``.

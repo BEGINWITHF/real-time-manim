@@ -3,6 +3,7 @@
 #include "vulkan_core.h"
 #include "vulkan_texture.h"
 #include "shared_types.h"
+#include "draw_common.h"
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -36,9 +37,18 @@ static int g_text_count = 0;
 #define CMD_POINT 7
 #define CMD_TEXT 8
 
-#define MAX_DRAW_CMDS 16384
+/* One entry per submitted primitive now that the bezier fill and the
+   line-strip stroke are replayed in place (draw_common.h).  A text-heavy
+   frame alone pushes ~870 of them, and a dropped entry is a dropped shape. */
+#define MAX_DRAW_CMDS 65536
 static DrawCmd g_draw_cmds[MAX_DRAW_CMDS];
 static int g_draw_cmd_count = 0;
+
+void DrawCmd_Push(int type, int index) {
+    if (g_draw_cmd_count < MAX_DRAW_CMDS) {
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ type, index };
+    }
+}
 
 static double g_aspect_ratio = 16.0 / 9.0;
 static int g_min_width = 320;

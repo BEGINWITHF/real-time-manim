@@ -85,10 +85,22 @@ _PASSING = tuple(dict.fromkeys(
           "ShowPassingFlash", "ShowPassingFlashWithThinningStrokeWidth") +
     _load("manim.animation.indication",
           "ShowPassingFlash", "ShowPassingFlashWithThinningStrokeWidth")))
+# `ShowIncreasingSubsets`, `ShowSubmobjectsOneByOne` and `SpiralIn` are
+# DELIBERATELY absent.  None of them is a `ShowPartial` subclass and none draws a
+# partial path: manim reveals their submobjects with **binary whole-shape opacity**
+# (`int(floor(rate_func(alpha)*n))` then `set_opacity(1)`/`set_opacity(0)`, and for
+# SpiralIn a whole-shape move+rotate+fade) -- all of which land in `fill_rgbas` /
+# `stroke_rgbas`, already read by every sender.  Listing them here set
+# `_vulkan_progress` on the container instead, which `vulkan_bind` distributes as
+# `sub_progress = clamp(p*N - i)`: at alpha 0.5 a 3-shape group had its middle shape
+# drawn HALF and left visible where CE has it invisible.  Reported as "some shapes
+# are incomplete" (PartialAndSubsetAnimations, measured first_bad=33 = inside the
+# scene's SpiralIn window).
+# The *text* subclasses stay listed: they take the per-glyph `_letter_alphas` path.
 _PROGRESS = _load("manim.animation.creation",
-                  "ShowPartial", "ShowIncreasingSubsets", "Create", "Uncreate",
-                  "DrawBorderThenFill", "Write", "Unwrite", "SpiralIn",
-                  "ShowSubmobjectsOneByOne", "AddTextLetterByLetter",
+                  "ShowPartial", "Create", "Uncreate",
+                  "DrawBorderThenFill", "Write", "Unwrite",
+                  "AddTextLetterByLetter",
                   "RemoveTextLetterByLetter", "TypeWithCursor", "UntypeWithCursor")
 _GROW = _load("manim.animation.growing",
               "GrowFromCenter", "GrowFromEdge", "GrowFromPoint", "GrowArrow",
@@ -214,7 +226,10 @@ def install_hooks(anim) -> None:
     def interpolate(alpha):
         out = original(alpha)
         try:
-            derive_channels(anim, alpha)
+            # recurse=False: children derive themselves through their own
+            # wrapped interpolate, already driven by manim with their sub_alpha.
+            # Recursing here would re-derive them from THIS animation's alpha.
+            derive_channels(anim, alpha, recurse=False)
         except Exception:                # a hook must never break a render
             logger.debug("render hook failed for %s", type(anim).__name__, exc_info=True)
         return out
@@ -224,9 +239,11 @@ def install_hooks(anim) -> None:
     anim._rtm_hooks_installed = True
     _snapshot_pivots(anim, getattr(anim, "mobject", None))
 
-    # derive the begin state too, so frame 0 is not rendered from the defaults
+    # derive the begin state too, so frame 0 is not rendered from the defaults.
+    # recurse=True here (the opposite of the wrapper above): at install time no
+    # child has been driven yet, so this is what gives them their start state.
     try:
-        derive_channels(anim, 0.0)
+        derive_channels(anim, 0.0, recurse=True)
     except Exception:
         logger.debug("render hook (begin) failed for %s", type(anim).__name__, exc_info=True)
 
@@ -252,12 +269,29 @@ def clear_hooks(anim) -> None:
 # channel derivation
 # ---------------------------------------------------------------------------
 
-def derive_channels(anim, alpha) -> None:
-    """Write the render-state channels for `anim` at `alpha`."""
+def derive_channels(anim, alpha, recurse=True) -> None:
+    """Write the render-state channels for `anim` at `alpha`.
+
+    ``recurse`` matters only for composites, and it must differ per call site:
+
+    * ``True`` (the default) is right for the install-time call, because that
+      is what gives every child its **start** state before any playback.
+    * ``False`` is required from a composite's own wrapper.  manim's
+      ``AnimationGroup.interpolate``/``Succession.interpolate`` already drive
+      each child with that child's *own* sub_alpha, and ``install_hooks`` has
+      wrapped every child, so those calls write correct channels; deriving the
+      children again here -- with the **group's** alpha, because a composite
+      matches no ``_RULES`` bucket and falls straight through to the recursion
+      below -- overwrites them.  Measured effect of getting this wrong:
+      ``Succession(Create, Rotate, FadeOut)`` re-derived its Create child at the
+      group alpha, so at group 0.5 a finished Create (sub_alpha 1.0) was written
+      back to 0.5 and the circle sat half-drawn.
+    """
     mob = getattr(anim, "mobject", None)
     if mob is None:
-        for sub in _children(anim):                 # composite: children carry mobjects
-            derive_channels(sub, alpha)
+        if recurse:
+            for sub in _children(anim):             # composite: children carry mobjects
+                derive_channels(sub, alpha)
         return
 
     kind = _kind_of(anim)
@@ -288,8 +322,9 @@ def derive_channels(anim, alpha) -> None:
         # `_transforming` made `.animate.scale()` render as a static final state.
         logger.debug("no render hook for %s", type(anim).__name__)
 
-    for sub in _children(anim):
-        derive_channels(sub, alpha)
+    if recurse:
+        for sub in _children(anim):
+            derive_channels(sub, alpha)
 
 
 def _kind_of(anim):
@@ -348,11 +383,43 @@ def _is_text_like(mob):
     return isinstance(mob, Text) or bool(getattr(mob, "_is_text", False))
 
 
+def _eased_sub_bound(anim, alpha):
+    """manim's own eased sub-progress for a **single-family** animation, else None.
+
+    ``Animation.get_sub_alpha`` (animation.py:364-391) is where manim applies
+    ``rate_func`` *and* ``reverse_rate_function``; ``ShowPartial`` then hands the
+    result to ``pointwise_become_partial``.  Returning None means "keep the
+    raw-alpha channel": that happens for a VGroup, where the channel is not a
+    drawn fraction but a *stagger driver* -- ``vulkan_bind`` distributes it as
+    ``clamp(p*N - i)``, and manim's per-sub values ``smooth(alpha*(N+1) - i)``
+    cannot be expressed through it, so the existing stagger is left alone.
+    """
+    try:
+        family = list(anim.get_all_families_zipped())
+    except Exception:
+        return None
+    if len(family) != 1:
+        return None
+    try:
+        return float(anim.get_sub_alpha(alpha, 0, 1))
+    except Exception:
+        return None
+
+
 def _write_progress(anim, mob, alpha):
     """`Create` / `Uncreate` / `Write` / `DrawBorderThenFill` / `ShowIncreasingSubsets`."""
     bounds = getattr(anim, "_get_bounds", None)
+    cut_points = False
     if callable(bounds):
-        lower, upper = bounds(alpha)
+        sub = _eased_sub_bound(anim, alpha)
+        if sub is None:                         # VGroup: keep the stagger driver
+            lower, upper = bounds(alpha)
+        else:
+            lower, upper = bounds(sub)
+            # manim has already cut `mob`'s points down to exactly this bound
+            # (measured: geometry == manim bound to 3 dp), so the point path
+            # must draw them whole instead of walking `upper` of them again.
+            cut_points = True
     else:                                       # older/other manim: raw alpha
         lower, upper = 0.0, alpha
     # Only `_vulkan_progress` here: the lower/upper pair puts the senders into
@@ -360,6 +427,8 @@ def _write_progress(anim, mob, alpha):
     # Create/Write family made whole scenes lose their content (measured on
     # PolygonOnAxes: ink 35541 -> 3891, and skipping this writer restores it).
     mob._vulkan_progress = float(upper)
+    # Written on every call so the tag cannot outlive the writer that set it.
+    mob._vulkan_points_partial = cut_points
     # Letter-by-letter reveal (Write/DrawBorderThenFill) reads this map -- but
     # ONLY for text-like mobjects.  `vulkan_bind._send` switches a mobject with
     # `_letter_alphas` onto the per-glyph text path, so setting it on a container
@@ -375,6 +444,33 @@ def _letter_alphas(anim, alpha):
     subs = getattr(mob_subs := getattr(anim, "mobject", None), "submobjects", None) or ()
     if not subs:
         return None
+
+    # `ShowIncreasingSubsets` (and the four text subclasses built on it:
+    # AddTextLetterByLetter, RemoveTextLetterByLetter, TypeWithCursor,
+    # UntypeWithCursor) do NOT fade glyphs -- they reveal a BINARY PREFIX.
+    # creation.py:527-541 computes
+    #     value = (1 - rate_func(alpha)) if reverse_rate_function else rate_func(alpha)
+    #     index = int(int_func(value * n))
+    # then `set_opacity(1)` below index and `set_opacity(0)` above it, which
+    # lands in fill_rgbas.  `get_sub_alpha` cannot express that: manim's
+    # DEFAULT_ANIMATION_LAG_RATIO is 0, so it returns one *continuous* number
+    # for every glyph at once, and `_send_text_write` fades the whole word
+    # together (skip at <= 0.001, fill at >= 0.8).  Measured on
+    # TextRevealAnimations: first_bad=38 = inside UntypeWithCursor's window,
+    # C+ 0.31 = glyphs CE had already removed, B 0.471 = CE ink never reached.
+    #
+    # Read the verdict back off the mobjects rather than re-deriving the prefix:
+    # manim has already applied rate_func, int_func and reverse_rate_function by
+    # the time `original(alpha)` runs, so this channel cannot drift from manim's
+    # own semantics across versions.
+    try:
+        from manim.animation.creation import ShowIncreasingSubsets
+        if isinstance(anim, ShowIncreasingSubsets):
+            return {i: (1.0 if float(getattr(s, "fill_opacity", 0.0)) > 0.5 else 0.0)
+                    for i, s in enumerate(subs)}
+    except Exception:
+        pass
+
     get_sub_alpha = getattr(anim, "get_sub_alpha", None)
     if not callable(get_sub_alpha):
         return None

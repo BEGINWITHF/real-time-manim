@@ -25,6 +25,8 @@ typedef struct {
     int sr, sg, sb;
     float stroke_width;
     int fr, fg, fb;
+    int fr2, fg2, fb2;             /* second fill stop (linear gradient) */
+    float gx1, gy1, gx2, gy2;      /* the gradient axis, in screen pixels */
     float fill_opacity;
     float progress;
     int show_stroke;
@@ -47,7 +49,9 @@ __declspec(dllexport) void AddBezierPath(
     const float *points, int num_points,
     int sr, int sg, int sb, float stroke_width,
     int fr, int fg, int fb, float fill_opacity,
-    float progress, int show_stroke, int show_fill, float alpha)
+    float progress, int show_stroke, int show_fill, float alpha,
+    int fr2, int fg2, int fb2,
+    float gx1, float gy1, float gx2, float gy2)
 {
     if (bezier_path_count >= MAX_BEZIER_PATHS) return;
     if (num_points < 8) return;
@@ -56,13 +60,16 @@ __declspec(dllexport) void AddBezierPath(
     if (num_segs > MAX_BEZIER_SEGMENTS) num_segs = MAX_BEZIER_SEGMENTS;
     if (g_seg_pool_used + num_segs > MAX_BEZIER_SEG_POOL) return;
 
-    BezierPathObj *bp = &bezier_paths[bezier_path_count];
+    int cmd_index = bezier_path_count;
+    BezierPathObj *bp = &bezier_paths[cmd_index];
     bp->seg_start = g_seg_pool_used;
     g_seg_pool_used += num_segs;
     bp->num_segs = num_segs;
     bp->sr = sr; bp->sg = sg; bp->sb = sb;
     bp->stroke_width = stroke_width;
     bp->fr = fr; bp->fg = fg; bp->fb = fb;
+    bp->fr2 = fr2; bp->fg2 = fg2; bp->fb2 = fb2;
+    bp->gx1 = gx1; bp->gy1 = gy1; bp->gx2 = gx2; bp->gy2 = gy2;
     bp->fill_opacity = fill_opacity;
     bp->progress = progress;
     bp->show_stroke = show_stroke;
@@ -100,6 +107,9 @@ __declspec(dllexport) void AddBezierPath(
         bp->sub_winding[s] = (area >= 0) ? 1 : -1;
     }
     bezier_path_count++;
+    /* Keep this path at its submission position instead of in a trailing
+       flush, so the next mobject's fill can cover it. */
+    DrawCmd_Push(CMD_BEZIER, cmd_index);
 }
 
 static void sample_cubic(const CubicSeg *s, float t, float *ox, float *oy) {
@@ -238,6 +248,21 @@ static void tessellate_fill(BezierPathObj *bp) {
     float cr = fr, cg = fg, cb = fb;
     float fill_alpha = fo * bp->alpha;
 
+    // Optional second fill stop.  manim shades a 3D face with TWO colours (its
+    // start- and end-corner stops) and Cairo interpolates between them across
+    // the path; a single flat colour caps the peak -- measured on
+    // SolidPrimitives3D's Sphere, CE's bright limb reaches luma 249 while the
+    // averaged single colour tops out near 195, which is what made the Surfaces
+    // read flat.  The axis is in screen pixels; a degenerate axis keeps the
+    // flat colour, so a caller that passes the same colour twice is unaffected.
+    float gr = bp->fr2 / 255.0f;
+    float gg = bp->fg2 / 255.0f;
+    float gb = bp->fb2 / 255.0f;
+    float gdx = bp->gx2 - bp->gx1;
+    float gdy = bp->gy2 - bp->gy1;
+    float glen2 = gdx * gdx + gdy * gdy;
+    int gradient = (glen2 > 1e-6f);
+
     int total_pts = 0;
 
     for (int s = 0; s < bp->sub_count; s++) {
@@ -335,29 +360,48 @@ done_sample_all:
                     // around glyphs (visible on any non-black background).
                     if (g_vertex_count + 6 > MAX_VERTICES) return;
                     float aa = fill_alpha * coverage;
-                    PushVertex(seg_l, scan_y, cr, cg, cb, aa);
-                    PushVertex(seg_r, scan_y, cr, cg, cb, aa);
-                    PushVertex(seg_r, scan_y + 1.0f, cr, cg, cb, aa);
+                    float pr = cr, pg = cg, pb = cb;
+                    if (gradient) {
+                        float tt = ((seg_l + 0.5f - bp->gx1) * gdx
+                                    + (scan_y - bp->gy1) * gdy) / glen2;
+                        tt = tt < 0.0f ? 0.0f : (tt > 1.0f ? 1.0f : tt);
+                        pr = cr + (gr - cr) * tt;
+                        pg = cg + (gg - cg) * tt;
+                        pb = cb + (gb - cb) * tt;
+                    }
+                    PushVertex(seg_l, scan_y, pr, pg, pb, aa);
+                    PushVertex(seg_r, scan_y, pr, pg, pb, aa);
+                    PushVertex(seg_r, scan_y + 1.0f, pr, pg, pb, aa);
 
-                    PushVertex(seg_l, scan_y, cr, cg, cb, aa);
-                    PushVertex(seg_r, scan_y + 1.0f, cr, cg, cb, aa);
-                    PushVertex(seg_l, scan_y + 1.0f, cr, cg, cb, aa);
+                    PushVertex(seg_l, scan_y, pr, pg, pb, aa);
+                    PushVertex(seg_r, scan_y + 1.0f, pr, pg, pb, aa);
+                    PushVertex(seg_l, scan_y + 1.0f, pr, pg, pb, aa);
                 }
             }
         }
     }
 }
 
-void BuildVerticesFromBezierPaths(void) {
-    for (int i = 0; i < bezier_path_count; i++) {
-        BezierPathObj *bp = &bezier_paths[i];
-        if (bp->show_fill && bp->fill_opacity > 0.001f) {
-            tessellate_fill(bp);
-        }
-        if (bp->show_stroke && bp->stroke_width > 0.001f) {
-            tessellate_stroke(bp);
-        }
+void BuildVerticesFromBezierPathAt(int i) {
+    BezierPathObj *bp = &bezier_paths[i];
+    if (bp->show_fill && bp->fill_opacity > 0.001f) {
+        tessellate_fill(bp);
     }
+    if (bp->show_stroke && bp->stroke_width > 0.001f) {
+        tessellate_stroke(bp);
+    }
+}
+
+/* Called once the frame's command list has been replayed: paths that were
+   dropped (queue full) are discarded rather than drawn a frame late. */
+void ResetBezierPaths(void) {
     bezier_path_count = 0;
     g_seg_pool_used = 0;
+}
+
+void BuildVerticesFromBezierPaths(void) {
+    for (int i = 0; i < bezier_path_count; i++) {
+        BuildVerticesFromBezierPathAt(i);
+    }
+    ResetBezierPaths();
 }

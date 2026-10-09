@@ -30,15 +30,58 @@ DEFAULT_FRAME_HEIGHT = 8.0
 _viewport = None
 
 
+def screen_scale(w, h, frame_height=None):
+    """Uniform pixels-per-manim-unit for a ``w``x``h`` surface.
+
+    manim declares its frame as ``config.frame_width`` x ``config.frame_height``
+    (14.222222 x 8.0, the 16:9 defaults) and scales a surface uniformly by
+    ``pixel_width / frame_width``.  Deriving the frame width from the surface's
+    own aspect instead -- ``w * 8.0 / h``, which is what this conversion did --
+    gives 14.2333 at 854x480, i.e. 0.076 % too wide:
+
+        854 / (128/9) = 60.046875   <- manim CE (measured 60.0461, err 0.0008)
+        480 / 8       = 60.000000   <- what RTM used    (measured 60.0003)
+
+    Both mappings agree exactly at the frame centre and diverge linearly to
+    +-0.31 px at the edges.  A 1.2 px stroke straddles pixel boundaries
+    differently at those offsets: RTM put every grid rule on an integer pixel
+    (a 0.5/0.5 split, both halves above the 55-gray threshold) where manim left
+    them at x.72 (an 0.875/0.325 split, one half below it).  Measured on
+    VectorBasicsScene that was 3641 extra pixels -- 100 % of them within 1 px of
+    CE's ink, 84 % in runs >= 6 px -- which tripped compare_auto's detector C
+    (C_extra 0.1355 > 0.10).
+
+    At an exact 16:9 size the two formulas coincide (``1920/(128/9) == 1080/8 ==
+    135``), so this never moved the 1920x1080 renders.
+
+    ``frame_height`` is how many manim units are currently visible; ``None``
+    means the default full frame.  A zoomed viewport therefore scales up by
+    ``config.frame_height / frame_height``, matching manim's MovingCamera.
+    """
+    try:
+        from manim import config
+        fw = float(config.frame_width)
+        fh = float(config.frame_height)
+        if fw > 0.0:
+            s = float(w) / fw
+            if frame_height is not None and fh > 0.0:
+                s *= fh / float(frame_height)
+            return s
+    except Exception:                              # pragma: no cover - no manim
+        pass
+    # manim unavailable: keep the pre-existing pixel-aspect derivation.
+    return float(h) / (float(frame_height) if frame_height else DEFAULT_FRAME_HEIGHT)
+
+
 class Viewport:
     """The visible rectangle of manim space, in manim units."""
 
     __slots__ = ("center", "height", "rotation", "frame_center",
-                 "focal_distance", "exponential")
+                 "focal_distance", "exponential", "light_source")
 
     def __init__(self, center=(0.0, 0.0), height=DEFAULT_FRAME_HEIGHT, rotation=None,
                  frame_center=(0.0, 0.0, 0.0), focal_distance=None,
-                 exponential=False):
+                 exponential=False, light_source=None):
         self.center = (float(center[0]), float(center[1]))
         self.height = float(height) or DEFAULT_FRAME_HEIGHT
         # 3x3 camera rotation for the ThreeDCamera family (None for 2D).  Taken
@@ -52,6 +95,10 @@ class Viewport:
                             float(frame_center[2]))
         self.focal_distance = None if focal_distance is None else float(focal_distance)
         self.exponential = bool(exponential)
+        # The ThreeDCamera's light, in world units.  Its shading model sets each
+        # `shade_in_3d` face's colour from this, so the renderer needs it too.
+        self.light_source = None if light_source is None else tuple(
+            float(v) for v in light_source)
 
     def project(self, x, y, w, h, z=0.0):
         """Map a manim point to screen pixels for a ``w``x``h`` surface.
@@ -59,6 +106,7 @@ class Viewport:
         Rotates first when the scene has a 3D camera (manim does the same), then
         applies the uniform scale (frame aspect is fixed) and flips y.
         """
+        s = screen_scale(w, h, self.height)
         if self.rotation is not None:
             r = self.rotation
             ox, oy, oz = self.frame_center
@@ -77,9 +125,7 @@ class Viewport:
                     factor = distance / denominator if abs(denominator) > 1e-6 else 1.0
                 rx *= factor
                 ry *= factor
-            s = float(h) / self.height
             return float(w / 2.0 + rx * s), float(h / 2.0 - ry * s)
-        s = float(h) / self.height
         cx, cy = self.center
         return float(w / 2.0 + (x - cx) * s), float(h / 2.0 - (y - cy) * s)
 
@@ -138,10 +184,20 @@ def viewport_from_scene(scene):
                 focal_distance = float(get_focal()) if callable(get_focal) else None
             except Exception:
                 focal_distance = None
+            # manim keeps the light as a Point mobject (default
+            # 9*DOWN + 7*LEFT + 10*OUT); the shader reads its first point.
+            light_source = None
+            _light = getattr(cam, "light_source", None)
+            if _light is not None:
+                try:
+                    light_source = np.asarray(_light.points[0], dtype=float).reshape(-1)[:3]
+                except Exception:
+                    light_source = None
             return Viewport(center, height, rotation=rot,
                             frame_center=frame_center,
                             focal_distance=focal_distance,
-                            exponential=bool(getattr(cam, "exponential_projection", False)))
+                            exponential=bool(getattr(cam, "exponential_projection", False)),
+                            light_source=light_source)
 
     frame = getattr(cam, "frame", None)
     if frame is None or not hasattr(frame, "get_center"):

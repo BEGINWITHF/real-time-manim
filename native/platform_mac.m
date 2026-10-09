@@ -23,6 +23,7 @@
 #include "vulkan_render.h"
 #include "vulkan_core.h"
 #include "shared_types.h"
+#include "draw_common.h"
 #undef Rect
 #undef Circle
 
@@ -77,9 +78,18 @@ static int g_polygon_count = 0;
 static TextObj g_texts[MAX_SHAPES];
 static int g_text_count = 0;
 
-#define MAX_DRAW_CMDS 16384
+// One entry per submitted primitive now that the bezier fill and the
+// line-strip stroke are replayed in place (draw_common.h), and a text-heavy
+// frame pushes ~870 of them: a dropped entry would be a dropped shape.
+#define MAX_DRAW_CMDS 65536
 static DrawCmd g_draw_cmds[MAX_DRAW_CMDS];
 static int g_draw_cmd_count = 0;
+
+void DrawCmd_Push(int type, int index) {
+    if (g_draw_cmd_count < MAX_DRAW_CMDS) {
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ type, index };
+    }
+}
 
 // ── Cocoa state ─────────────────────────────────────────────────────────
 static NSWindow *g_window = nil;
