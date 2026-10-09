@@ -74,58 +74,35 @@ def _patched_broadcast_init(self, mobject, focal_point=None, **kwargs):
     _orig_broadcast_init(self, mobject, focal_point=focal_point, **kwargs)
 _spec.Broadcast.__init__ = _patched_broadcast_init
 
-# ── Monkey-patch MathTex to avoid \special{dvisvgm:raw} tags in TeX files ──
-# Standard manim wraps each tex_string in \special{dvisvgm:raw <g id='uniqueNNN'>}
-# so that dvisvgm produces named SVG groups.  We remove this wrapping and instead
-# assign SVG glyphs to tex_strings via positional matching (SVG elements appear in
-# the same order as the tex_strings they originate from).
+# ── MathTex: keep manim's \special{dvisvgm:raw} group tags ──────────────────
+# manim wraps each tex_string in \special{dvisvgm:raw <g id='uniqueNNN'>} so that
+# dvisvgm emits a named SVG group per tex_string, and MathTex then hands every
+# group to its own MathTexPart.  That mapping is *exact*: it knows how many glyphs
+# a string produced (spaces, `\\` line breaks, `fi`/`ffl` ligatures and LaTeX
+# commands all disagree with a character count).
+#
+# These tags used to be stripped and the glyphs split by position instead, which
+# mis-assigns glyphs whenever the per-string character weights do not match the
+# per-string glyph counts.  BulletedList is the visible case: of
+# "changelog entries\\" / "caching fixes\\" / ... the weights 19/15/14/18 over
+# 53 glyphs put the first boundary at 15 instead of 16, so the trailing "s" of
+# "entries" landed in the next part -- its dot was then placed left of that "s"
+# and the first bullet wrapped onto its own line.  So the original joining is
+# left alone and only the splitting below is patched.
 from manim.mobject.text.tex_mobject import MathTex as _OrigMathTex
-from manim.mobject.text.tex_mobject import MathTexPart, MATHTEX_SUBSTRING
-
-def _patched_join_tex_strings(self, tex_strings, substrings_to_isolate):
-    """Join tex_strings without \\special{dvisvgm:raw} wrapping.
-    Still populates matched_strings_and_ids so get_part_by_tex etc. can work."""
-    joined_string = ""
-    ssIdx = 0
-    for idx, tex_string in enumerate(tex_strings):
-        self.matched_strings_and_ids.append((tex_string, f"unique{idx:03d}"))
-        unprocessed_string = str(tex_string)
-        processed_string = ""
-        while len(unprocessed_string) > 0:
-            first_match = self._locate_first_match(
-                substrings_to_isolate, unprocessed_string
-            )
-            if first_match:
-                processed, unprocessed_string = self._patched_handle_match(
-                    ssIdx, first_match
-                )
-                processed_string = processed_string + processed
-                ssIdx += 1
-            else:
-                processed_string = processed_string + unprocessed_string
-                unprocessed_string = ""
-        string_part = processed_string
-        if idx < len(tex_strings) - 1:
-            string_part += self.arg_separator
-        joined_string = joined_string + string_part
-    return joined_string
-
-def _patched_handle_match(self, ssIdx, first_match):
-    """Handle substring isolation match without \\special wrapping."""
-    pre_match = first_match.group(1)
-    matched_string = first_match.group(2)
-    post_match = first_match.group(3)
-    self.matched_strings_and_ids.append(
-        (matched_string, f"unique{ssIdx:03d}{MATHTEX_SUBSTRING}")
-    )
-    processed_string = pre_match + matched_string
-    unprocessed_string = post_match
-    return processed_string, unprocessed_string
+from manim.mobject.text.tex_mobject import MathTexPart
 
 def _patched_break_up_by_substrings(self):
     """Reorganize submobjects into MathTexPart instances.
-    Falls back to positional matching when the SVG lacks named groups
-    (i.e. when \\special{dvisvgm:raw} was not used)."""
+
+    The SVG's named groups carry the exact glyph -> tex_string mapping, so that
+    path is always preferred.  Only when the SVG has no named groups (a file
+    compiled without the \\special tags) does this fall back to splitting the
+    glyph list by position, weighting each string by its character count --
+    which is a *guess*: characters and glyphs do not correspond one to one
+    (spaces and `\\\\` draw nothing, `fi` is one ligature glyph), so a guess can
+    hand a string's last glyph to the next part.
+    """
     new_submobjects = []
     try:
         for tex_string, tex_string_id in self._main_matches:
@@ -180,9 +157,6 @@ def _patched_break_up_by_substrings(self):
     self.submobjects = new_submobjects
     return self
 
-_OrigMathTex._join_tex_strings_with_unique_deliminters = _patched_join_tex_strings
-_OrigMathTex._handle_match = _patched_handle_match
-_OrigMathTex._patched_handle_match = _patched_handle_match  # used in patched_join above
 _OrigMathTex._break_up_by_substrings = _patched_break_up_by_substrings
 
 # ── Replace MathTex rendering with native Text layout (zero LaTeX) ──
@@ -814,6 +788,38 @@ def release_split(mob):
             d.pop('_vulkan_progress', None)
 
 
+def release_flash_window(mob):
+    """Clear the path-window a finished ``ShowPassingFlash`` parked behind.
+
+    The flash writers (RTM's own ``ShowPassingFlash.interpolate`` and the
+    manim bridge ``render_hooks._write_passing_flash``) tag the mobject with a
+    ``_vulkan_progress_lower/upper`` sweep window so the leaf sender shows only
+    the passing segment.  ``finish()`` leaves that window at its terminal
+    ``(1.0, 1.0)`` -- an EMPTY window -- and nothing ever cleared it, so any
+    later frame that re-painted the same mobject drew it invisible (a flashed
+    arc or word that re-entered a scene vanished; ``point_path_bounds`` kept
+    answering ``(1.0, 1.0)`` forever).  CE's flash restores the full path on
+    finish, so a flashed mobject re-added later is drawn whole.
+
+    Called where CE calls ``Animation.finish()``/``clean_up_from_scene()`` --
+    next to ``release_split`` -- so the frames of the *next* play see the full
+    geometry.  Only the flash's two window attrs are dropped; a live
+    ``Create``/``Uncreate`` sweep (a single ``_vulkan_progress``) is untouched.
+    """
+    if mob is None:
+        return
+    try:
+        family = mob.get_family()
+    except Exception:
+        return
+    for sub in family:
+        d = getattr(sub, '__dict__', None)
+        if d is None:
+            continue
+        d.pop('_vulkan_progress_lower', None)
+        d.pop('_vulkan_progress_upper', None)
+
+
 def scan_z_index(roots):
     """Does any family member carry a non-zero ``z_index``?
 
@@ -908,6 +914,31 @@ def unit_z_index(mob):
         if sz:
             return float(sz)
     return float(z or 0.0)
+
+
+def split_mixed_z(mob):
+    """Does CE sort this ``_paint_as_unit`` subtree's members apart by z?
+
+    A non-``VGroup`` parent that carries points of its own and paints its
+    children in the SAME unit (a ``DiGraph`` edge: ``Line z=-1`` with an
+    ``ArrowTriangleFilledTip`` child at ``z=0``) is only CE-correct while the
+    whole subtree agrees on ``z_index``.  CE flattens the family and
+    stable-sorts every member by its OWN ``z_index``, so a tip that disagrees
+    lands in the ``z=0`` block -- but one unit paints it early, with the
+    ``z=-1`` edge, and any ``z=0`` vertex it overlaps then covers it (the
+    arrowhead sinks under the dot it points at).  True when any point-bearing
+    member's ``z_index`` differs from the unit's, so the caller walks the
+    subtree and each member reaches the paint queue at its own z.
+    """
+    unit_z = unit_z_index(mob)
+    try:
+        members = mob.family_members_with_points()
+    except Exception:
+        return False
+    for sub in members:
+        if float(getattr(sub, "z_index", 0) or 0) != unit_z:
+            return True
+    return False
 
 
 def depth_order(items):
@@ -1783,7 +1814,7 @@ class MLWindow(ShapeMixin, TextMixin):
             return True
         return bool(mob.has_points())
 
-    def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False):
+    def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False, _skip_children=False):
         w, h = self.win_w, self.win_h
         own_alpha = get_anim_opacity(mob)
         a = parent_alpha * own_alpha
@@ -1797,6 +1828,35 @@ class MLWindow(ShapeMixin, TextMixin):
         # queued individually and can interleave with the other roots'.
         collect = getattr(self, '_paint_queue', None)
         if collect is not None and self._paint_as_unit(mob):
+            if (mob.submobjects
+                    and not isinstance(mob, (Arrow, DashedLine, Text))
+                    and not getattr(mob, '_is_text', False)
+                    and split_mixed_z(mob)):
+                # CE flattens the family and stable-sorts every member by its
+                # OWN z_index, so a subtree that disagrees (a DiGraph edge:
+                # Line z=-1 with a z=0 arrow tip) cannot be one unit -- one z
+                # slot would paint the tip with the edge instead of in the z=0
+                # block, where a vertex it overlaps covers it.  Queue the
+                # parent's own paint at the unit z (children suppressed) and
+                # walk each child so it reaches the queue at its own z.  Arrow
+                # / DashedLine / Text draw their children inside a single
+                # specialised sender, so splitting them would double-draw the
+                # tip or drop glyphs; they stay one unit regardless.
+                collect.add(
+                    depth_key(mob, collect.viewport),
+                    lambda: self._send(mob, angle, parent_alpha=parent_alpha,
+                                       parent_offset=parent_offset,
+                                       parent_transforming=parent_transforming,
+                                       parent_is_text=parent_is_text,
+                                       _skip_children=True),
+                    mob,
+                )
+                for sub in mob.submobjects:
+                    self._send(sub, angle, parent_alpha=parent_alpha,
+                               parent_offset=parent_offset,
+                               parent_transforming=parent_transforming,
+                               parent_is_text=parent_is_text)
+                return
             _k = depth_key(mob, collect.viewport)
             collect.add(
                 _k,
@@ -2063,10 +2123,13 @@ class MLWindow(ShapeMixin, TextMixin):
                 # paints parent first, then children on top.  Returning here
                 # without walking them dropped the divisions entirely (the
                 # SampleSpace showed only its base fill; charts d(last) -6.33).
-                for _i, sub in depth_order(getattr(mob, 'submobjects', ()) or ()):
-                    self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
-                               parent_transforming=parent_transforming,
-                               parent_is_text=is_text)
+                # A split mixed-z parent (split_mixed_z) painted only itself
+                # and had its children queued separately at their own z.
+                if not _skip_children:
+                    for _i, sub in depth_order(getattr(mob, 'submobjects', ()) or ()):
+                        self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
+                                   parent_transforming=parent_transforming,
+                                   parent_is_text=is_text)
                 return
 
         if isinstance(mob, Square):
@@ -2222,8 +2285,11 @@ class MLWindow(ShapeMixin, TextMixin):
 
         # Some non-VGroup types (e.g. NumberLine) hold submobjects
         # (tick marks, etc.) that must be rendered separately. Arrow is
-        # already fully handled by _send_arrow.
-        if (not isinstance(mob, (Text, VGroup, Group, MathTexPart, Arrow, DashedLine))
+        # already fully handled by _send_arrow.  A split mixed-z parent (see
+        # split_mixed_z) arrives with _skip_children: its children were queued
+        # separately at their own z, so it must paint only itself here.
+        if (not _skip_children
+                and not isinstance(mob, (Text, VGroup, Group, MathTexPart, Arrow, DashedLine))
                 and hasattr(mob, 'submobjects') and mob.submobjects):
             for _i, sub in depth_order(mob.submobjects):
                 self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
@@ -2249,6 +2315,52 @@ class MLWindow(ShapeMixin, TextMixin):
             for sub in anim.animations:
                 mobjects.extend(self._extract_add_mobjects(sub))
         return mobjects
+
+    def _ensure_animated_present(self, real_anims, add_mobs=()):
+        """Mirror ``Scene.add_mobjects_from_animations``'s membership rule.
+
+        A mobject already somewhere in the scene's FAMILY -- a graph vertex
+        that is a submobject of its ``Graph``, a ``Text`` glyph -- must NOT be
+        re-appended to the top level: ``Scene.add`` would ``restructure`` it
+        out of its parent and drag it to the end, inverting the paint order
+        against CE.  CE checks membership against the whole family
+        (``mob not in self.get_mobject_family_members()``), so an animated
+        submobject is left exactly where it is; only a genuinely-new mobject
+        is appended.  This used to check only ``scene.mobjects`` (the top
+        level), which promoted any animated submobject to the end and made
+        ``who-is-on-top`` diverge from CE.
+
+        Returns True if anything was appended (callers then re-apply CE's
+        ``foreground_mobjects``-go-last rule, which those bypassed ``Scene.add``
+        appends would otherwise skip).
+        """
+        appended = False
+
+        for mob in add_mobs:
+            set_anim_opacity(mob, 1.0)
+            if mob not in self.scene.mobjects:
+                self.scene.mobjects.append(mob)
+                appended = True
+
+        curr_mobjects = self.scene.get_mobject_family_members()
+        for a in real_anims:
+            m = getattr(a, "mobject", None)
+            if m is not None and m not in curr_mobjects:
+                self.scene.mobjects.append(m)
+                curr_mobjects += m.get_family()
+                appended = True
+            for mob in (getattr(a, "mobjects", None) or []):
+                if mob not in curr_mobjects:
+                    self.scene.mobjects.append(mob)
+                    curr_mobjects += mob.get_family()
+                    appended = True
+            cur = getattr(a, "cursor", None)
+            if cur is not None and cur not in curr_mobjects:
+                self.scene.mobjects.append(cur)
+                curr_mobjects += cur.get_family()
+                appended = True
+
+        return appended
 
     def play(self, *animations, **kwargs):
         """Timeline-driven playback (2.0.0).
@@ -2298,27 +2410,7 @@ class MLWindow(ShapeMixin, TextMixin):
             for a in real_anims:
                 a.rate_func = kwargs['rate_func']
 
-        appended = False
-        for mob in add_mobs:
-            set_anim_opacity(mob, 1.0)
-            if mob not in self.scene.mobjects:
-                self.scene.mobjects.append(mob)
-                appended = True
-
-        # make sure every animated mobject is present in the scene
-        for a in real_anims:
-            m = getattr(a, 'mobject', None)
-            if m is not None and m not in self.scene.mobjects:
-                self.scene.mobjects.append(m)
-                appended = True
-            for mob in (getattr(a, 'mobjects', None) or []):
-                if mob not in self.scene.mobjects:
-                    self.scene.mobjects.append(mob)
-                    appended = True
-            cur = getattr(a, 'cursor', None)
-            if cur is not None and cur not in self.scene.mobjects:
-                self.scene.mobjects.append(cur)
-                appended = True
+        appended = self._ensure_animated_present(real_anims, add_mobs)
 
         # CE's Scene.add drags foreground_mobjects back to the front on every
         # add; these appends bypass Scene.add, so re-apply that rule here.
@@ -2416,6 +2508,10 @@ class MLWindow(ShapeMixin, TextMixin):
             # ...and drop the per-child stamps the container's split wrote, so
             # the frames of the *next* play see every child at full progress.
             release_split(getattr(anim, 'mobject', None))
+            # ...and the empty path-window a finished ShowPassingFlash parked
+            # at (1.0, 1.0), so a flashed mobject that re-enters a later frame
+            # is drawn in full, not invisible (CE restores its full path).
+            release_flash_window(getattr(anim, 'mobject', None))
 
         # manim's Scene.play_internal ends with
         #
@@ -2462,20 +2558,12 @@ class MLWindow(ShapeMixin, TextMixin):
             for a in real:
                 a.rate_func = kwargs['rate_func']
 
-        for mob in add_mobs:
-            set_anim_opacity(mob, 1.0)
-            if mob not in self.scene.mobjects:
-                self.scene.mobjects.append(mob)
-        for a in real:
-            m = getattr(a, 'mobject', None)
-            if m is not None and m not in self.scene.mobjects:
-                self.scene.mobjects.append(m)
-            for mob in (getattr(a, 'mobjects', None) or []):
-                if mob not in self.scene.mobjects:
-                    self.scene.mobjects.append(mob)
-            cur = getattr(a, 'cursor', None)
-            if cur is not None and cur not in self.scene.mobjects:
-                self.scene.mobjects.append(cur)
+        # Same family-membership rule as Scene.add_mobjects_from_animations
+        # (see _ensure_animated_present): don't promote a mobject that is
+        # already somewhere in the scene's family -- checking only the
+        # top-level list would re-append a submobject at the end and reorder
+        # the paint relative to CE.
+        self._ensure_animated_present(real, add_mobs)
 
         duration = max((float(getattr(a, 'run_time', 1.0) or 1.0) for a in real),
                        default=0.0)

@@ -52,8 +52,10 @@ try:
     from manim import (
         BLUE,
         GREEN,
+        PI,
         RED,
         WHITE,
+        Arc,
         Circle,
         Dot,
         Graph,
@@ -153,6 +155,30 @@ def test_graph_edges_painted_before_vertices(window):
     )
     scene.add(graph)
     assert_same_as_ce(window, scene, what="Graph")
+
+
+def test_digraph_tip_paints_at_its_own_z(window):
+    """A ``DiGraph`` edge's arrow tip must land in the z=0 block, not z=-1.
+
+    manim builds each directed edge as ``Line z=-1`` plus ``add_tip`` (an
+    ``ArrowTriangleFilledTip`` child at the default ``z=0``).  CE flattens the
+    family and stable-sorts every member by its OWN ``z_index``, so the tip
+    paints late in the z=0 block -- over the vertices it points at.  RTM used
+    to paint the whole edge as one unit at z=-1, dragging the tip into the
+    edge block so a z=0 vertex covered the arrowhead.  ``split_mixed_z`` now
+    walks such a subtree so the line paints at z=-1 and the tip at z=0.
+    """
+    from manim import DiGraph, DOWN, LEFT, RIGHT
+    scene = Scene()
+    graph = DiGraph(
+        ["a", "b", "c"],
+        [("a", "b"), ("b", "c"), ("c", "a")],
+        labels=True,
+        layout={"a": 2 * LEFT, "b": 2 * RIGHT, "c": 2 * DOWN},
+        vertex_config={"radius": 0.25, "fill_color": "#ffff00"},
+    )
+    scene.add(graph)
+    assert_same_as_ce(window, scene, what="DiGraph tips")
 
 
 def test_children_of_one_root_can_disagree(window):
@@ -255,6 +281,68 @@ def test_foreground_to_front_restores_ce_order():
 
 
 # --------------------------------------------------------------------------- #
+# animated-mobject scene membership (Scene.add_mobjects_from_animations)
+# --------------------------------------------------------------------------- #
+
+def test_ensure_animated_present_does_not_promote_a_submobject(window):
+    """A ``.animate`` on a submobject must NOT re-append it to ``scene.mobjects``.
+
+    ``Scene.add_mobjects_from_animations`` checks membership against the whole
+    family (``mob not in self.get_mobject_family_members()``), so a graph vertex
+    that is a submobject of its ``Graph`` is already "in the scene" and is left
+    exactly where it is.  RTM used to check only the top-level
+    ``scene.mobjects`` list, so it re-appended the animated vertex at the END --
+    moving it after every other root and inverting who-was-on-top against CE
+    (``GraphMobjects`` showed the shifted vertex painted before the static
+    vertices while CE paints it after them).
+    """
+    scene = Scene()
+    graph = Graph([1, 2], [(1, 2)], labels=False, layout="circular").scale(0.5)
+    scene.mobjects = [graph]
+    vertex = graph.vertices[1]                      # a submobject of graph
+    window.scene = scene
+
+    class _Anim:
+        def __init__(self, mobject):
+            self.mobject = mobject
+
+    try:
+        appended = window._ensure_animated_present([_Anim(vertex)])
+    finally:
+        window.scene = None
+
+    assert not appended, (
+        "the animated vertex is already in the scene's family; nothing new "
+        "should be appended")
+    assert all(m is not vertex for m in scene.mobjects), (
+        "an animated submobject was promoted to the top level of "
+        "scene.mobjects; CE leaves a mobject that is already in the scene's "
+        "family exactly where it is")
+
+
+def test_ensure_animated_present_appends_a_genuinely_new_mobject(window):
+    """A mobject that is NOT in the family IS appended (CE appends it too)."""
+    scene = Scene()
+    square = _shape("square", RED, 1.0)
+    scene.mobjects = [square]
+    fresh = Circle(radius=0.5, fill_color=BLUE, fill_opacity=1,
+                   stroke_width=0)
+    window.scene = scene
+
+    class _Anim:
+        def __init__(self, mobject):
+            self.mobject = mobject
+
+    try:
+        appended = window._ensure_animated_present([_Anim(fresh)])
+    finally:
+        window.scene = None
+
+    assert appended, "a genuinely-new animated mobject must be added to the scene"
+    assert scene.mobjects[-1] is fresh
+
+
+# --------------------------------------------------------------------------- #
 # queue mechanics
 # --------------------------------------------------------------------------- #
 
@@ -329,6 +417,45 @@ def test_scan_z_index_walks_the_whole_family():
     outer = VGroup(Circle(), VGroup(inner))
     assert vb.scan_z_index([outer]) is True
     assert vb.scan_z_index([VGroup(Square(), Circle())]) is False
+
+
+# --------------------------------------------------------------------------- #
+# flash window residue: a finished ShowPassingFlash must not park (1.0, 1.0)
+# --------------------------------------------------------------------------- #
+
+def test_release_flash_window_clears_the_empty_sweep_window():
+    """``ShowPassingFlash.finish`` left an EMPTY ``(1.0, 1.0)`` path window.
+
+    The flash writers tag the mobject with a ``_vulkan_progress_lower/upper``
+    sweep window; ``finish()`` parks it at its terminal ``(1.0, 1.0)`` -- an
+    empty window -- and nothing cleared it, so ``point_path_bounds`` kept
+    answering ``(1.0, 1.0)`` forever and any later frame that re-painted the
+    flashed mobject drew it invisible.  CE restores the full path on finish.
+    ``release_flash_window`` (called next to ``release_split`` where CE calls
+    ``finish()``) drops the two attrs so the full path comes back.
+    """
+    from real_time_manim.vulkan_util import point_path_bounds
+
+    arc = Arc(radius=1.2, start_angle=0, angle=PI)
+    # exactly what a finished ShowPassingFlash parks on the mobject
+    arc._vulkan_progress = 1.0
+    arc._vulkan_progress_lower = 1.0
+    arc._vulkan_progress_upper = 1.0
+    assert point_path_bounds(arc) == (1.0, 1.0), "the empty window (the bug)"
+    vb.release_flash_window(arc)
+    assert point_path_bounds(arc) == (0.0, 1.0), "full path must come back"
+    assert not hasattr(arc, "_vulkan_progress_lower")
+    assert not hasattr(arc, "_vulkan_progress_upper")
+
+
+def test_release_flash_window_is_a_no_op_for_a_live_create():
+    """A live ``Create`` sweep (single ``_vulkan_progress``) is untouched."""
+    from real_time_manim.vulkan_util import point_path_bounds
+
+    arc = Arc(radius=1.2, start_angle=0, angle=PI)
+    arc._vulkan_progress = 0.42               # an in-flight Create, no bounds
+    vb.release_flash_window(arc)
+    assert point_path_bounds(arc) == (0.0, 0.42)
 
 
 # --------------------------------------------------------------------------- #
