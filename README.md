@@ -1,4 +1,4 @@
-# Real-Time-Manim(RTM)
+# Real-Time-Manim (RTM)
 
 <p align="center">
   <img src="logo.jpg" alt="real-time-manim logo" width="560"/>
@@ -9,7 +9,7 @@ renderer, `real-time-manim` draws every scene through a native Vulkan pipeline �
 so you get a live, interactive window *and* fast GPU-accelerated video output,
 all driven by ordinary Manim scenes.
 
-> RTM(Real-Time-Manim) is a vulkan-based manim renderer boosting manim speed, making live-rendering available and compatible for rendering manim. Previous manim render focusing on Opengl ang Cairo renderer is CPU-based, making graphic rendering extremely slow and live-interaction unfeasible. RTM uses a refactored render pipeline (see flow chart below) to make live-render available for math animation, preparing for further development of Manteraction(a app for live interaction manim video creation, animation, and interaction.)
+> RTM (Real-Time-Manim) is a Vulkan-based Manim renderer that boosts Manim's speed, making live rendering available and compatible with Manim. Previous Manim renderers were focused on OpenGL and Cairo, which are CPU-based, making graphics rendering extremely slow and live interaction unfeasible. RTM uses a refactored render pipeline (see the flow chart below) to make live rendering available for math animation, preparing for the further development of Manteraction (an app for live-interactive Manim video creation, animation, and interaction).
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS-lightgrey.svg)
@@ -23,7 +23,7 @@ all driven by ordinary Manim scenes.
 
 ## Highlights
 
-- **Live window.** Render Manim scenes in real time inside a `MLWindow`, not just
+- **Live window.** Render Manim scenes in real time inside an `MLWindow`, not just
   to a rendered file.
 - **GPU backend.** A bundled `vulkan_core.dll` replaces the Cairo/OpenGL raster
   path with a Vulkan vertex pipeline (rects, circles, lines, beziers, text, …).
@@ -33,14 +33,13 @@ all driven by ordinary Manim scenes.
 - **Auto-cleanup.** Transient `media/` artefacts are removed for you after a run.
 - **LaTeX caching.** `Tex`/`MathTex` scenes reuse compiled SVGs so unchanged math
   is never recompiled.
-- **All Manim Animations Supported** — everything mentioned in the "Animation" part in manim community is supported(we are going to support other features in the future).
+- **All Manim animations supported.** Everything mentioned in the "Animation" section of the Manim community is supported (we are going to support other features in the future).
 
 ---
 
 ## Install
 
-real-time-manim is published to **PyPI**. With any Python 3.11+ on Windows
-10/11:
+real-time-manim is published to **PyPI**. On Windows 10/11 with Python 3.11+:
 
 ```bash
 pip install real-time-manim
@@ -121,7 +120,7 @@ Both accept a `Scene` subclass, a `Scene` instance, or a no-arg callable, and
 return a dict `{out_path, windows, files}`. When `out_path` is omitted, output
 lands at `~/Downloads/output.mp4` (a scene opening several windows gets
 `_part2`, `_part3`, … suffixes). `cleanup=True` (default) deletes transient
-manim `media/` after the run; set `cleanup=False` to keep it.
+Manim `media/` after the run; set `cleanup=False` to keep it.
 
 ```python
 fast_record_scene(MyScene)                       # ~/Downloads/output.mp4
@@ -138,7 +137,7 @@ unchanged math is reused instead of recompiled on every run:
 ```python
 from real_time_manim.util import restore_tex_cache, save_tex_cache
 
-restore_tex_cache("tex_cache")   # before rendering: warm manim's SVG dir
+restore_tex_cache("tex_cache")   # before rendering: warm Manim's SVG dir
 # ... run your Tex scene(s) ...
 save_tex_cache("tex_cache")      # after: stash newly compiled SVGs
 ```
