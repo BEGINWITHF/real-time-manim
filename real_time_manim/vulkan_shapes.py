@@ -20,6 +20,39 @@ class ShapeMixin:
     def _stroke_color(self, mob):
         return get_stroke_rgb(mob)
 
+    @staticmethod
+    def _visible_frame_height():
+        """How many manim units the camera is currently showing vertically.
+
+        Any *size* written in manim units (a stroke width, a Dot's radius) has to
+        be converted with the pixels-per-unit of the frame that is actually on
+        screen.  Positions already take that route -- ``manim_to_screen`` ->
+        ``Viewport.project`` scales by the visible frame height -- so a size that
+        assumed the default 8-unit frame drew a mobject that did not follow a
+        zooming camera while its own position did.
+
+        Measured on ``FollowingGraphCamera`` (``camera.frame.animate.scale(0.5)``,
+        frame height 8 -> 4): manim CE doubles every dot on screen, 22 px ->
+        44 px at 1080p, growing over the whole zoom-in and shrinking again over
+        ``Restore``; with the default 8 RTM kept the disc at a constant 22 px for
+        the entire zoom-in and the whole restore and snapped between the two
+        sizes at the play boundaries.
+
+        No published viewport means a plain ``Scene`` with the default fixed
+        frame, so non-camera scenes render exactly as before.
+        """
+        try:
+            from real_time_manim.camera_state import get_viewport, DEFAULT_FRAME_HEIGHT
+        except Exception:                          # pragma: no cover - no camera_state
+            return 8.0
+        try:
+            viewport = get_viewport()
+            if viewport is not None:
+                return float(viewport.height) or 8.0
+        except Exception:                          # pragma: no cover - defensive
+            pass
+        return DEFAULT_FRAME_HEIGHT
+
     def _stroke_width(self, mob):
         sw_manim = get_stroke_w(mob)
         # Convert manim stroke_width to pixels
@@ -31,15 +64,7 @@ class ShapeMixin:
         # scales strokes with it -- using the default 8 drew them half as thick
         # (CameraFamilyScene luma 1.12 vs CE 1.82).
         h = getattr(self, 'win_h', 800)
-        frame_height = 8.0
-        try:
-            from real_time_manim.camera_state import get_viewport
-            viewport = get_viewport()
-            if viewport is not None:
-                frame_height = float(viewport.height) or 8.0
-        except Exception:
-            pass
-        return sw_manim * 0.01 * (h / frame_height)
+        return sw_manim * 0.01 * (h / self._visible_frame_height())
 
     @staticmethod
     def _stroke_layers(px, alpha):
@@ -136,9 +161,11 @@ class ShapeMixin:
             # `stroke_width = 0` means no stroke even though the rgba alpha is
             # 1.0 (same trap as `_send_polygon`'s fill-only shapes).
             cr, cg, cb = self._stroke_color(mob)
-            cr = int(cr * so)
-            cg = int(cg * so)
-            cb = int(cb * so)
+            # The stroke opacity rides the ALPHA, not the colour: native blends
+            # straight-alpha (colour*alpha + dst*(1-alpha)), so baking `so` in
+            # hard-replaced the background and a stroke over a non-black backdrop
+            # stayed black while it faded in (same trap _send_polygon documents).
+            a = a * so
             sw = self._stroke_width(mob)
             tl = self._rotate_point(sx - half, sy - half, sx, sy, rot)
             tr = self._rotate_point(sx + half, sy - half, sx, sy, rot)
@@ -207,9 +234,11 @@ class ShapeMixin:
         if so > 0 and self._stroke_width(mob) > 0:
             # see _send_square: stroke_width 0 must not draw a border
             cr, cg, cb = self._stroke_color(mob)
-            cr = int(cr * so)
-            cg = int(cg * so)
-            cb = int(cb * so)
+            # The stroke opacity rides the ALPHA, not the colour: native blends
+            # straight-alpha (colour*alpha + dst*(1-alpha)), so baking `so` in
+            # hard-replaced the background and a stroke over a non-black backdrop
+            # stayed black while it faded in (same trap _send_polygon documents).
+            a = a * so
             sw = self._stroke_width(mob)
             tl = self._rotate_point(sx - hw, sy - hh, sx, sy, rot)
             tr = self._rotate_point(sx + hw, sy - hh, sx, sy, rot)
@@ -275,9 +304,11 @@ class ShapeMixin:
         if so > 0 and self._stroke_width(mob) > 0:
             # see _send_square: stroke_width 0 must not draw a border
             cr, cg, cb = self._stroke_color(mob)
-            cr = int(cr * so)
-            cg = int(cg * so)
-            cb = int(cb * so)
+            # The stroke opacity rides the ALPHA, not the colour: native blends
+            # straight-alpha (colour*alpha + dst*(1-alpha)), so baking `so` in
+            # hard-replaced the background and a stroke over a non-black backdrop
+            # stayed black while it faded in (same trap _send_polygon documents).
+            a = a * so
             sw = self._stroke_width(mob)
             # Match legacy behavior: fixed segment tessellation (segs=48)
             segs = 48
@@ -380,9 +411,11 @@ class ShapeMixin:
         sw_manim = get_stroke_w(mob)
         if so > 0 and sw_manim > 0:
             cr, cg, cb = self._stroke_color(mob)
-            cr = int(cr * so)
-            cg = int(cg * so)
-            cb = int(cb * so)
+            # The stroke opacity rides the ALPHA, not the colour: native blends
+            # straight-alpha (colour*alpha + dst*(1-alpha)), so baking `so` in
+            # hard-replaced the background and a stroke over a non-black backdrop
+            # stayed black while it faded in (same trap _send_polygon documents).
+            a = a * so
             sw = self._stroke_width(mob)
             # Match legacy behavior: fixed segment tessellation (segs=48)
             segs = 48
@@ -421,12 +454,27 @@ class ShapeMixin:
         # the old `get_end() - tip_length` is only right when the tip happens to
         # be exactly `tip_length` long, and overshot a square tip's line by
         # 0.145 units = 8.7 px (report #9).
+        #
+        # The mirror image of that rule holds at the START end: for a
+        # `DoubleArrow` manim adds a second tip (`start_tip`) at the beginning
+        # of the line, and `get_start()` then reports THAT tip's apex, not the
+        # shaft's first point (DoubleArrow([3.8, ...], [5.8, ...]): get_start()
+        # = 3.80, the line's own points start at 4.15).  Drawing the shaft from
+        # `get_start()` made it poke ~0.35 units out past the left arrowhead --
+        # the shaft's stroke sticks out of the triangle's narrow apex as a stub
+        # a few pixels left of it (LinesAnglesAndVectors' DoubleArrow: ink from
+        # x=1469 where CE starts at x=1473).  So the shaft start must come from
+        # the line itself, exactly like `e_line`; for an ordinary `Arrow` (no
+        # tip at its start end) it is `get_start()`, so nothing else changes.
         try:
             _own = np.asarray(mob.get_points(), dtype=float)
             _d = np.linalg.norm(_own - s, axis=1)
             e_line = np.array(_own[int(np.argmax(_d))], dtype=float)
+            _d0 = np.linalg.norm(_own - e_line, axis=1)
+            s_line = np.array(_own[int(np.argmax(_d0))], dtype=float)
         except Exception:
             e_line = e.copy()
+            s_line = s.copy()
         grow_scale = getattr(mob, '_grow_scale', 1.0)
         grow_pt = getattr(mob, '_grow_point', None)
         if grow_scale != 1.0 and grow_pt is not None:
@@ -434,9 +482,11 @@ class ShapeMixin:
             s = gp + (s - gp) * grow_scale
             e = gp + (e - gp) * grow_scale
             e_line = gp + (e_line - gp) * grow_scale
+            s_line = gp + (s_line - gp) * grow_scale
         if parent_offset is not None:
             off = np.array(parent_offset, dtype=float)
             s = s + off; e = e + off; e_line = e_line + off
+            s_line = s_line + off
         about = getattr(mob, '_rotation_about_point', None)
         if about is not None:
             pivot = np.array(about, dtype=float)
@@ -451,11 +501,12 @@ class ShapeMixin:
             s = _rot_about(s)
             e = _rot_about(e)
             e_line = _rot_about(e_line)
-            sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
+            s_line = _rot_about(s_line)
+            sx1, sy1 = manim_to_screen(s_line[0], s_line[1], w, h, s_line[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
             sxl, syl = manim_to_screen(e_line[0], e_line[1], w, h, e_line[2])
         else:
-            sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
+            sx1, sy1 = manim_to_screen(s_line[0], s_line[1], w, h, s_line[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
             sxl, syl = manim_to_screen(e_line[0], e_line[1], w, h, e_line[2])
             cx, cy, cz = mob.get_center()
@@ -465,7 +516,14 @@ class ShapeMixin:
             sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
             sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
             sxl, syl = self._rotate_point(sxl, syl, scx, scy, rot)
-        progress = getattr(mob, '_vulkan_progress', 1.0)
+        # The shaft's own points (`s_line`/`e_line`) are what ShowPartial cuts
+        # on a Create, so they already end at the pen: windowing them again by
+        # `_vulkan_progress` drew `progress * cut` of the shaft.  A tagged path
+        # therefore yields 1.0, which also flips `use_real_tip` below and hands
+        # the head to `_send_arrow_tip` -- that reads the TIP submobject's
+        # points, which manim cut with its own sub_alpha, exactly as CE draws
+        # it.  Untagged (a flash, a stagger driver) keeps the plain progress.
+        progress = point_path_bounds(mob)[1]
         if progress <= 0:
             return
         # The real tip is a submobject with its own geometry -- shape, size and
@@ -516,10 +574,16 @@ class ShapeMixin:
             else:
                 ex = sx1 + (base_x - sx1) * progress
                 ey = sy1 + (base_y - sy1) * progress
-            # NB: `px` is reassigned to the head's perpendicular below
-            # (px = -uy), so the shaft is emitted while it still holds the
-            # stroke width.
-            self._emit_stroke(sx1, sy1, ex, ey, px, r, g, b, a)
+            # `length` above measures to the TIP's apex, which stays out at the
+            # arrowhead even while ShowPartial has collapsed the shaft's own
+            # points to nothing -- so the shaft can still be a single point when
+            # `can_stroke` says otherwise.  A collapsed path inks nothing in
+            # manim either; native has no direction for the quad.
+            if abs(ex - sx1) >= 1e-6 or abs(ey - sy1) >= 1e-6:
+                # NB: `px` is reassigned to the head's perpendicular below
+                # (px = -uy), so the shaft is emitted while it still holds the
+                # stroke width.
+                self._emit_stroke(sx1, sy1, ex, ey, px, r, g, b, a)
         if use_real_tip:
             self._send_arrow_tip(mob, tip, a, w, h, rot, parent_offset)
             return
@@ -578,8 +642,14 @@ class ShapeMixin:
                 tc = np.array(tip.get_center(), dtype=float)
                 d = tc - centre
                 ca, sa = math.cos(rot_orig), math.sin(rot_orig)
-                moved = centre + np.array([d[0] * ca - d[1] * sa,
-                                           d[0] * sa + d[1] * ca])
+                # Rotate about z, so the z component is unchanged.  Building
+                # only the xy part here was (3,) + (2,): every Arrow that
+                # turned -- scene 57's Rotating(about_point) -- raised a
+                # broadcast ValueError and killed the render.
+                rot_d = np.array([d[0] * ca - d[1] * sa,
+                                  d[0] * sa + d[1] * ca,
+                                  d[2] if d.size > 2 else 0.0])
+                moved = centre + rot_d
                 delta = moved - tc
                 if offset is None:
                     offset = np.zeros(3)
@@ -592,8 +662,27 @@ class ShapeMixin:
                 del tip._grow_point
 
     def _send_line(self, mob, a, w, h, rot, parent_offset=None):
-        s = np.array(mob.get_start(), dtype=float)
-        e = np.array(mob.get_end(), dtype=float)
+        # The endpoints must come from the path itself.  `TipableVMobject`
+        # (Line, NumberLine, anything with an arrowhead) overrides `get_end()`
+        # to answer with the *tip submobject's* start -- a point that stays out
+        # at the arrowhead while ShowPartial has collapsed this mob's own
+        # points to nothing, so a Create inked the whole line from its very
+        # first frame (CoordinateSystemBasics' y-spine was full 30 frames
+        # before CE draws any of it, since `get_start()` correctly read the
+        # collapsed `points[0]` and the tip still answered 0.3 units up).
+        # CE strokes the path, and the cut wrote the path, so the path wins;
+        # only a mobject with no points of its own falls back to the accessors.
+        own = None
+        try:
+            own = np.asarray(mob.get_points(), dtype=float)
+        except Exception:
+            own = None
+        if own is not None and len(own) > 0:
+            s = np.array(own[0], dtype=float)
+            e = np.array(own[-1], dtype=float)
+        else:
+            s = np.array(mob.get_start(), dtype=float)
+            e = np.array(mob.get_end(), dtype=float)
         grow_scale = getattr(mob, '_grow_scale', 1.0)
         grow_pt = getattr(mob, '_grow_point', None)
         if grow_scale != 1.0 and grow_pt is not None:
@@ -670,7 +759,13 @@ class ShapeMixin:
         # threshold (measured: `ThreeDRotationProbe`'s excess coverage jumping
         # 0.054 -> 0.192, all of it within 2 px of CE's strokes).  The rule now
         # lives in _stroke_layers so every stroke sender shares it.
-        progress = getattr(mob, '_vulkan_progress', 1.0)
+        # `s`/`e` are read from the path itself (see the top of this method),
+        # and ShowPartial has already cut that path on a Create: the pen's end
+        # IS the drawn end, so windowing it again by `_vulkan_progress` drew
+        # `progress * cut` of the line.  `point_path_bounds` returns 1.0 for a
+        # tagged path and the plain progress otherwise (same rule as
+        # `_send_rectangle`, plan 4.2).
+        progress = point_path_bounds(mob)[1]
         if progress <= 0:
             return
         if progress >= 1.0:
@@ -678,12 +773,24 @@ class ShapeMixin:
         else:
             ex = sx1 + (sx2 - sx1) * progress
             ey = sy1 + (sy2 - sy1) * progress
+        # A path the cut collapsed to a point has nothing to stroke: manim's
+        # butt cap inks nothing, and native would have no direction to build
+        # the quad from (ShowPartial at sub_alpha 0 is the common case).
+        if abs(ex - sx1) < 1e-6 and abs(ey - sy1) < 1e-6:
+            return
         self._emit_stroke(sx1, sy1, ex, ey, px, r, g, b, a)
 
     def _send_dot(self, mob, a, w, h):
         cx, cy, cz = mob.get_center()
         sx, sy = manim_to_screen(cx, cy, w, h, cz)
-        scale_y = h / 8.0
+        # The radius is in manim units, so it converts with the frame height that
+        # is on screen -- the same rule as `_stroke_width`.  `h / 8.0` ignored the
+        # camera: its centre already moved with the zoom (manim_to_screen) while
+        # the disc stayed the size it had before the camera moved, so a zooming
+        # scene showed a dot that never grew over `frame.animate.scale(...)` and
+        # then snapped to the right size once the play ended
+        # (FollowingGraphCamera: CE 22 -> 44 px smoothly, RTM 22, 22, ..., 44).
+        scale_y = h / self._visible_frame_height()
         # A Dot is a circle, but its bounding box need not be square: a VDict
         # with show_keys=True stretches each entry to line up with its key label
         # (measured: width 1.244 against height 0.351 for a radius-0.16 Dot), and
@@ -914,6 +1021,124 @@ class ShapeMixin:
                                             int(r * so), int(g * so), int(b * so),
                                             sw, a)
 
+    @staticmethod
+    def _polygram_groups(mob, verts):
+        """Split a Polygram's flattened vertices into its closed subpaths.
+
+        manim's ``Polygram`` is "a generalized Polygon, allowing for
+        **disconnected** sets of edges": each vertex group is its own closed
+        subpath, but ``get_vertices()`` returns them flattened into ONE list.
+        Joining that list end to end draws edges the shape does not own --
+        measured on ``08_geometry.PolygramFamily`` (last frame, region mean
+        diff against CE, ink px CE vs RTM):
+
+            Polygram         5.93   6977 vs 6122
+            RegularPolygram  10.25  8133 vs 7583
+
+        both are hexagrams built from TWO triangles, while Polygon, Star and
+        ConvexHull are a single group and already rendered correctly.
+
+        Returns ``[verts]`` -- one closed polyline, exactly the old behaviour --
+        unless the split is unambiguous: every group must be closed and hold at
+        least three vertices, so a path a partial draw has cut (an unclosed
+        tail) is never guessed into extra subpaths.
+        """
+        try:
+            starts = mob.get_start_anchors()
+            ends = mob.get_end_anchors()
+        except Exception:
+            return [verts]
+        if starts is None or ends is None:
+            return [verts]
+        if len(starts) != len(verts) or len(ends) != len(verts) or len(starts) < 3:
+            return [verts]
+        try:
+            consider_equal = mob.consider_points_equals
+        except Exception:                                   # pragma: no cover
+            consider_equal = None
+
+        def _same(a, b):
+            if consider_equal is not None:
+                try:
+                    return bool(consider_equal(a, b))
+                except Exception:                           # pragma: no cover
+                    pass
+            return bool(np.allclose(a, b))
+
+        bounds = []                       # (first, one past last) per group
+        begin = 0
+        for i in range(len(starts)):
+            if not _same(ends[i], starts[begin]):
+                continue
+            if i + 1 - begin < 3:
+                return [verts]            # degenerate group: do not guess
+            bounds.append((begin, i + 1))
+            begin = i + 1
+        if begin != len(starts) or len(bounds) < 2:
+            return [verts]                # unclosed path, or a plain Polygon
+        return [verts[a:b] for a, b in bounds]
+
+    def _polygon_flat(self, verts, w, h, parent_offset, rot, sx, sy):
+        """Screen-space ``x0,y0,x1,y1,...`` for one vertex group."""
+        flat = []
+        for v in verts:
+            vx = float(v[0])
+            vy = float(v[1])
+            vz = float(v[2]) if len(v) > 2 else 0.0
+            if parent_offset is not None:
+                vx += parent_offset[0]
+                vy += parent_offset[1]
+            vx, vy = manim_to_screen(vx, vy, w, h, vz)
+            vx, vy = self._rotate_point(vx, vy, sx, sy, rot)
+            flat.append(vx)
+            flat.append(vy)
+        return flat
+
+    @staticmethod
+    def _flat_perimeter(flat):
+        n = len(flat) // 2
+        perimeter = 0.0
+        for j in range(n):
+            j2 = (j + 1) % n
+            perimeter += math.hypot(flat[j2 * 2] - flat[j * 2],
+                                    flat[j2 * 2 + 1] - flat[j * 2 + 1])
+        return perimeter
+
+    @staticmethod
+    def _group_windows(flat_groups, lower, upper):
+        """Cut one global ``[lower, upper]`` path window at each group's share.
+
+        A partial draw walks the outline ONCE, group after group, so every
+        group drawing the same fraction would show two half-drawn triangles at
+        once instead of one triangle and then the next.  Each group gets the
+        slice of the window that falls inside its own share of the perimeter; a
+        group the window misses collapses to a zero-length slice -- ``(1, 1)``
+        or ``(0, 0)`` -- so the stroke sender submits nothing for it.
+        """
+        if len(flat_groups) == 1:
+            return [(lower, upper)]
+        try:
+            lower = max(0.0, min(1.0, float(lower)))
+            upper = max(0.0, min(1.0, float(upper)))
+        except (TypeError, ValueError):
+            lower, upper = 0.0, 1.0
+        perims = [ShapeMixin._flat_perimeter(f) for f in flat_groups]
+        total = sum(perims)
+        if total <= 0.0:
+            return [(lower, upper)] * len(flat_groups)
+        windows = []
+        cum = 0.0
+        for p in perims:
+            c0 = cum / total
+            c1 = (cum + p) / total
+            cum += p
+            span = c1 - c0
+            lo = (lower - c0) / span if span > 0.0 else 0.0
+            hi = (upper - c0) / span if span > 0.0 else 0.0
+            windows.append((max(0.0, min(1.0, lo)),
+                            max(0.0, min(1.0, hi))))
+        return windows
+
     def _send_polygon(self, mob, verts, alpha=1.0, rot_override=None, parent_offset=None):
         w, h = self.win_w, self.win_h
         self._dbg_emit("POLY-IN", "%s nverts=%s alpha=%s" % (
@@ -953,19 +1178,64 @@ class ShapeMixin:
             fo = get_opacity(mob, 'fill', 1.0)
         if progress <= 0 and not has_bounds:
             return
+
+        # A Polygram may hold SEVERAL disjoint vertex groups; drawing them as
+        # one closed polyline invents the edges that join the groups (the
+        # hexagrams in 08_geometry.PolygramFamily came out as a zigzag).  Every
+        # group becomes its own closed subpath -- one group, i.e. every other
+        # shape, takes exactly the code path it took before.
+        groups = self._polygram_groups(mob, verts)
+        flats = [self._polygon_flat(g, w, h, parent_offset, rot, sx, sy)
+                 for g in groups]
+        windows = self._group_windows(flats, progress_lower, progress_upper)
+
+        # `Create` hands us a CUT path: manim's ShowPartial has already replaced
+        # `mob.points` with the drawn prefix, so the stroke must be rebuilt from
+        # that prefix instead of from `get_vertices()`:
+        #
+        # * `get_vertices()` keeps only whole-curve corners, so the pen's
+        #   trailing partial curve was dropped -- early in the draw fewer than
+        #   two corners were left, `_stroke_polyline_with_progress` bailed out
+        #   and NOTHING was stroked (MovingFrameBox: CE 994 yellow px where RTM
+        #   still had 0, i.e. the border sat invisible for a third of its own
+        #   Create and then appeared at once).
+        # * it has to run OPEN: `closed=True` appends the chord from the pen's
+        #   last point back to the path's first one, which drew a diagonal
+        #   across the framebox instead of tracing its perimeter (measured: the
+        #   drawn set was top edge + left edge + hypotenuse, xor 4304 px).
+        #
+        # The group split still runs on the cut corners, so a multi-group
+        # Polygram keeps its subpaths, and the finish is re-appended as the
+        # last corner (a manim polygon repeats its first point there) so a
+        # completed Create keeps its closing edge.  The FILL is rebuilt from
+        # the same cut groups below: native fans it along the perimeter up to
+        # `stroke_progress`, so windowing the already-cut vertices by
+        # `progress` again cut it a second time.
+        stroke_closed = True
+        stroke_flats = flats
+        stroke_windows = windows
+        cut_path = bool(getattr(mob, "_vulkan_points_partial", False))
+        if cut_path:
+            try:
+                cut = np.asarray(mob.get_points())
+            except Exception:
+                cut = None
+            if cut is not None and len(cut) >= 4:
+                nppc = int(getattr(mob, "n_points_per_curve", 4) or 4)
+                corners = cut[::nppc]
+                cut_groups = self._polygram_groups(mob, corners)
+                if cut_groups:
+                    last = cut[-1]
+                    if not np.allclose(np.asarray(cut_groups[-1][-1]), last):
+                        cut_groups[-1] = list(cut_groups[-1]) + [last]
+                    stroke_flats = [
+                        self._polygon_flat(g, w, h, parent_offset, rot, sx, sy)
+                        for g in cut_groups]
+                    stroke_windows = self._group_windows(
+                        stroke_flats, progress_lower, progress_upper)
+                    stroke_closed = False
+
         if fo <= 0:
-            flat = []
-            for v in verts:
-                vx = float(v[0])
-                vy = float(v[1])
-                vz = float(v[2]) if len(v) > 2 else 0.0
-                if parent_offset is not None:
-                    vx += parent_offset[0]
-                    vy += parent_offset[1]
-                vx, vy = manim_to_screen(vx, vy, w, h, vz)
-                vx, vy = self._rotate_point(vx, vy, sx, sy, rot)
-                flat.append(vx)
-                flat.append(vy)
             so = get_opacity(mob, 'stroke', 1.0)
             if so <= 0 or bw <= 0:
                 # `stroke_width=0` means NO stroke, but `so` (the rgba alpha)
@@ -974,44 +1244,56 @@ class ShapeMixin:
                 # GREY_E fill with stroke_width=0; measured +4755 excess ink px
                 # against a 3128 px deficit, d(last) +1.02).
                 return
-            self._stroke_polyline_with_progress(
-                flat, True, progress_lower, progress_upper,
-                int(br * so), int(bg * so), int(bb * so),
-                bw, alpha)
+            for flat, (flat_lower, flat_upper) in zip(stroke_flats,
+                                                       stroke_windows):
+                self._stroke_polyline_with_progress(
+                    flat, stroke_closed, flat_lower, flat_upper,
+                    br, bg, bb,
+                    bw, alpha * so)
         else:
-            flat = []
-            for v in verts:
-                vx = float(v[0])
-                vy = float(v[1])
-                vz = float(v[2]) if len(v) > 2 else 0.0
-                if parent_offset is not None:
-                    vx += parent_offset[0]
-                    vy += parent_offset[1]
-                vx, vy = manim_to_screen(vx, vy, w, h, vz)
-                vx, vy = self._rotate_point(vx, vy, sx, sy, rot)
-                flat.append(vx)
-                flat.append(vy)
             fr, fg, fb = self._fill_color_lit(mob)
-            arr = (ctypes.c_float * len(flat))(*flat)
-            self.dll.AddPolygon(
-                sx, sy, fr, fg, fb, 0, 0, 0, 0.0,
-                len(verts), arr, 0 if has_bounds else progress, alpha * fo, 1
-            )
-            _xs, _ys = flat[0::2], flat[1::2]
-            self._dbg_emit(
-                "POLY", "%s n=%d prog=%s has_bounds=%s emitted_prog=%s "
-                        "alpha=%s fo=%s bbox=[%.1f..%.1f, %.1f..%.1f]"
-                % (type(mob).__name__, len(verts), progress, has_bounds,
-                   (0 if has_bounds else progress), alpha * fo, fo,
-                   min(_xs), max(_xs), min(_ys), max(_ys)))
+            # native fills a polygon with a triangle fan (draw_polygon.c), and
+            # fanning two triangles from ONE origin fills the gap between them
+            # -- each group is its own AddPolygon.
+            #
+            # On a CUT path the fan gets the cut outline and the whole window:
+            # `flats` is built from `get_vertices()`, which keeps only whole
+            # corners (the pen's trailing partial curve is missing, so a
+            # quadrilateral came out a triangle) and `fill_windows` then
+            # re-applied `progress` to vertices manim had already cut.  Measured
+            # on CutPolygonFill / CutQuadFill: mean|d| 3.33 / 2.65 against a
+            # 0.75 baseline.  A window of (0, 1) makes native fan from the
+            # CENTROID (drawn >= perimeter), the origin the static shape takes
+            # too, so there is no jump when the Create completes.
+            fill_flats = stroke_flats if cut_path else flats
+            fill_windows = self._group_windows(
+                fill_flats, 0.0, 1.0 if cut_path else progress)
+            for i, flat in enumerate(fill_flats):
+                arr = (ctypes.c_float * len(flat))(*flat)
+                emitted = 0 if has_bounds else fill_windows[i][1]
+                self.dll.AddPolygon(
+                    sx, sy, fr, fg, fb, 0, 0, 0, 0.0,
+                    len(flat) // 2, arr, emitted, alpha * fo, 1
+                )
+                _xs, _ys = flat[0::2], flat[1::2]
+                self._dbg_emit(
+                    "POLY", "%s n=%d group=%d/%d prog=%s has_bounds=%s "
+                            "emitted_prog=%s alpha=%s fo=%s "
+                            "bbox=[%.1f..%.1f, %.1f..%.1f]"
+                    % (type(mob).__name__, len(flat) // 2, i + 1,
+                       len(fill_flats),
+                       progress, has_bounds, emitted, alpha * fo, fo,
+                       min(_xs), max(_xs), min(_ys), max(_ys)))
             so = get_opacity(mob, 'stroke', 1.0)
             if so > 0 and bw > 0:
                 # `bw <= 0` means `stroke_width=0`: no stroke at all, even though
                 # the rgba alpha reads 1.0 (see the fill-only branch above).
-                self._stroke_polyline_with_progress(
-                    flat, True, progress_lower, progress_upper,
-                    int(br * so), int(bg * so), int(bb * so),
-                    bw, alpha)
+                for flat, (flat_lower, flat_upper) in zip(stroke_flats,
+                                                           stroke_windows):
+                    self._stroke_polyline_with_progress(
+                        flat, stroke_closed, flat_lower, flat_upper,
+                        br, bg, bb,
+                        bw, alpha * so)
 
     def _dot_radius(self, mob, h):
         """PMobject / Point 的点半径（像素）。
@@ -1020,6 +1302,14 @@ class ShapeMixin:
         众数 4px），native 过去是固定半径 4px（面积 4 倍）。这里给 480p/默认视口下
         2px，并按可见高度等比缩放——与描边同一套规则，所以相机 zoom 时点一起放大。
         """
+        # manim draws a PMobject point as a FIXED ~4 px disc -- measured: the
+        # modal lit run is 4 px at BOTH 854x480 and 1920x1080 -- so the radius
+        # must NOT scale with the surface height.  The old `h / 30` term made it
+        # grow with the window: at 1080p that drew 19 px dots against CE's 4 px
+        # and gave PointCloudMobjects 2.2x CE's ink (lit 31272 vs 13992).  Only
+        # the *visible frame height* may scale it, which is what a zooming
+        # camera changes; 16.0 is the 480p-calibrated 2 px radius re-expressed
+        # against the default frame height of 8.
         frame_height = 8.0
         try:
             from real_time_manim.camera_state import get_viewport
@@ -1028,7 +1318,7 @@ class ShapeMixin:
                 frame_height = float(viewport.height) or 8.0
         except Exception:
             pass
-        return max(0.5, (float(h) / 30.0) / frame_height * self._point_width_scale(mob))
+        return max(0.5, (16.0 / frame_height) * self._point_width_scale(mob))
 
     @staticmethod
     def _point_width_scale(mob):
