@@ -254,7 +254,14 @@ __declspec(dllexport) void AddEllipse(float x, float y, float rx, float ry, int 
 }
 
 __declspec(dllexport) void AddPolygon(float x, float y, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, int vert_count, const float* verts, float stroke_progress, float alpha, int close_path) {
-    if (g_polygon_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS && vert_count <= MAX_POLYGON_VERTS) {
+    /* The upper bound alone was not enough: a NEGATIVE vert_count passed it
+       (it is < MAX_POLYGON_VERTS) and then fed
+       memcpy(dst, verts, sizeof(float) * vert_count * 2) a value that
+       promotes to a ~4 GB size_t -- a guaranteed crash.  A polygon also
+       cannot be drawn with fewer than 3 vertices. */
+    if (verts == NULL) return;
+    if (vert_count < 3 || vert_count > MAX_POLYGON_VERTS) return;
+    if (g_polygon_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         PolygonObj* p = &g_polygons[g_polygon_count];
         p->x = x; p->y = y;
         p->r = r; p->g = g; p->b = b;
