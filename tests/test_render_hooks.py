@@ -67,10 +67,20 @@ def test_create_progress_reaches_one():
     assert mob._vulkan_progress == pytest.approx(1.0, abs=1e-6)
 
 
-def test_fade_in_writes_the_opacity_registry():
+def test_fade_in_leaves_the_opacity_in_the_arrays_only():
+    """manim's FadeIn writes the fade into `*_rgbas` -- the registry must not repeat it.
+
+    `_send_impl` computes `a = parent_alpha * get_anim_opacity(mob)` and every
+    sender then folds in the mobject's own array alpha (`alpha * fo`,
+    `stroke_alpha = min(1, so * a)`).  Registering the animated value here as
+    well applied the fade twice: measured end to end on FadeProbe, at raw alpha
+    0.267 CE peaks at 20/255 and RTM at 1/255 -- `0.084` against `0.084 ** 2`.
+    """
     mob = Square()
     prepared(FadeIn(mob, run_time=1.0), 0.5)
-    assert get_anim_opacity(mob) < 1.0        # was 1.0 (full opacity) before hooks
+    in_arrays = float(mob.stroke_rgbas[:, 3].max())
+    assert 0.0 < in_arrays < 1.0                   # the fade IS in the arrays
+    assert get_anim_opacity(mob) == pytest.approx(1.0)   # ... and only there
 
 
 def test_transform_selects_the_point_path_then_releases_it():
@@ -88,11 +98,60 @@ def test_rotate_sets_the_pivot():
     assert getattr(mob, "_rotation_about_point", None) is not None
 
 
-def test_grow_from_center_sets_scale_and_point():
+def test_grow_from_center_leaves_the_points_in_charge():
+    """manim's grows are Transforms: `interpolate` already scaled the points.
+
+    `_write_grow` must NOT stamp `_grow_scale` on top of that -- the senders
+    would apply the growth a second time and draw `alpha * smooth(alpha)`
+    where CE draws `smooth(alpha)` (08_geometry.PolygramFamily: the Rectangle
+    border came out 144 px against CE's 212 at t=0.8 s).
+    """
     mob = Square()
-    prepared(GrowFromCenter(mob, run_time=1.0), 0.3)
-    assert mob._grow_scale == pytest.approx(0.3, abs=0.02)
-    assert getattr(mob, "_grow_point", None) is not None
+    anim = prepared(GrowFromCenter(mob, run_time=1.0), 0.3)
+    assert not hasattr(mob, "_grow_scale")
+    assert not hasattr(mob, "_grow_point")
+    # ... and the points themselves carry the eased growth, as CE draws them.
+    full = Square().width
+    assert mob.width == pytest.approx(full * anim.rate_func(0.3), rel=0.05)
+
+
+@pytest.mark.parametrize("case", ["GrowFromCenter", "GrowFromEdge", "GrowFromPoint",
+                                  "GrowArrow", "SpinInFromNothing"])
+def test_no_manim_grow_stamps_a_scale_channel(case):
+    """Every class in the grow bucket is a Transform -- none may stamp `_grow_scale`.
+
+    ``SpinInFromNothing`` also carries ``angle``, which ``_write_grow`` used to
+    turn into ``_grow_rot``: manim's ``spiral_path`` already rotates the points,
+    so that one double-rotated too.
+    """
+    import manim.animation.growing as growing
+    from manim import DOWN, LEFT, RIGHT, Arrow
+
+    if case == "GrowArrow":
+        mob, kwargs = Arrow(LEFT, RIGHT), {}
+    else:
+        mob = Square()
+        kwargs = {"edge": DOWN} if case == "GrowFromEdge" else (
+            {"point": mob.get_center()} if case == "GrowFromPoint" else {})
+    anim = prepared(getattr(growing, case)(mob, run_time=1.0, **kwargs), 0.5)
+    assert not hasattr(mob, "_grow_scale"), "%s double-scaled its points" % case
+    assert not hasattr(mob, "_grow_rot"), "%s double-rotated its points" % case
+
+
+def test_flash_keeps_the_grow_channel():
+    """Flash/Circumscribe reach `_write_grow` without moving any point.
+
+    They are the reason the channel still exists: for them it is the only
+    thing that can make a shape grow.  Flash's own mobject is the VGroup of
+    rays it draws around the flashed point.
+    """
+    from manim import Flash
+
+    flash = Flash([0, 0, 0], run_time=1.0)
+    prepared(flash, 0.4)
+    lines = flash.mobject
+    assert hasattr(lines, "_grow_scale")
+    assert lines._grow_scale == pytest.approx(0.4)
 
 
 def test_composite_animation_hooks_every_child():
@@ -100,7 +159,34 @@ def test_composite_animation_hooks_every_child():
     group = AnimationGroup(Create(sq, run_time=1.0), FadeIn(ci, run_time=1.0))
     prepared(group, 0.5)
     assert getattr(sq, "_vulkan_progress", 1.0) < 1.0
-    assert get_anim_opacity(ci) < 1.0
+    # the fade reaches the child through its rgba arrays, not the registry
+    assert float(ci.stroke_rgbas[:, 3].max()) < 1.0
+    assert get_anim_opacity(ci) == pytest.approx(1.0)
+
+
+def test_a_fading_dashed_line_keeps_the_registry():
+    """The one shape whose drawn primitive ignores its own arrays.
+
+    RTM submits a single `AddDashedLine` built from the container's start/end
+    while CE strokes the dash children, and those children's arrays are what
+    manim fades -- so the animation's value has to reach the container through
+    the registry.  Measured without it: AddDashedLine at alpha 1.0 on frame 0,
+    luma 0.0954 where CE has 0.0.  `_family` returns descendants only, so the
+    DashedLine being the animation's own target is the case that used to be
+    missed.
+    """
+    from manim import DashedLine
+
+    dashed = DashedLine([-2, 0, 0], [2, 0, 0])
+    anim = prepared(FadeIn(dashed, run_time=1.0), 0.5)
+    # manim's fade lands on the dash children; the container's own arrays stay
+    # opaque, so nothing in the arrays can carry it into the primitive
+    assert float(dashed.stroke_rgbas[:, 3].max()) == pytest.approx(1.0)
+    assert dashed.submobjects
+    kids = [float(k.stroke_rgbas[:, 3].max()) for k in dashed.submobjects]
+    assert 0.0 < max(kids) < 1.0
+    assert get_anim_opacity(dashed) == pytest.approx(
+        float(anim.rate_func(0.5)), rel=0.02)                 # ... RTM must too
 
 
 def test_install_is_idempotent_and_clear_restores():

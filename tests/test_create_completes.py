@@ -96,22 +96,37 @@ def _scene_with(vg):
 
 
 def _frames(rec, n):
-    """Per-frame total stroke length, bucketed onto the n children by x."""
+    """Per-frame total stroke length, bucketed onto the n children by x.
+
+    Strokes arrive as ``AddLine`` (one quad per edge) or, since polylines
+    moved to mitred strips, as ``AddLineStrip`` carrying a whole polyline's
+    consecutive point pairs -- both count.
+    """
     centres = _centres(n)
     out, cur = [], None
+
+    def _add(x0, y0, x1, y1):
+        cx = (x0 + x1) / 2.0
+        j = min(range(n), key=lambda k: abs(cx - centres[k]))
+        cur[j] += math.hypot(x1 - x0, y1 - y0)
+
     for name, args in rec.calls:
         if name == 'ClearShapes':
             if cur is not None:
                 out.append(cur)
             cur = [0.0] * n
             continue
-        if name != 'AddLine' or cur is None:
+        if cur is None:
             continue
-        x0, y0, x1, y1 = (float(args[0]), float(args[1]),
-                          float(args[2]), float(args[3]))
-        cx = (x0 + x1) / 2.0
-        j = min(range(n), key=lambda k: abs(cx - centres[k]))
-        cur[j] += math.hypot(x1 - x0, y1 - y0)
+        if name == 'AddLine':
+            _add(float(args[0]), float(args[1]),
+                 float(args[2]), float(args[3]))
+        elif name == 'AddLineStrip':
+            pts = list(args[0])
+            m = int(args[2])
+            for i in range(m - 1):
+                _add(float(pts[2 * i]), float(pts[2 * i + 1]),
+                     float(pts[2 * i + 2]), float(pts[2 * i + 3]))
     if cur is not None:
         out.append(cur)
     return out

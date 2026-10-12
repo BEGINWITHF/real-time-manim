@@ -27,6 +27,7 @@ Pure Python -- captures the DLL calls, no GPU work, no ffmpeg::
     python -X utf8 -m pytest tests/test_polygram_groups.py -q
 """
 
+import math
 import os
 import sys
 
@@ -68,12 +69,20 @@ def plain_polygon():
 def _capture(mob):
     """Send `mob` through the real dispatch; return (segments, polygons, size).
 
-    `segments` is a set of unordered rounded point pairs -- the distinct edges
-    native was asked to stroke -- and `polygons` the raw AddPolygon arg tuples.
+    `segments` is a set of unordered point pairs -- the distinct edges native
+    was asked to stroke -- and `polygons` the raw AddPolygon arg tuples.
+
+    Strokes arrive as ``AddLine`` (one quad) or ``AddLineStrip`` (one mitred
+    strip per width layer, which carries its edges as consecutive point
+    pairs).  A strip's coordinates went through ctypes ``c_float``, so its
+    endpoints are snapped back onto manim's own float64 screen points before
+    the set comparison -- otherwise the 3-decimal rounding flips at ~6e-5 and
+    the equality flakes.
     """
     renderer = vb.MLWindow(854, 480)
     lines, polys = [], []
-    renderer.dll.AddLine = lambda *a: lines.append(a)
+    renderer.dll.AddLine = lambda *a: lines.append(("AddLine", a))
+    renderer.dll.AddLineStrip = lambda *a: lines.append(("AddLineStrip", a))
     renderer.dll.AddPolygon = lambda *a: polys.append(a)
     try:
         renderer._send(mob)
@@ -81,10 +90,29 @@ def _capture(mob):
     finally:
         renderer.close()
 
+    expected = _expected_edges(mob, size)
+    anchor = [p for edge in expected for p in edge]
+
+    def snap(p):
+        best, bd = None, 1e9
+        for q in anchor:
+            d = math.hypot(p[0] - q[0], p[1] - q[1])
+            if d < bd:
+                best, bd = q, d
+        return best if bd <= 0.05 else (round(p[0], 3), round(p[1], 3))
+
     segments = set()
-    for line in lines:
-        x0, y0, x1, y1 = line[:4]
-        segments.add(frozenset({_round(x0, y0, size), _round(x1, y1, size)}))
+    for name, a in lines:
+        if name == "AddLine":
+            x0, y0, x1, y1 = a[:4]
+            edges = [((float(x0), float(y0)), (float(x1), float(y1)))]
+        else:
+            pts = [float(v) for v in a[0]]
+            m = int(a[2])
+            edges = [((pts[2 * i], pts[2 * i + 1]),
+                      (pts[2 * i + 2], pts[2 * i + 3])) for i in range(m - 1)]
+        for p, q in edges:
+            segments.add(frozenset({snap(p), snap(q)}))
     return segments, polys, size
 
 
