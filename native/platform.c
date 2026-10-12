@@ -551,6 +551,17 @@ static void FreeScreenshotBuffer(void) {
 // ---------------------------------------------------------------------------
 static uint32_t g_ss_frame = 0;     // in-flight slot of that frame (its fence)
 
+// The size, in pixels, of the next readback: this is the SWAPCHAIN extent, not
+// anything the caller guessed from a window-message snapshot.  Callers sizing a
+// buffer for SaveScreenshotRaw must use this (or be prepared for the
+// out_cap-too-small answer) -- see SaveScreenshotRaw.
+__declspec(dllexport) int Vulkan_GetReadbackSize(int *w, int *h) {
+    if (!g_is_ready || !g_swapchain) return 0;
+    if (w) *w = (int)g_swapchain_ext.width;
+    if (h) *h = (int)g_swapchain_ext.height;
+    return 1;
+}
+
 __declspec(dllexport) void Vulkan_RequestReadback(void) {
     if (!g_is_ready || !g_swapchain) return;
     int w = (int)g_swapchain_ext.width;
