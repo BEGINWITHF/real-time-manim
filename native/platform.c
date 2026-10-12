@@ -791,32 +791,29 @@ __declspec(dllexport) int SaveScreenshot(const char *path) {
 }
 
 // SaveScreenshotRaw fills a caller-provided buffer with raw BGR pixels
-// (no 54-byte BMP header, no disk I/O). rowBytes == w*3 (1280x720 has no
-// padding). Returns 1 on success and sets *out_size to w*h*3.
-__declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int *out_size) {
+// (no 54-byte BMP header, no disk I/O).  ``out_cap`` is the caller buffer's
+// size in BYTES and is NOT optional: the swapchain extent can shrink under us
+// (the user drags the window smaller), and the old two-argument form wrote
+// rowBytes*h bytes of CURRENT extent into a buffer the caller sized from a
+// win_w/win_h snapshot taken earlier -- a heap overflow of the difference.
+// Returns 1 on success and sets *out_size to w*h*3.
+__declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int out_cap, int *out_size) {
     if (!g_is_ready || !g_swapchain || !out) return 0;
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
     if (w <= 0 || h <= 0) return 0;
 
+    int rowBytes = ((w * 3 + 3) & ~3);
+    VkDeviceSize need = (VkDeviceSize)rowBytes * (VkDeviceSize)h;
+    if (out_size) *out_size = (int)need;    // also the "please retry with this" hint
+    if (out_cap <= 0 || (VkDeviceSize)out_cap < need) return 0;
+
     VkDeviceSize img_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (!EnsureScreenshotBuffer(img_size)) return 0;
 
-    if (g_ss_copied) {
-        // Reliable path: the frame copied its own image before present; its
-        // fence tells us when the copy is done (host-coherent memory, no flush).
-        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
-        g_ss_copied = 0;
-    } else {
-        // Fallback: the last presented image, copied after the fact.  The spec
-        // leaves its content undefined (the presentation engine owns it) and it
-        // has been observed to come back stale -- request a readback before the
-        // draw when the exact frame matters.
-        CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
-    }
+    if (!ResolveScreenshotSource(w, h)) return 0;
 
-    int rowBytes = ((w * 3 + 3) & ~3);
-    ConvertBGRAtoBGR(w, h, out);
+    if (!ConvertBGRAtoBGR(w, h, out)) return 0;
     if (out_size) *out_size = rowBytes * h;
     return 1;
 }
