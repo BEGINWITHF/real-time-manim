@@ -232,14 +232,14 @@ class Timeline:
                 # stored.  manim-native classes such as AddTextWordByWord read
                 # it, so the timeline path has to do the same (lazy import: this
                 # module is imported by vulkan_bind).
-                from real_time_manim.vulkan_bind import _setup_anim_scene
+                from real_time_manim.window.scene import _setup_anim_scene
                 _setup_anim_scene(anim, self.scene)
                 anim.begin()          # manim's begin() takes no time argument
             else:
                 anim.begin(0.0)       # our animations take an absolute start time
             # Phase 3: a manim-native animation writes no render channels of its
             # own, so install the adapter that derives them from its state.
-            from real_time_manim.render_hooks import install_hooks
+            from real_time_manim.render.hooks import install_hooks
             install_hooks(anim)
             begun.append(entry)
         self.duration = max(
@@ -292,6 +292,9 @@ class Timeline:
         With ``readback=True`` the frame also copies itself into the readback
         buffer before it is presented, so a following read returns exactly this
         frame (see ``MLWindow.request_readback``).
+
+        Returns False when the frame could not be drawn (window closed), True
+        otherwise -- see the ``tick()`` call at the end.
         """
         self.evaluate(t)
         # Mobject updaters are stateful, so they accumulate only while the
@@ -300,13 +303,16 @@ class Timeline:
         # state itself stays a pure function of t, so random access is intact.
         dt = 0.0 if (self._last_t is None or t <= self._last_t) else t - self._last_t
         if dt > 0.0:
-            from real_time_manim.vulkan_bind import _drive_mobject_updaters
+            from real_time_manim.window.scene import _drive_mobject_updaters
             _drive_mobject_updaters(self.scene, dt)
         self._last_t = t
         self.window.sync(self.scene)
         if readback:
             self.window.request_readback()
-        self.window.tick()
+        # tick() answers False when the window is gone (WM_QUIT): the frame was
+        # NOT drawn, so the caller must stop walking the schedule instead of
+        # capturing a picture of nothing.
+        return bool(self.window.tick())
 
     def screenshot_at(self, t, path):
         self.render_at(t, readback=True)
@@ -327,12 +333,20 @@ class Timeline:
         anims = [e.get("anim") for e in getattr(self, "_entries", [])]
         n_frames = ce_frame_count(anims, duration, fps)
         tmpdir = tempfile.mkdtemp(prefix="rtm_timeline_")
+        # Only frames that were actually drawn may go to ffmpeg: a closed
+        # window makes ``render_at`` answer False, and looping on would have
+        # muxed `n_frames` pictures out of the handful that ever existed.
+        from real_time_manim.window.paint_order import native_dll_is_live
+        live = native_dll_is_live(self.window.dll)
+        written = 0
         try:
             for k in range(n_frames):
                 t = k / float(fps)
                 frame_start = time.perf_counter()
-                self.render_at(t, readback=True)
+                if not self.render_at(t, readback=True) and live:
+                    break
                 self.window.screenshot(os.path.join(tmpdir, f"f_{k:05d}.bmp"))
+                written += 1
                 if realtime:
                     left = (1.0 / fps) - (time.perf_counter() - frame_start)
                     if left > 0:
@@ -341,7 +355,7 @@ class Timeline:
                 ["ffmpeg", "-y", "-loglevel", "error",
                  "-framerate", str(fps),
                  "-i", os.path.join(tmpdir, "f_%05d.bmp"),
-                 "-frames:v", str(n_frames),
+                 "-frames:v", str(written),
                  "-c:v", "libx264", "-pix_fmt", "yuv420p", path],
                 check=True)
         finally:

@@ -204,24 +204,27 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
 int Render_DrawFrame(uint32_t vertex_count) {
     if (!g_is_ready) return 0;
 
-    vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_current_frame], VK_TRUE, UINT64_MAX);
-    vkResetFences(g_dev, 1, &g_in_flight_fences[g_current_frame]);
-
     uint32_t img_idx;
-#ifdef _WIN32
-    vkAcquireNextImageKHR(g_dev, g_swapchain, UINT64_MAX,
-                          g_img_avail_sems[g_current_frame], VK_NULL_HANDLE, &img_idx);
-#else
+    // Both platforms, and BEFORE the fence dance below: OUT_OF_DATE happens on
+    // resize/minimize/RDP reconnect, and on failure vkAcquireNextImageKHR does
+    // NOT write img_idx (nor signal the semaphore), so indexing
+    // g_framebuffers[img_idx] / g_last_img_idx with it reads uninitialised
+    // memory and crashes.  Waiting/resetting the fence first left it reset with
+    // nothing to sign it again, so the next wait on that slot blocked forever
+    // -- the skip path has to leave the fence alone.  The next Vulkan_Tick
+    // size check rebuilds the swapchain; skip this frame instead.
     VkResult ar = vkAcquireNextImageKHR(g_dev, g_swapchain, UINT64_MAX,
-                          g_img_avail_sems[g_current_frame], VK_NULL_HANDLE, &img_idx);
+                      g_img_avail_sems[g_current_frame], VK_NULL_HANDLE, &img_idx);
     if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) {
-        // Window is mid-resize: the next Vulkan_Tick size check rebuilds the
-        // swapchain.  Skip this frame instead of submitting stale geometry.
         if (ar == VK_ERROR_OUT_OF_DATE_KHR) g_framebuffer_resized = true;
         return 0;
     }
-#endif
     g_last_img_idx = img_idx;
+
+    // The image is ours now, but the command buffer that will render into it
+    // may still be in flight on this slot: wait for it to finish, then reset.
+    vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_current_frame], VK_TRUE, UINT64_MAX);
+    vkResetFences(g_dev, 1, &g_in_flight_fences[g_current_frame]);
 
     vkResetCommandBuffer(g_cmd_bufs[g_current_frame], 0);
     RecordCommandBuffer(g_cmd_bufs[g_current_frame], img_idx, vertex_count);

@@ -198,3 +198,70 @@ def test_straight_rectangle_still_takes_the_polygon_path(renderer):
     assert "_send_vmobject" not in tried, (
         "a plain Rectangle is going through the generic renderer "
         "(routes: %s)" % tried)
+
+
+def open_partial_square(cut=0.5):
+    """A Square cut open by manim's ``pointwise_become_partial``, untracked.
+
+    This is exactly what ``AnimatedBoundary``'s per-frame updater produces:
+    the anchors no longer return to the first, but no ShowPartial tagged the
+    cut, so neither ``_vulkan_progress`` nor ``_vulkan_points_partial`` is set.
+    """
+    sq = Square(side_length=2)
+    sq.pointwise_become_partial(Square(side_length=2), 0.0, cut)
+    return sq
+
+
+def test_open_partial_square_reaches_generic_renderer(renderer):
+    """Regression: the AnimatedBoundary diagonal.
+
+    ``_send_polygon`` closes the vertex ring it is handed, so an OPEN path
+    (anchors that no longer return to the first) got a spurious chord from
+    the pen's last point back to the first -- the diagonal that slashed
+    across AnimatedBoundary's framebox.  ``_send_polygon`` already rebuilds a
+    *tagged* cut open via ``_vulkan_points_partial``, but a cut made outside
+    a tracked ShowPartial never carries the tag, so an untracked open path
+    must reach the point path, which strokes the points actually there.
+    """
+    partial = open_partial_square()
+    pts = partial.get_points()
+    assert vb.MLWindow._edges_are_straight(pts) is True, (
+        "the partial's edges are no longer straight, so it would fall to the "
+        "generic renderer for a different reason and this test would prove "
+        "nothing")
+    assert not (abs(pts[0][0] - pts[-1][0]) < 1e-4
+                and abs(pts[0][1] - pts[-1][1]) < 1e-4), (
+        "the partial path closes on itself, so no closing chord would be "
+        "drawn and this test would prove nothing")
+
+    tried = dispatch_routes(renderer, partial)
+    assert "_send_polygon" not in tried, (
+        "an open partial Square still went through _send_polygon, which "
+        "closes the vertex ring and draws the spurious diagonal chord "
+        "(routes: %s)" % tried)
+    assert "_send_square" not in tried, (
+        "an open partial Square was rebuilt as a full quad from side_length "
+        "(routes: %s)" % tried)
+    assert "_send_vmobject" in tried, (
+        "the open partial Square reached no renderer at all (routes: %s)"
+        % tried)
+
+
+def test_tracked_partial_square_keeps_the_polygon_path(renderer):
+    """Control: a tracked ShowPartial cut (Create/Write) is untouched.
+
+    render_hooks tags those with ``_vulkan_progress``/``_vulkan_points_partial``
+    and ``_send_polygon`` rebuilds the cut prefix OPEN, so the fast path must
+    stay in use for them -- only the untracked cut is rerouted.
+    """
+    partial = open_partial_square()
+    partial._vulkan_progress = 0.5
+    partial._vulkan_points_partial = True
+
+    tried = dispatch_routes(renderer, partial)
+    assert "_send_polygon" in tried, (
+        "a tracked partial Square lost the polygon fast path (routes: %s)"
+        % tried)
+    assert "_send_vmobject" not in tried, (
+        "a tracked partial Square is being rendered through the generic "
+        "bezier path (routes: %s)" % tried)

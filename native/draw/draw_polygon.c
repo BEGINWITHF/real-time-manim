@@ -14,7 +14,13 @@ void BuildVerticesFromPolygons(const PolygonObj* polygons, int count) {
         if (sp > 1.0f) sp = 1.0f;
         if (sp < 0.0f) sp = 0.0f;
 
-        float edge_lens[64];
+        /* Sized from MAX_POLYGON_VERTS, not a literal 64: that macro is
+           `#ifndef`-guarded (shared_types.h:8) precisely so a build may widen it,
+           and `PolygonObj.verts` is `MAX_POLYGON_VERTS * 2` floats.  A widened
+           build would then hand this loop n > 64 and it would write past the
+           end of a 64-entry stack array -- the same class of bug as the
+           `vert_count > MAX_POLYGON_VERTS` guard now on the submission side. */
+        float edge_lens[MAX_POLYGON_VERTS];
         float perimeter = 0.0f;
         for (int j = 0; j < n; j++) {
             int j2 = (j + 1) % n;

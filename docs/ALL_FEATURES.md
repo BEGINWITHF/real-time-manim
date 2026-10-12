@@ -519,3 +519,73 @@ Recording and automatic cleanup of transient `media/` output are handled by the
 
 Both accept a Scene subclass/instance/callable, and clean up transient media by
 default. See the wiki's Recording page for the full option set.
+
+---
+
+## Render verification (2026-10-11)
+
+Beyond static source checks, the following were verified by **actually rendering**
+through the Vulkan pipeline (`fast_record_scene` → BMP frames → numpy checks for
+non-blank + per-frame change). Test suites: `tests/test_phase1a_animations.py`,
+`tests/test_phase2_graphics.py`, `tests/test_phase5_tools.py` (77 cases;
+`pytest tests -q` = 397 passed).
+
+- **Manim-native animations via `render_hooks`** all animate correctly:
+  `LaggedStart`, `LaggedStartMap`, `ComplexHomotopy`, `SmoothedVectorizedHomotopy`,
+  `PhaseFlow`, `Broadcast`, `AddTextLetterByLetter`, `RemoveTextLetterByLetter`,
+  `UpdateFromFunc`, `UpdateFromAlphaFunc`, `MaintainPositionRelativeTo`,
+  `TracedPath`, `AnimatedBoundary`.
+  - `AddTextWordByWord` renders static on a plain `Text` **in manim CE too** (it
+    iterates characters, which have no submobjects, so `ShowIncreasingSubsets`
+    hides/reveals an empty list) — faithful, not an RTM gap.
+- **Graphics/text** (generic bezier fallback draws them correctly): `Angle`,
+  `SurroundingRectangle`, `LabeledArrow`, `LabeledLine`, `Brace`, `Matrix`,
+  `Table`, `DecimalNumber`, `Integer`, `Variable`, `Code`, `MarkupText`,
+  `Paragraph`, `Star`, `Title`, `BulletedList`, `Union`, MathTex fragments,
+  `SVGMobject`, `ImageMObject`.
+  - `LabeledArrow`/`LabeledLine`: pass points via `start=`/`end=` kwargs;
+    positional points hit an upstream manim 0.21 bug (`labeled.py:93`).
+- **Coordinate systems / charts**: `NumberLine`, `Axes`, `Axes.plot`,
+  `NumberPlane`, `ComplexPlane`, `PolarPlane`, `ThreeDAxes`, `BarChart`,
+  `SampleSpace`, plus minor methods: NumberLine `n2p`/`p2n`/`add_numbers`/`add_ticks`,
+  `get_horizontal_line`/`get_vertical_line`/`plot_line_graph`,
+  `get_graph_label`/`get_T_label`/`get_vertical_lines_to_graph`/`get_secant_slope_group`/`plot_implicit_curve`,
+  `plot_derivative_graph`/`plot_antiderivative_graph`/`input_to_graph_point`/`slope_of_tangent`,
+  `get_area`/`get_riemann_rectangles`, `LogBase`/`LinearBase` scaling.
+- **Graph / vector fields**: `Graph`, `DiGraph`, `ArrowVectorField`, `StreamLines`,
+  plus graph edit: `g[k]`, `add_edges`, `remove_edges`, `change_layout`.
+- **Table methods**: `add_highlighted_cell`, `get_cell`, `get_highlighted_cell`, `Table.create`.
+- **Labels**: `Label`, `LabeledPolygram` (plus `LabeledArrow`/`LabeledLine` above).
+- **Rate functions**: manim 0.21 exposes 55; RTM passes `rate_func` through as a
+  plain callable, so all work (including the `ease_*` family and the
+  `not_quite_there` / `squish_rate_func` factories).
+- **Colors**: `ManimColor`, `interpolate_color`, `color_to_rgb`, `rgb_to_color`;
+  fill-color interpolation and `Indicate(color=)` tinting render correctly.
+
+### Fixed: AnimatedBoundary's closing-chord diagonal (2026-10-11)
+
+Rendering the feature-demo videos surfaced a real defect (not merely
+"unverified"): `AnimatedBoundary` drew a **spurious diagonal** slashing across
+its framebox instead of tracing the perimeter. Root cause, in the
+`Square`/`Rectangle` quad dispatch (`vulkan_bind._send_impl`):
+
+- `manim`'s `pointwise_become_partial` — what `AnimatedBoundary`'s per-frame
+  updater calls — cuts the anchors so the path no longer returns to the first
+  (an **open** path). A *tracked* `ShowPartial` (`Create`/`Write`) cut is tagged
+  `_vulkan_progress`/`_vulkan_points_partial`, and `_send_polygon` rebuilds that
+  prefix **open**. An untracked cut (the boundary updater) carries no tag.
+- The flat-quad fast path routes any straight-edged `Square` to `_send_polygon`,
+  which **closes the vertex ring** — so the open L got a chord from the pen's
+  last point back to the first: the diagonal.
+
+Fix: an **untracked open** `Square`/`Rectangle` (straight edges, but first
+anchor ≠ last, and no `_vulkan_progress`) is now routed to the generic point
+path `_send_vmobject`, which strokes the points that are actually there.
+Tracked cuts keep the polygon fast path; closed quads are untouched.
+
+- Regression pins: `tests/test_quad_dispatch.py`
+  (`test_open_partial_square_reaches_generic_renderer`,
+  `test_tracked_partial_square_keeps_the_polygon_path`) and the pixel-level
+  `tests/test_open_path_chord.py::test_open_partial_square_draws_no_closing_chord`
+  (asserts the closing-chord region stays empty).
+- `pytest tests -q` = **421 passed**; `demo_out/demo_animations.mp4` re-rendered.

@@ -59,6 +59,17 @@ VkSemaphore *g_render_done_sems = NULL;
 
 VkFence *g_in_flight_fences = NULL;
 
+/* How many entries `g_img_avail_sems` / `g_render_done_sems` /
+   `g_in_flight_fences` / `g_cmd_bufs` actually hold.  These four are sized from
+   the swapchain's image count, and `CreateSwapchain` is free to return a
+   DIFFERENT count on a rebuild (the spec allows the implementation to pick its
+   own, and drivers do change it when the window changes display or is
+   maximised).  `RecreateSwapchain` used to rebuild only the framebuffers and
+   image views, so a rebuild that grew the image count left `g_current_frame`
+   walking off the end of the semaphore/fence/command-buffer arrays -- see
+   `EnsurePerFrameObjects`. */
+uint32_t g_per_frame_count = 0;
+
 VkBuffer g_vert_buf = VK_NULL_HANDLE;
 
 VkDeviceMemory g_vert_buf_mem = VK_NULL_HANDLE;
@@ -81,6 +92,14 @@ void *g_readback_map = NULL;
 #endif
 
 bool g_is_ready = false;
+
+/* MSAA_SAMPLE_COUNT is a COMPILE-TIME request (shared_types.h), but the device
+   has the last word: `vkCreateImage`/`vkCreateRenderPass`/`vkCreateGraphics-
+   Pipeline` all fail if the requested count is not in
+   `framebufferColorSampleCounts`.  Integrated and virtualised GPUs commonly top
+   out at 4 or 2, so honouring the literal 8 there meant no renderer at all
+   instead of slightly softer edges.  Resolved once by ResolveMSAASamples. */
+VkSampleCountFlagBits g_msaa_samples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
 
 uint32_t g_current_frame = 0;
 
@@ -134,7 +153,12 @@ uint32_t FindMemoryType(uint32_t type_filter, VkMemoryPropertyFlags props) {
 
     fprintf(stderr, "Failed to find suitable memory type!\n");
 
-    exit(-1);
+    /* NOT exit(): this runs inside a DLL loaded by the Python interpreter, so
+       exit() tears down the whole process -- no traceback, no flush of stdout,
+       and any caller's try/except is bypassed.  UINT32_MAX is not a legal
+       memory-type index, so every consumer below fails its allocation and
+       reports instead of killing the host. */
+    return UINT32_MAX;
 
 }
 
@@ -172,7 +196,7 @@ void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
 
 }
 
-static void CreateInstance(void) {
+static int CreateInstance(void) {
 
     VkApplicationInfo app_info = {0};
 
@@ -211,7 +235,7 @@ static void CreateInstance(void) {
 
         fprintf(stderr, "Failed to create Vulkan instance!\n");
 
-        exit(-1);
+        return 0;
 
     }
 #else
@@ -241,14 +265,15 @@ static void CreateInstance(void) {
 
         fprintf(stderr, "Failed to create Vulkan instance!\n");
 
-        exit(-1);
+        return 0;
 
     }
 #endif
 
+    return 1;
 }
 
-static void CreateSurface(void) {
+static int CreateSurface(void) {
 
 #ifdef _WIN32
     VkWin32SurfaceCreateInfoKHR ci = {0};
@@ -263,7 +288,7 @@ static void CreateSurface(void) {
 
         fprintf(stderr, "Failed to create Win32 surface!\n");
 
-        exit(-1);
+        return 0;
 
     }
 #else
@@ -277,21 +302,27 @@ static void CreateSurface(void) {
 
         fprintf(stderr, "Failed to create Metal surface!\n");
 
-        exit(-1);
+        return 0;
 
     }
 #endif
+    return 1;
 }
 
-static void PickPhysicalDevice(void) {
+static int PickPhysicalDevice(void) {
 
     uint32_t count = 0;
 
     vkEnumeratePhysicalDevices(g_inst, &count, NULL);
 
-    if (count == 0) { fprintf(stderr, "No GPU found!\n"); exit(-1); }
+    /* NOT exit(): see FindMemoryType.  `Render_Init` propagates this and
+       `Vulkan_InitEx` answers 0, which Python raises as a catchable
+       RuntimeError ("Vulkan_Init failed") instead of killing the process. */
+    if (count == 0) { fprintf(stderr, "No GPU found!\n"); return 0; }
 
     VkPhysicalDevice *devs = malloc(sizeof(VkPhysicalDevice) * count);
+
+    if (!devs) { fprintf(stderr, "Out of memory picking a GPU!\n"); return 0; }
 
     vkEnumeratePhysicalDevices(g_inst, &count, devs);
 
@@ -299,6 +330,7 @@ static void PickPhysicalDevice(void) {
 
     free(devs);
 
+    return 1;
 }
 
 static void CreateLogicalDevice(void) {
@@ -371,13 +403,51 @@ void CreateSwapchain(void) {
 
     sci.imageArrayLayers = 1;
 
-#ifdef _WIN32
-    sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-#else
-    // The readback path copies the swapchain image inside the draw command
-    // buffer (MoltenVK forbids reads after present), so TRANSFER_SRC is needed.
+    // The readback path (Platform_RecordReadbackCopy / CopySwapchainImageToBuffer)
+    // copies the swapchain image with vkCmdCopyImageToBuffer, so TRANSFER_SRC is
+    // required on EVERY platform -- omitting it on Windows was a spec violation
+    // (VUID-vkCmdCopyImageToBuffer-image-01995/01996) that worked only because
+    // drivers do not enforce it.  Mask against what the surface actually
+    // supports: an unsupported usage bit makes swapchain creation fail outright.
     sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-#endif
+    {
+        VkSurfaceCapabilitiesKHR caps;
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_phys_dev, g_surface, &caps) == VK_SUCCESS) {
+            sci.imageUsage &= caps.supportedUsageFlags;
+
+            // The extent and image count are not ours to choose: the spec
+            // requires `imageExtent` to lie inside
+            // [minImageExtent, maxImageExtent] and `minImageCount` to be at
+            // least `minImageCount` (VUID-VkSwapchainCreateInfoKHR-imageExtent-
+            // 01274 / -minImageCount-01272), and creation FAILS otherwise.
+            // `g_swapchain_ext` is the client rect, which under Windows DPI
+            // scaling can exceed what the surface allows, so clamp it here
+            // rather than let vkCreateSwapchainKHR reject it.  A
+            // `currentExtent` that is not UINT32_MAX pins the size outright.
+            if (caps.currentExtent.width != UINT32_MAX) {
+                sci.imageExtent.width  = caps.currentExtent.width;
+                sci.imageExtent.height = caps.currentExtent.height;
+            } else {
+                if (sci.imageExtent.width  < caps.minImageExtent.width)
+                    sci.imageExtent.width = caps.minImageExtent.width;
+                if (sci.imageExtent.width  > caps.maxImageExtent.width)
+                    sci.imageExtent.width = caps.maxImageExtent.width;
+                if (sci.imageExtent.height < caps.minImageExtent.height)
+                    sci.imageExtent.height = caps.minImageExtent.height;
+                if (sci.imageExtent.height > caps.maxImageExtent.height)
+                    sci.imageExtent.height = caps.maxImageExtent.height;
+            }
+            // Keep the swapchain's stored extent in step with what was
+            // actually created: every projection (ToNDC) and the readback
+            // buffer size are derived from `g_swapchain_ext`.
+            g_swapchain_ext = sci.imageExtent;
+
+            if (caps.minImageCount > 0 && sci.minImageCount < caps.minImageCount)
+                sci.minImageCount = caps.minImageCount;
+            if (caps.maxImageCount > 0 && sci.minImageCount > caps.maxImageCount)
+                sci.minImageCount = caps.maxImageCount;
+        }
+    }
 
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -444,7 +514,7 @@ static void CreateRenderPass(void) {
 
     att.format = g_swapchain_fmt;
 
-    att.samples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
+    att.samples = g_msaa_samples;
 
     att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 
@@ -620,7 +690,7 @@ static void CreateGraphicsPipeline(void) {
 
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 
-    ms.rasterizationSamples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
+    ms.rasterizationSamples = g_msaa_samples;
 
     VkPipelineColorBlendAttachmentState cba = {0};
 
@@ -704,7 +774,7 @@ static void CreateMSAATarget(void) {
     ici.extent = (VkExtent3D){ g_swapchain_ext.width, g_swapchain_ext.height, 1 };
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
-    ici.samples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
+    ici.samples = g_msaa_samples;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
     ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -801,6 +871,8 @@ static void CreateCommandBuffers(void) {
 
     vkAllocateCommandBuffers(g_dev, &ai, g_cmd_bufs);
 
+    g_per_frame_count = g_cmd_buf_count;
+
 }
 
 static void CreateSyncObjects(void) {
@@ -831,6 +903,56 @@ static void CreateSyncObjects(void) {
 
     }
 
+    g_per_frame_count = g_swapchain_img_count;
+
+}
+
+/* Tear down and rebuild the four per-frame arrays to match `g_swapchain_img_count`.
+
+   `RecreateSwapchain` rebuilds the framebuffers and image views against the
+   count the new swapchain reports, but these arrays were sized from the count
+   the ORIGINAL swapchain reported.  A rebuild whose image count grew then left
+   `g_current_frame = (g_current_frame + 1) % g_swapchain_img_count` indexing
+   past the end of the semaphore, fence and command-buffer arrays -- an
+   out-of-bounds read of an uninitialised handle fed straight into
+   `vkWaitForFences` / `vkQueueSubmit`.  Called only when the count really
+   changed, so the common resize path does no extra work. */
+static void EnsurePerFrameObjects(void) {
+
+    if (g_per_frame_count == g_swapchain_img_count) return;
+
+    for (uint32_t i = 0; i < g_per_frame_count; i++) {
+
+        vkDestroySemaphore(g_dev, g_img_avail_sems[i], NULL);
+
+        vkDestroySemaphore(g_dev, g_render_done_sems[i], NULL);
+
+        vkDestroyFence(g_dev, g_in_flight_fences[i], NULL);
+
+    }
+
+    free(g_img_avail_sems);
+
+    free(g_render_done_sems);
+
+    free(g_in_flight_fences);
+
+    g_img_avail_sems = NULL;
+
+    g_render_done_sems = NULL;
+
+    g_in_flight_fences = NULL;
+
+    vkFreeCommandBuffers(g_dev, g_cmd_pool, g_cmd_buf_count, g_cmd_bufs);
+
+    free(g_cmd_bufs);
+
+    g_cmd_bufs = NULL;
+
+    CreateCommandBuffers();
+
+    CreateSyncObjects();
+
 }
 
 static void CreateVertexBuffer(void) {
@@ -842,6 +964,43 @@ static void CreateVertexBuffer(void) {
                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 
                  &g_vert_buf, &g_vert_buf_mem);
+
+}
+
+/* Clamp the requested MSAA count to what this device can actually render.
+
+   `framebufferColorSampleCounts` is the set the render pass, the MSAA image and
+   the pipeline all have to agree with.  Sample counts are powers of two, so
+   walk down from the request to the largest supported one.  1 is always legal,
+   so the loop terminates with a working (if unantialiased) renderer rather than
+   a device that refuses to create the pipeline at all. */
+static void ResolveMSAASamples(void) {
+
+    VkPhysicalDeviceProperties props;
+
+    vkGetPhysicalDeviceProperties(g_phys_dev, &props);
+
+    VkSampleCountFlags supported = props.limits.framebufferColorSampleCounts;
+
+    int want = MSAA_SAMPLE_COUNT;
+
+    while (want > 1 && !(supported & (VkSampleCountFlags)want)) want >>= 1;
+
+    if (want < 1) want = 1;
+
+    g_msaa_samples = (VkSampleCountFlagBits)want;
+
+    if (want != MSAA_SAMPLE_COUNT) {
+
+        fprintf(stderr,
+
+                "[Vulkan] MSAA %dx unsupported by this device (supports 0x%x); "
+
+                "using %dx instead\n",
+
+                MSAA_SAMPLE_COUNT, (unsigned)supported, want);
+
+    }
 
 }
 
@@ -865,11 +1024,19 @@ void Render_Init(void *metal_layer, int width, int height) {
     g_swapchain_ext = (VkExtent2D){(uint32_t)width, (uint32_t)height};
 #endif
 
-    CreateInstance();
+    /* Each step answers 0 on failure and we stop there, leaving `g_is_ready`
+       false.  `Vulkan_InitEx` already checks `Render_IsReady()` and answers 0,
+       which Python turns into a catchable `RuntimeError` -- so a machine with
+       no GPU or no Vulkan loader now raises instead of the DLL calling
+       exit(-1) and tearing the interpreter down with no traceback. */
+    if (!CreateInstance()) return;
 
-    CreateSurface();
+    if (!CreateSurface()) return;
 
-    PickPhysicalDevice();
+    if (!PickPhysicalDevice()) return;
+
+    /* Before anything reads MSAA_SAMPLE_COUNT: the device may not support it. */
+    ResolveMSAASamples();
 
     CreateLogicalDevice();
 
@@ -903,7 +1070,28 @@ int Render_IsReady(void) {
 
 }
 
+void Render_WaitAllInFlight(void) {
+    /* The host-visible vertex buffers are SHARED by every frame in flight, and
+       both writers below run from Render_DrawScene -- i.e. BEFORE
+       Render_DrawFrame waits for this slot's fence.  With 2+ swapchain images
+       the PREVIOUS frame's command buffer was still reading those bytes while
+       we overwrite them, which the spec forbids and which showed up as torn
+       geometry on heavy scenes.
+
+       Waiting for every in-flight fence is what costs us the CPU/GPU overlap,
+       but it is the only correct thing to do with a single shared buffer: a
+       per-frame ring buffer would need img_count * 100 MB of host memory.  At
+       the 60 fps target the GPU frame is well inside the 16.6 ms budget, so
+       the stall is not on the critical path. */
+    if (g_in_flight_fences != NULL && g_swapchain_img_count > 0) {
+        vkWaitForFences(g_dev, g_swapchain_img_count, g_in_flight_fences,
+                        VK_TRUE, UINT64_MAX);
+    }
+}
+
 void update_vertex_buffer(const void *data, VkDeviceSize size) {
+
+    Render_WaitAllInFlight();
 
     void *mapped_data;
 
@@ -979,6 +1167,11 @@ void RecreateSwapchain(void) {
     CreateSwapchain();
     CreateImageViews();
     CreateFramebuffers();
+    /* The new swapchain is allowed to report a different image count than the
+       one these were sized from, so realign the per-frame arrays (no-op when
+       the count is unchanged, which is the usual case). */
+    EnsurePerFrameObjects();
+    if (g_current_frame >= g_swapchain_img_count) g_current_frame = 0;
 }
 
 void Render_Cleanup(void) {
@@ -989,7 +1182,10 @@ void Render_Cleanup(void) {
 
     CleanupSwapchain();
 
-    for (uint32_t i = 0; i < g_swapchain_img_count; i++) {
+    /* Destroy exactly as many as were allocated: `g_per_frame_count` is the
+       size of these arrays, and `g_swapchain_img_count` is what the last
+       swapchain reported -- they can differ if a rebuild was interrupted. */
+    for (uint32_t i = 0; i < g_per_frame_count; i++) {
         vkDestroySemaphore(g_dev, g_img_avail_sems[i], NULL);
         vkDestroySemaphore(g_dev, g_render_done_sems[i], NULL);
         vkDestroyFence(g_dev, g_in_flight_fences[i], NULL);

@@ -67,14 +67,21 @@ def segments(calls):
     Grouping is purely geometric -- layers of one segment share endpoints, the
     next segment does not -- so the grouping never depends on the layer rule
     under test.  Returns a list of [(width, alpha), ...] in emission order.
+
+    Grouping is by endpoint key across ALL calls, not just consecutive runs:
+    an `AddLineStrip` submits one call per width layer covering every segment
+    (`_emit_stroke_strip`), so a segment's two layers arrive in different
+    calls separated by the other layer's segments.
     """
     out = []
+    seen = {}
     for a in calls:
         k = _key(a)
-        if out and out[-1][0] == k:
-            out[-1][1].append((a[4], a[5]))
+        if k in seen:
+            seen[k].append((a[4], a[5]))
         else:
-            out.append([k, [(a[4], a[5])]])
+            seen[k] = [(a[4], a[5])]
+            out.append((k, seen[k]))
     return [layers for _k, layers in out]
 
 
@@ -117,14 +124,30 @@ def renderer():
 
 
 def send_capture(renderer, mob, meth_name):
-    """Call `_send_<meth>` with the right signature and record AddLine calls."""
+    """Call `_send_<meth>` with the right signature and record stroke calls.
+
+    `AddLineStrip` calls are expanded into per-segment records of the same
+    `(x1, y1, x2, y2, width, alpha)` shape `AddLine` produces, so the ink
+    model below applies to strip-stroked primitives (closed shapes moved to
+    strips in `_emit_stroke_strip` to kill the per-joint double-blend).
+    """
     rec = Recorder()
     orig_line = renderer.dll.AddLine
+    orig_strip = getattr(renderer.dll, "AddLineStrip", None)
     orig_dash = getattr(renderer.dll, "AddDashedLine", None)
 
     def _cap(*a):
         # AddLine(x1, y1, x2, y2, width, r, g, b, alpha)
         rec.calls.append(tuple(a[0:4]) + (float(a[4]), float(a[8])))
+        return 0
+
+    def _cap_strip(*a):
+        # AddLineStrip(points, alphas, num_points, width, r, g, b, alpha)
+        pts, n, width, alpha = a[0], int(a[2]), float(a[3]), float(a[7])
+        for i in range(n - 1):
+            rec.calls.append((float(pts[i * 2]), float(pts[i * 2 + 1]),
+                              float(pts[i * 2 + 2]), float(pts[i * 2 + 3]),
+                              width, alpha))
         return 0
 
     def _cap_dash(*a):
@@ -133,6 +156,8 @@ def send_capture(renderer, mob, meth_name):
         return 0
 
     renderer.dll.AddLine = _cap
+    if orig_strip is not None:
+        renderer.dll.AddLineStrip = _cap_strip
     if orig_dash is not None:
         renderer.dll.AddDashedLine = _cap_dash
     meth = getattr(renderer, meth_name)
@@ -151,6 +176,8 @@ def send_capture(renderer, mob, meth_name):
         meth(*args)
     finally:
         renderer.dll.AddLine = orig_line
+        if orig_strip is not None:
+            renderer.dll.AddLineStrip = orig_strip
         if orig_dash is not None:
             renderer.dll.AddDashedLine = orig_dash
     return rec.calls
@@ -174,7 +201,7 @@ CASES = [
 def test_stroke_ink_matches_manim(renderer, name, factory, meth):
     mob = factory()
     calls = send_capture(renderer, mob, meth)
-    assert calls, "%s emitted no AddLine stroke" % name
+    assert calls, "%s emitted no stroke (AddLine/AddLineStrip)" % name
 
     px = PX_PER_SW * 2.0          # stroke_width=2 -> 1.2 px at 480p
     segs = segments(calls)

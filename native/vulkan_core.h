@@ -68,6 +68,12 @@ void CreateImageViews(void);
 void CreateFramebuffers(void);
 void update_vertex_buffer(const void *data, VkDeviceSize size);
 
+// Block until every frame currently in flight has finished reading the shared
+// host-visible buffers.  Both writers of those buffers (the geometry buffer in
+// update_vertex_buffer, the image-quad buffer in Tex_EndFrame) must call this
+// before memcpy'ing -- see the definition for why.
+void Render_WaitAllInFlight(void);
+
 int Render_DrawFrame(uint32_t vertex_count);
 
 // Called by the renderer from inside the frame's command buffer (after the

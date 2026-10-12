@@ -162,6 +162,15 @@ __declspec(dllexport) void Vulkan_SetWindowVisible(int visible) {
 }
 
 __declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
+    // A SECOND init in the same process used to run `Render_Init` straight over
+    // the live one: `CreateInstance`/`CreateLogicalDevice`/`CreateSwapchain`
+    // overwrote the existing handles, so the old device, swapchain, window and
+    // every image view were leaked and the old HWND stayed up with nothing
+    // driving it.  Tear the previous window down first -- `Vulkan_Shutdown` is
+    // idempotent, so this is a no-op on the first call.
+    if (Render_IsReady() || (g_hwnd && IsWindow(g_hwnd))) {
+        Vulkan_Shutdown();
+    }
     SetProcessDPIAware();
     g_hinst = GetModuleHandleW(NULL);
     g_aspect_ratio = (double)w / (double)h;
@@ -245,7 +254,14 @@ __declspec(dllexport) void AddEllipse(float x, float y, float rx, float ry, int 
 }
 
 __declspec(dllexport) void AddPolygon(float x, float y, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, int vert_count, const float* verts, float stroke_progress, float alpha, int close_path) {
-    if (g_polygon_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS && vert_count <= MAX_POLYGON_VERTS) {
+    /* The upper bound alone was not enough: a NEGATIVE vert_count passed it
+       (it is < MAX_POLYGON_VERTS) and then fed
+       memcpy(dst, verts, sizeof(float) * vert_count * 2) a value that
+       promotes to a ~4 GB size_t -- a guaranteed crash.  A polygon also
+       cannot be drawn with fewer than 3 vertices. */
+    if (verts == NULL) return;
+    if (vert_count < 3 || vert_count > MAX_POLYGON_VERTS) return;
+    if (g_polygon_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         PolygonObj* p = &g_polygons[g_polygon_count];
         p->x = x; p->y = y;
         p->r = r; p->g = g; p->b = b;
@@ -262,6 +278,11 @@ __declspec(dllexport) void AddPolygon(float x, float y, int r, int g, int b, int
 }
 
 __declspec(dllexport) void AddDashedLine(float x1, float y1, float x2, float y2, int width, int r, int g, int b, float dash_length, float gap_length, float alpha) {
+    /* The dash loop advances by dash_length/gap_length each step, so a pair of
+       non-positive lengths leaves `pos` where it was and spins forever with the
+       CPU pinned (Python's own guards do not cover every caller, e.g. a grow
+       animation that scales the dash to 0 mid-flight). */
+    if (!(dash_length > 0.0f) || !(gap_length > 0.0f)) return;
     if (g_dashed_line_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_dashed_lines[g_dashed_line_count] = (DashedLineObj){ x1, y1, x2, y2, width, r, g, b, dash_length, gap_length, alpha };
         g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_DASHED_LINE, g_dashed_line_count };
@@ -306,6 +327,7 @@ __declspec(dllexport) void AddText(float x, float y, int r, int g, int b, float 
 
 __declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long long digest, const unsigned char *rgba, int w, int h, const float *xy8, float opacity) {
     if (g_image_quad_count >= MAX_IMAGE_QUADS || g_draw_cmd_count >= MAX_DRAW_CMDS) return;
+    if (rgba == NULL || xy8 == NULL || w <= 0 || h <= 0) return;
     if (Tex_Ensure(token, digest, rgba, w, h) < 0) return;         // upload failed / table full
     ImageQuad *q = &g_image_quads[g_image_quad_count];
     q->token = token;
@@ -420,10 +442,21 @@ static void *g_ss_map = NULL;
 static int EnsureScreenshotBuffer(VkDeviceSize size) {
     if (g_ss_buf != VK_NULL_HANDLE && g_ss_size >= size) return 1;
     if (g_ss_buf != VK_NULL_HANDLE) {
+        /* A frame in flight may still be DMA-ing into the OLD buffer (the arm
+           happened before its draw, the grow happens before the next one), and
+           a frame whose copy already landed names it in g_ss_frame.  Freeing
+           underneath either is use-after-free.  The shared-buffer wait covers
+           both. */
+        Render_WaitAllInFlight();
         vkDestroyBuffer(g_dev, g_ss_buf, NULL);
         vkFreeMemory(g_dev, g_ss_mem, NULL);
         g_ss_buf = VK_NULL_HANDLE;
         g_ss_mem = VK_NULL_HANDLE;
+        g_ss_map = NULL;
+        // The buffer we were going to read is gone: forget the copy too, or
+        // SaveScreenshot would read g_ss_map == NULL through the "reliable"
+        // path.
+        g_ss_copied = 0;
     }
 
     // Allocate a pure host-readable staging buffer (HOST_VISIBLE, NOT
@@ -463,6 +496,9 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
     if (chosen == UINT32_MAX) {
         vkDestroyBuffer(g_dev, g_ss_buf, NULL);
         g_ss_buf = VK_NULL_HANDLE;
+        // Stale size would make the next call answer "already big enough"
+        // for a buffer that no longer exists.
+        g_ss_size = 0;
         return 0;
     }
 
@@ -475,10 +511,19 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
         vkDestroyBuffer(g_dev, g_ss_buf, NULL);
         g_ss_buf = VK_NULL_HANDLE;
         g_ss_mem = VK_NULL_HANDLE;
+        g_ss_size = 0;
+        return 0;
+    }
+    if (vkMapMemory(g_dev, g_ss_mem, 0, size, 0, &g_ss_map) != VK_SUCCESS) {
+        vkDestroyBuffer(g_dev, g_ss_buf, NULL);
+        vkFreeMemory(g_dev, g_ss_mem, NULL);
+        g_ss_buf = VK_NULL_HANDLE;
+        g_ss_mem = VK_NULL_HANDLE;
+        g_ss_map = NULL;
+        g_ss_size = 0;
         return 0;
     }
     g_ss_size = size;
-    vkMapMemory(g_dev, g_ss_mem, 0, size, 0, &g_ss_map);
     return 1;
 }
 
@@ -505,6 +550,17 @@ static void FreeScreenshotBuffer(void) {
 // design the macOS build uses.
 // ---------------------------------------------------------------------------
 static uint32_t g_ss_frame = 0;     // in-flight slot of that frame (its fence)
+
+// The size, in pixels, of the next readback: this is the SWAPCHAIN extent, not
+// anything the caller guessed from a window-message snapshot.  Callers sizing a
+// buffer for SaveScreenshotRaw must use this (or be prepared for the
+// out_cap-too-small answer) -- see SaveScreenshotRaw.
+__declspec(dllexport) int Vulkan_GetReadbackSize(int *w, int *h) {
+    if (!g_is_ready || !g_swapchain) return 0;
+    if (w) *w = (int)g_swapchain_ext.width;
+    if (h) *h = (int)g_swapchain_ext.height;
+    return 1;
+}
 
 __declspec(dllexport) void Vulkan_RequestReadback(void) {
     if (!g_is_ready || !g_swapchain) return;
@@ -635,14 +691,20 @@ static void CopySwapchainImageToBuffer(uint32_t img_idx, VkBuffer dst, int w, in
 // bulk-copy the raw bytes into CPU cache (vectorized memcpy) and convert there.
 static unsigned char *g_conv_buf = NULL;
 static VkDeviceSize g_conv_size = 0;
-static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
+static int ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
+    if (out == NULL || g_ss_map == NULL) return 0;
     VkDeviceSize raw_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (g_conv_size < raw_size) {
+        unsigned char *fresh = (unsigned char *)malloc((size_t)raw_size);
+        if (fresh == NULL) return 0;    // keep the old (too small) buffer
         free(g_conv_buf);
-        g_conv_buf = (unsigned char *)malloc((size_t)raw_size);
+        g_conv_buf = fresh;
+        // Only publish the new size once the allocation succeeded: publishing
+        // it first made a later call treat the NULL buffer as usable and
+        // memcpy from g_ss_map into unallocated memory.
         g_conv_size = raw_size;
     }
-    if (g_conv_buf == NULL) return;
+    if (g_conv_buf == NULL) return 0;
     unsigned char *raw = g_conv_buf;
     memcpy(raw, g_ss_map, (size_t)raw_size);
     int rowBytes = ((w * 3 + 3) & ~3);
@@ -655,6 +717,32 @@ static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
             dst[x * 3 + 2] = row[x * 4 + 2];  // R
         }
     }
+    return 1;
+}
+
+// Decide where SaveScreenshot's pixels come from.  Returns 1 when the staging
+// buffer holds usable pixels, 0 when the caller must say "no frame yet".
+//
+//  * g_ss_copied  -- the reliable path: the frame copied itself out before
+//    present, and its fence (waited here) tells us the copy landed.
+//  * g_ss_arm     -- a readback is armed but the frame that will service it has
+//    not been drawn yet (the live `start_record` worker polls faster than the
+//    render loop, and the first frame of a fast record arms before its draw).
+//    Answer "no frame yet" so the caller retries: taking the post-present
+//    fallback here would hand back the frame from BEFORE the arm, i.e. exactly
+//    the stale picture the arm exists to avoid.
+//  * otherwise    -- nothing was ever armed.  The spec leaves a presented
+//    image's content undefined (the presentation engine owns it) and it has
+//    been observed to come back stale, so this is only a best-effort guess.
+static int ResolveScreenshotSource(int w, int h) {
+    if (g_ss_copied) {
+        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
+        g_ss_copied = 0;
+        return 1;
+    }
+    if (g_ss_arm) return 0;
+    CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
+    return 1;
 }
 
 // SaveScreenshot reads the swapchain framebuffer directly (independent of the
@@ -669,21 +757,12 @@ __declspec(dllexport) int SaveScreenshot(const char *path) {
     VkDeviceSize img_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (!EnsureScreenshotBuffer(img_size)) return 0;
 
-    if (g_ss_copied) {
-        // Reliable path: the frame copied its own image before present; its
-        // fence tells us when the copy is done (host-coherent memory, no flush).
-        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
-        g_ss_copied = 0;
-    } else {
-        // Fallback: the last presented image, copied after the fact.  The spec
-        // leaves its content undefined (presentation engine owns it) and it has
-        // been observed to come back stale -- request a readback before drawing.
-        CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
-    }
+    if (!ResolveScreenshotSource(w, h)) return 0;
 
     int rowBytes = ((w * 3 + 3) & ~3);
     unsigned char *bgr = (unsigned char *)malloc((size_t)rowBytes * (size_t)h);
-    ConvertBGRAtoBGR(w, h, bgr);
+    if (bgr == NULL) return 0;
+    if (!ConvertBGRAtoBGR(w, h, bgr)) { free(bgr); return 0; }
 
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
@@ -712,32 +791,29 @@ __declspec(dllexport) int SaveScreenshot(const char *path) {
 }
 
 // SaveScreenshotRaw fills a caller-provided buffer with raw BGR pixels
-// (no 54-byte BMP header, no disk I/O). rowBytes == w*3 (1280x720 has no
-// padding). Returns 1 on success and sets *out_size to w*h*3.
-__declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int *out_size) {
+// (no 54-byte BMP header, no disk I/O).  ``out_cap`` is the caller buffer's
+// size in BYTES and is NOT optional: the swapchain extent can shrink under us
+// (the user drags the window smaller), and the old two-argument form wrote
+// rowBytes*h bytes of CURRENT extent into a buffer the caller sized from a
+// win_w/win_h snapshot taken earlier -- a heap overflow of the difference.
+// Returns 1 on success and sets *out_size to w*h*3.
+__declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int out_cap, int *out_size) {
     if (!g_is_ready || !g_swapchain || !out) return 0;
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
     if (w <= 0 || h <= 0) return 0;
 
+    int rowBytes = ((w * 3 + 3) & ~3);
+    VkDeviceSize need = (VkDeviceSize)rowBytes * (VkDeviceSize)h;
+    if (out_size) *out_size = (int)need;    // also the "please retry with this" hint
+    if (out_cap <= 0 || (VkDeviceSize)out_cap < need) return 0;
+
     VkDeviceSize img_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (!EnsureScreenshotBuffer(img_size)) return 0;
 
-    if (g_ss_copied) {
-        // Reliable path: the frame copied its own image before present; its
-        // fence tells us when the copy is done (host-coherent memory, no flush).
-        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
-        g_ss_copied = 0;
-    } else {
-        // Fallback: the last presented image, copied after the fact.  The spec
-        // leaves its content undefined (the presentation engine owns it) and it
-        // has been observed to come back stale -- request a readback before the
-        // draw when the exact frame matters.
-        CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
-    }
+    if (!ResolveScreenshotSource(w, h)) return 0;
 
-    int rowBytes = ((w * 3 + 3) & ~3);
-    ConvertBGRAtoBGR(w, h, out);
+    if (!ConvertBGRAtoBGR(w, h, out)) return 0;
     if (out_size) *out_size = rowBytes * h;
     return 1;
 }

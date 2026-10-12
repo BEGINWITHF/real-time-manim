@@ -28,7 +28,7 @@ _sounds = []            # list of (abs_path, start_seconds, gain_or_None)
 def _scene_window(scene):
     """The MLWindow bound to `scene`, if one exists (for the playhead)."""
     try:
-        from real_time_manim.vulkan_bind import MLWindow
+        from real_time_manim.window import MLWindow
     except Exception:                                    # pragma: no cover
         return None
     for win in reversed(getattr(MLWindow, "_registry", ()) or ()):

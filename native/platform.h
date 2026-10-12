@@ -17,6 +17,9 @@ __declspec(dllexport) int Vulkan_Tick(void);
 // (before present, while the image is still ours).  Call before the tick that
 // draws the frame you want; then SaveScreenshot/SaveScreenshotRaw can read it.
 __declspec(dllexport) void Vulkan_RequestReadback(void);
+// Report the swapchain extent the next readback will produce (the authoritative
+// size for a SaveScreenshotRaw buffer).  Returns 0 when nothing is initialised.
+__declspec(dllexport) int Vulkan_GetReadbackSize(int *w, int *h);
 __declspec(dllexport) void Vulkan_Shutdown(void);
 
 __declspec(dllexport) void AddRect(float x, float y, float hw, float hh, float rot, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, float stroke_progress, float alpha);
@@ -40,6 +43,22 @@ __declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long 
 __declspec(dllexport) void SetBackgroundColor(float r, float g, float b);
 __declspec(dllexport) void ClearShapes(void);
 __declspec(dllexport) int SaveScreenshot(const char *path);
+
+// SaveScreenshotRaw fills a caller-provided buffer with raw BGR pixels (no
+// 54-byte BMP header, no disk I/O).  ``out_cap`` is the buffer's size in BYTES
+// and is mandatory: the swapchain extent can shrink under us (the user drags
+// the window smaller), and the old two-argument form trusted the caller's
+// win_w/win_h and wrote rowBytes*h bytes straight past the end of a buffer
+// sized for the OLD extent.  Returns 1 on success and sets *out_size to the
+// number of bytes written.
+__declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int out_cap, int *out_size);
+
+// Rendered polyline: up to MAX_STRIP_POINTS vertices, copied verbatim.  Exposed
+// for the text/line-strip senders; silently truncates above the cap (see
+// draw_line.c).
+__declspec(dllexport) void AddLineStrip(const float *points, const float *alphas,
+                                        int num_points, int width,
+                                        int r, int g, int b, float alpha);
 
 #ifdef __cplusplus
 }

@@ -292,6 +292,20 @@ done_sample_all:
     int y_start = (int)floorf(y_min);
     int y_end = (int)ceilf(y_max);
 
+    /* Clamp the scan to the surface.  Rows outside it are clipped by the
+       viewport anyway, so they cannot ink a pixel -- but the loop still paid a
+       full `total_pts` crossing pass for every one of them, so a fill parked
+       far off-screen (a Transform mid-flight, a mobject shifted well outside
+       the frame) burned time proportional to its off-screen pixel bbox and
+       stalled the frame.  Unclamped this ran to millions of rows; clamped it
+       is at most the surface height. */
+    int surf_h = (int)g_swapchain_ext.height;
+    int surf_w = (int)g_swapchain_ext.width;
+    if (surf_h > 0) {
+        if (y_start < 0) y_start = 0;
+        if (y_end > surf_h - 1) y_end = surf_h - 1;
+    }
+
     for (int y = y_start; y <= y_end; y++) {
         float scan_y = (float)y + 0.5f;
         int n_cross = 0;
@@ -344,6 +358,16 @@ done_sample_all:
 
                 int px_start = (int)floorf(xl);
                 int px_end = (int)ceilf(xr);
+
+                /* Same clamp as the row loop, for the same reason: a span
+                   entirely off-screen cannot ink anything, and the coverage
+                   below is a max/min against the pixel span, so trimming the
+                   loop bounds leaves every VISIBLE pixel's coverage bit-for-bit
+                   identical. */
+                if (surf_w > 0) {
+                    if (px_start < 0) px_start = 0;
+                    if (px_end > surf_w) px_end = surf_w;
+                }
 
                 for (int px = px_start; px < px_end; px++) {
                     float seg_l = (float)px;

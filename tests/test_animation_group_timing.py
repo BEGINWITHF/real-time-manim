@@ -231,7 +231,8 @@ def test_create_inside_an_animation_group_is_actually_drawn(window):
     try:
         window.scene = scene
         window.play(AnimationGroup(Create(vg, run_time=1.0)), run_time=1.0)
-        strokes = [a for n, a in rec.calls if n == 'AddLine']
+        strokes = [a for n, a in rec.calls
+                   if n in ('AddLine', 'AddLineStrip')]
     finally:
         window.dll = real
     assert strokes, (

@@ -212,14 +212,24 @@ mapping, build steps) live in the [Wiki](https://github.com/BEGINWITHF/real-time
 ```
 real-time-manim/
 ├── real_time_manim/            # the Python package
-│   ├── vulkan_bind.py          #   MLWindow + record hooks (main bridge)
+│   ├── window/                 #   MLWindow, split into mixins (core, paint, play, recording)
+│   ├── render/                 #   mobject -> DLL senders (shapes/, text/, hooks, image, util)
+│   ├── vulkan_bind.py          #   public facade re-exporting window/  (old import path)
+│   ├── vulkan_shapes.py        #   shim -> render/shapes               (old import path)
+│   ├── vulkan_text.py          #   shim -> render/text                 (old import path)
+│   ├── vulkan_util.py          #   shim -> render/util                 (old import path)
+│   ├── vulkan_image.py         #   shim -> render/image                (old import path)
+│   ├── render_hooks.py         #   shim -> render/hooks                (old import path)
 │   ├── record.py               #   one-call recorders (fast / real-time)
 │   ├── util.py                 #   LaTeX cache + forced media cleanup
-│   ├── vulkan_shapes.py        #   shape-specific senders
-│   ├── vulkan_text.py          #   text / bezier rendering
 │   ├── rate_functions.py       #   easing functions
 │   ├── animations/             #   ~40 animation modules
 │   └── utils/
+├── examples/                   # runnable examples
+│   ├── scenes/                 #   82 demo scenes, one module per topic
+│   └── timeline_seek.py        #   timeline seeking demo
+├── tests/                      #   pytest suite
+├── docs/                       #   design notes, feature lists, reports
 ├── native/                     # C/C++ Vulkan engine (vulkan_core.dll source)
 ├── logo.*                      # project logos
 └── pyproject.toml

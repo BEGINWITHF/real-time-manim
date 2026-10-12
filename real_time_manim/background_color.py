@@ -20,10 +20,21 @@ uses it as the line's stroke colour.
 
 from __future__ import annotations
 
+import weakref
+
 import numpy as np
 
-# id(image) -> (r, g, b) in 0..1, or None when the image is unusable
-_cache: dict[int, tuple | None] = {}
+# id(image) -> (weakref to that image, (r, g, b) in 0..1 or None).
+#
+# The key is `id(image)` only because PIL's ``Image`` is UNHASHABLE (verified:
+# ``hash(Image.new(...))`` raises TypeError), so a ``WeakKeyDictionary`` keyed
+# on the image itself is not available.  ids are recycled the instant an object
+# is collected, though, so the bare-id cache this replaced could resolve a
+# freshly built background image to a DEAD one's colour.  The weakref beside
+# each value detects exactly that: a recycled id means the original object is
+# gone and ``ref()`` has been cleared, so the entry is dropped and recomputed.
+# Nothing is ever evicted by size and nothing survives its image.
+_cache: dict[int, tuple[weakref.ref, tuple | None]] = {}
 
 
 def background_image_rgb(mob):
@@ -43,8 +54,12 @@ def background_image_rgb(mob):
 def image_mean_rgb(image):
     """Average colour of an image's non-transparent pixels (0..1 floats)."""
     key = id(image)
-    if key in _cache:
-        return _cache[key]
+    hit = _cache.get(key)
+    if hit is not None:
+        ref, value = hit
+        if ref() is image:          # same object, id not recycled
+            return value
+        # id was recycled (or the ref was cleared): fall through and recompute.
     out = None
     try:
         arr = np.asarray(image.convert("RGBA"), dtype=float)
@@ -55,5 +70,13 @@ def image_mean_rgb(image):
             out = (float(rgb[0]), float(rgb[1]), float(rgb[2]))
     except Exception:
         out = None
-    _cache[key] = out
+
+    def _drop(_ref, _key=key):
+        _cache.pop(_key, None)
+
+    try:
+        ref = weakref.ref(image, _drop)
+    except TypeError:               # not weak-referenceable: keep it uncached
+        return out
+    _cache[key] = (ref, out)
     return out

@@ -1,5 +1,5 @@
 # Native C/C++ sources — shipped in the sdist so users can rebuild the DLL.
-# The compiled vulkan_core.dll itself is bundled as package-data under core/.
+# The compiled vulkan_core.dll itself is shipped as package-data in real_time_manim/.
 recursive-include native *.c *.h *.ps1 *.sh *.m
 
 # Standard metadata (normally auto-included, listed explicitly for clarity)
