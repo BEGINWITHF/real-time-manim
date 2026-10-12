@@ -392,13 +392,51 @@ void CreateSwapchain(void) {
 
     sci.imageArrayLayers = 1;
 
-#ifdef _WIN32
-    sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-#else
-    // The readback path copies the swapchain image inside the draw command
-    // buffer (MoltenVK forbids reads after present), so TRANSFER_SRC is needed.
+    // The readback path (Platform_RecordReadbackCopy / CopySwapchainImageToBuffer)
+    // copies the swapchain image with vkCmdCopyImageToBuffer, so TRANSFER_SRC is
+    // required on EVERY platform -- omitting it on Windows was a spec violation
+    // (VUID-vkCmdCopyImageToBuffer-image-01995/01996) that worked only because
+    // drivers do not enforce it.  Mask against what the surface actually
+    // supports: an unsupported usage bit makes swapchain creation fail outright.
     sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-#endif
+    {
+        VkSurfaceCapabilitiesKHR caps;
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_phys_dev, g_surface, &caps) == VK_SUCCESS) {
+            sci.imageUsage &= caps.supportedUsageFlags;
+
+            // The extent and image count are not ours to choose: the spec
+            // requires `imageExtent` to lie inside
+            // [minImageExtent, maxImageExtent] and `minImageCount` to be at
+            // least `minImageCount` (VUID-VkSwapchainCreateInfoKHR-imageExtent-
+            // 01274 / -minImageCount-01272), and creation FAILS otherwise.
+            // `g_swapchain_ext` is the client rect, which under Windows DPI
+            // scaling can exceed what the surface allows, so clamp it here
+            // rather than let vkCreateSwapchainKHR reject it.  A
+            // `currentExtent` that is not UINT32_MAX pins the size outright.
+            if (caps.currentExtent.width != UINT32_MAX) {
+                sci.imageExtent.width  = caps.currentExtent.width;
+                sci.imageExtent.height = caps.currentExtent.height;
+            } else {
+                if (sci.imageExtent.width  < caps.minImageExtent.width)
+                    sci.imageExtent.width = caps.minImageExtent.width;
+                if (sci.imageExtent.width  > caps.maxImageExtent.width)
+                    sci.imageExtent.width = caps.maxImageExtent.width;
+                if (sci.imageExtent.height < caps.minImageExtent.height)
+                    sci.imageExtent.height = caps.minImageExtent.height;
+                if (sci.imageExtent.height > caps.maxImageExtent.height)
+                    sci.imageExtent.height = caps.maxImageExtent.height;
+            }
+            // Keep the swapchain's stored extent in step with what was
+            // actually created: every projection (ToNDC) and the readback
+            // buffer size are derived from `g_swapchain_ext`.
+            g_swapchain_ext = sci.imageExtent;
+
+            if (caps.minImageCount > 0 && sci.minImageCount < caps.minImageCount)
+                sci.minImageCount = caps.minImageCount;
+            if (caps.maxImageCount > 0 && sci.minImageCount > caps.maxImageCount)
+                sci.minImageCount = caps.maxImageCount;
+        }
+    }
 
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
