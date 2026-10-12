@@ -162,6 +162,15 @@ __declspec(dllexport) void Vulkan_SetWindowVisible(int visible) {
 }
 
 __declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
+    // A SECOND init in the same process used to run `Render_Init` straight over
+    // the live one: `CreateInstance`/`CreateLogicalDevice`/`CreateSwapchain`
+    // overwrote the existing handles, so the old device, swapchain, window and
+    // every image view were leaked and the old HWND stayed up with nothing
+    // driving it.  Tear the previous window down first -- `Vulkan_Shutdown` is
+    // idempotent, so this is a no-op on the first call.
+    if (Render_IsReady() || (g_hwnd && IsWindow(g_hwnd))) {
+        Vulkan_Shutdown();
+    }
     SetProcessDPIAware();
     g_hinst = GetModuleHandleW(NULL);
     g_aspect_ratio = (double)w / (double)h;
