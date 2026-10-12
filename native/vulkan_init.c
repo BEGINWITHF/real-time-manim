@@ -82,6 +82,14 @@ void *g_readback_map = NULL;
 
 bool g_is_ready = false;
 
+/* MSAA_SAMPLE_COUNT is a COMPILE-TIME request (shared_types.h), but the device
+   has the last word: `vkCreateImage`/`vkCreateRenderPass`/`vkCreateGraphics-
+   Pipeline` all fail if the requested count is not in
+   `framebufferColorSampleCounts`.  Integrated and virtualised GPUs commonly top
+   out at 4 or 2, so honouring the literal 8 there meant no renderer at all
+   instead of slightly softer edges.  Resolved once by ResolveMSAASamples. */
+VkSampleCountFlagBits g_msaa_samples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
+
 uint32_t g_current_frame = 0;
 
 bool g_framebuffer_resized = false;
@@ -457,7 +465,7 @@ static void CreateRenderPass(void) {
 
     att.format = g_swapchain_fmt;
 
-    att.samples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
+    att.samples = g_msaa_samples;
 
     att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 
@@ -633,7 +641,7 @@ static void CreateGraphicsPipeline(void) {
 
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 
-    ms.rasterizationSamples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
+    ms.rasterizationSamples = g_msaa_samples;
 
     VkPipelineColorBlendAttachmentState cba = {0};
 
@@ -717,7 +725,7 @@ static void CreateMSAATarget(void) {
     ici.extent = (VkExtent3D){ g_swapchain_ext.width, g_swapchain_ext.height, 1 };
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
-    ici.samples = (VkSampleCountFlagBits)MSAA_SAMPLE_COUNT;
+    ici.samples = g_msaa_samples;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
     ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -855,6 +863,43 @@ static void CreateVertexBuffer(void) {
                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 
                  &g_vert_buf, &g_vert_buf_mem);
+
+}
+
+/* Clamp the requested MSAA count to what this device can actually render.
+
+   `framebufferColorSampleCounts` is the set the render pass, the MSAA image and
+   the pipeline all have to agree with.  Sample counts are powers of two, so
+   walk down from the request to the largest supported one.  1 is always legal,
+   so the loop terminates with a working (if unantialiased) renderer rather than
+   a device that refuses to create the pipeline at all. */
+static void ResolveMSAASamples(void) {
+
+    VkPhysicalDeviceProperties props;
+
+    vkGetPhysicalDeviceProperties(g_phys_dev, &props);
+
+    VkSampleCountFlags supported = props.limits.framebufferColorSampleCounts;
+
+    int want = MSAA_SAMPLE_COUNT;
+
+    while (want > 1 && !(supported & (VkSampleCountFlags)want)) want >>= 1;
+
+    if (want < 1) want = 1;
+
+    g_msaa_samples = (VkSampleCountFlagBits)want;
+
+    if (want != MSAA_SAMPLE_COUNT) {
+
+        fprintf(stderr,
+
+                "[Vulkan] MSAA %dx unsupported by this device (supports 0x%x); "
+
+                "using %dx instead\n",
+
+                MSAA_SAMPLE_COUNT, (unsigned)supported, want);
+
+    }
 
 }
 
