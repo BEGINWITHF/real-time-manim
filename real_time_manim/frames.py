@@ -6,7 +6,7 @@ Preparing a scene costs one ``construct()`` pass (records the whole timeline
 without drawing); after that every frame is O(1) -- just draw it at time ``t``.
 
     from real_time_manim.frames import FrameServer
-    from scenes.demo_scene import DemoCreate
+    from examples.scenes import DemoCreate
 
     fs = FrameServer(DemoCreate)        # build + record the timeline ONCE (no window)
     fs.show_frame(1.5)                  # draw t=1.5 in the window (~10 ms, and shows it)
