@@ -17,6 +17,9 @@ void BuildVerticesFromDashedLines(const DashedLineObj* lines, int count) {
 
         while (pos < length) {
             float seg_len = drawing ? l->dash_length : l->gap_length;
+            /* Backstop for the AddDashedLine guard: a zero/negative (or NaN)
+               segment length would leave `pos` unchanged and loop forever. */
+            if (!(seg_len > 0.0f)) break;
             float end_pos = pos + seg_len;
             if (end_pos > length) end_pos = length;
 
