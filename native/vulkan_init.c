@@ -1024,11 +1024,19 @@ void Render_Init(void *metal_layer, int width, int height) {
     g_swapchain_ext = (VkExtent2D){(uint32_t)width, (uint32_t)height};
 #endif
 
-    CreateInstance();
+    /* Each step answers 0 on failure and we stop there, leaving `g_is_ready`
+       false.  `Vulkan_InitEx` already checks `Render_IsReady()` and answers 0,
+       which Python turns into a catchable `RuntimeError` -- so a machine with
+       no GPU or no Vulkan loader now raises instead of the DLL calling
+       exit(-1) and tearing the interpreter down with no traceback. */
+    if (!CreateInstance()) return;
 
-    CreateSurface();
+    if (!CreateSurface()) return;
 
-    PickPhysicalDevice();
+    if (!PickPhysicalDevice()) return;
+
+    /* Before anything reads MSAA_SAMPLE_COUNT: the device may not support it. */
+    ResolveMSAASamples();
 
     CreateLogicalDevice();
 
