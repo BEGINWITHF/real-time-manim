@@ -134,7 +134,12 @@ uint32_t FindMemoryType(uint32_t type_filter, VkMemoryPropertyFlags props) {
 
     fprintf(stderr, "Failed to find suitable memory type!\n");
 
-    exit(-1);
+    /* NOT exit(): this runs inside a DLL loaded by the Python interpreter, so
+       exit() tears down the whole process -- no traceback, no flush of stdout,
+       and any caller's try/except is bypassed.  UINT32_MAX is not a legal
+       memory-type index, so every consumer below fails its allocation and
+       reports instead of killing the host. */
+    return UINT32_MAX;
 
 }
 
@@ -172,7 +177,7 @@ void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
 
 }
 
-static void CreateInstance(void) {
+static int CreateInstance(void) {
 
     VkApplicationInfo app_info = {0};
 
@@ -211,7 +216,7 @@ static void CreateInstance(void) {
 
         fprintf(stderr, "Failed to create Vulkan instance!\n");
 
-        exit(-1);
+        return 0;
 
     }
 #else
@@ -241,14 +246,15 @@ static void CreateInstance(void) {
 
         fprintf(stderr, "Failed to create Vulkan instance!\n");
 
-        exit(-1);
+        return 0;
 
     }
 #endif
 
+    return 1;
 }
 
-static void CreateSurface(void) {
+static int CreateSurface(void) {
 
 #ifdef _WIN32
     VkWin32SurfaceCreateInfoKHR ci = {0};
@@ -263,7 +269,7 @@ static void CreateSurface(void) {
 
         fprintf(stderr, "Failed to create Win32 surface!\n");
 
-        exit(-1);
+        return 0;
 
     }
 #else
@@ -277,21 +283,27 @@ static void CreateSurface(void) {
 
         fprintf(stderr, "Failed to create Metal surface!\n");
 
-        exit(-1);
+        return 0;
 
     }
 #endif
+    return 1;
 }
 
-static void PickPhysicalDevice(void) {
+static int PickPhysicalDevice(void) {
 
     uint32_t count = 0;
 
     vkEnumeratePhysicalDevices(g_inst, &count, NULL);
 
-    if (count == 0) { fprintf(stderr, "No GPU found!\n"); exit(-1); }
+    /* NOT exit(): see FindMemoryType.  `Render_Init` propagates this and
+       `Vulkan_InitEx` answers 0, which Python raises as a catchable
+       RuntimeError ("Vulkan_Init failed") instead of killing the process. */
+    if (count == 0) { fprintf(stderr, "No GPU found!\n"); return 0; }
 
     VkPhysicalDevice *devs = malloc(sizeof(VkPhysicalDevice) * count);
+
+    if (!devs) { fprintf(stderr, "Out of memory picking a GPU!\n"); return 0; }
 
     vkEnumeratePhysicalDevices(g_inst, &count, devs);
 
@@ -299,6 +311,7 @@ static void PickPhysicalDevice(void) {
 
     free(devs);
 
+    return 1;
 }
 
 static void CreateLogicalDevice(void) {
