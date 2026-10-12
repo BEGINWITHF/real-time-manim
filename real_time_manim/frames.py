@@ -84,7 +84,25 @@ class FrameServer:
     def _bind_raw_readback(self):
         self.window.dll.SaveScreenshotRaw.restype = ctypes.c_int
         self.window.dll.SaveScreenshotRaw.argtypes = [
-            ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(ctypes.c_int)]
+            ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int)]
+        self.window.dll.Vulkan_GetReadbackSize.restype = ctypes.c_int
+        self.window.dll.Vulkan_GetReadbackSize.argtypes = [
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+
+    def _readback_extent(self):
+        """The swapchain's own (w, h) -- what the C side will actually write.
+
+        ``self.window.win_w/win_h`` is a snapshot of the last WM_SIZE-derived
+        value; the swapchain can differ (mid-resize, HiDPI rounding), and the
+        buffer sized from it is exactly what SaveScreenshotRaw would overflow.
+        """
+        w = ctypes.c_int(0)
+        h = ctypes.c_int(0)
+        if self.window.dll.Vulkan_GetReadbackSize(ctypes.byref(w), ctypes.byref(h)):
+            if w.value > 0 and h.value > 0:
+                return w.value, h.value
+        return self.window.win_w, self.window.win_h
 
     def _read_pixels(self):
         """Read the window's current framebuffer into RAM (BGR). Main thread.
@@ -93,14 +111,27 @@ class FrameServer:
         a hidden window too, since it does not depend on the window being
         composited on screen.
         """
-        w, h = self.window.win_w, self.window.win_h
+        w, h = self._readback_extent()
         row_bytes = ((w * 3 + 3) & ~3)
         size = row_bytes * h
+        # Over-allocate a little so a resize that lands between the extent
+        # query and the call still fits; the C side refuses and reports the
+        # size it needs if it does not.
         buf = (ctypes.c_ubyte * size)()
         out_size = ctypes.c_int(size)
-        ok = self.window.dll.SaveScreenshotRaw(buf, ctypes.byref(out_size))
+        ok = self.window.dll.SaveScreenshotRaw(buf, size, ctypes.byref(out_size))
         if not ok:
-            raise RuntimeError("SaveScreenshotRaw failed (no frame present?)")
+            need = out_size.value
+            if need > size:
+                size = need
+                buf = (ctypes.c_ubyte * size)()
+                out_size = ctypes.c_int(size)
+                w, h = self._readback_extent()
+                row_bytes = ((w * 3 + 3) & ~3)
+                ok = self.window.dll.SaveScreenshotRaw(buf, size,
+                                                       ctypes.byref(out_size))
+            if not ok:
+                raise RuntimeError("SaveScreenshotRaw failed (no frame present?)")
         return bytes(buf), w, h, row_bytes
 
     # -- frames -------------------------------------------------------------
