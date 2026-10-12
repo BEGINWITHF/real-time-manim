@@ -12,24 +12,37 @@ static stbtt_fontinfo fonts[MAX_FONTS];
 static int font_lens[MAX_FONTS];
 static int font_count = 0;
 
-static int utf8_decode(const char *text, int *ci, int *codepoint) {
+/* Decode one UTF-8 codepoint at `*ci`.
+
+   `len` is the byte length NOT counting the terminator, and every continuation
+   byte is range-checked against it.  The old signature took only the pointer and
+   read `text[ci+1 .. ci+3]` unconditionally, so a truncated sequence at the end
+   of the buffer -- a 0xE0/0xF0 lead byte in the last 1-3 bytes, which is what a
+   half-copied or hand-built string looks like -- walked past the NUL and decoded
+   whatever bytes followed.  Every caller already computed `strlen`, so the bound
+   is free.  A short sequence decodes as U+FFFD and advances one byte, the usual
+   "eat the lead byte and resynchronise" behaviour. */
+static int utf8_decode(const char *text, int len, int *ci, int *codepoint) {
     unsigned char c = (unsigned char)text[*ci];
     if (c < 0x80) {
         *codepoint = c;
         (*ci)++;
         return 1;
     } else if ((c & 0xE0) == 0xC0) {
+        if (*ci + 1 >= len) { *codepoint = 0xFFFD; (*ci)++; return 1; }
         unsigned char c2 = (unsigned char)text[*ci + 1];
         *codepoint = ((c & 0x1F) << 6) | (c2 & 0x3F);
         (*ci) += 2;
         return 2;
     } else if ((c & 0xF0) == 0xE0) {
+        if (*ci + 2 >= len) { *codepoint = 0xFFFD; (*ci)++; return 1; }
         unsigned char c2 = (unsigned char)text[*ci + 1];
         unsigned char c3 = (unsigned char)text[*ci + 2];
         *codepoint = ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
         (*ci) += 3;
         return 3;
     } else if ((c & 0xF8) == 0xF0) {
+        if (*ci + 3 >= len) { *codepoint = 0xFFFD; (*ci)++; return 1; }
         unsigned char c2 = (unsigned char)text[*ci + 1];
         unsigned char c3 = (unsigned char)text[*ci + 2];
         unsigned char c4 = (unsigned char)text[*ci + 3];
@@ -37,7 +50,7 @@ static int utf8_decode(const char *text, int *ci, int *codepoint) {
         (*ci) += 4;
         return 4;
     }
-    *codepoint = 0;
+    *codepoint = 0xFFFD;
     (*ci)++;
     return 1;
 }
@@ -88,7 +101,7 @@ static int pick_best_font(const char *text) {
         int len = (int)strlen(text);
         while (ci < len) {
             int cp;
-            utf8_decode(text, &ci, &cp);
+            utf8_decode(text, len, &ci, &cp);
             if (cp < 32) continue;
             int idx = stbtt_FindGlyphIndex(&fonts[f], cp);
             if (idx != 0) score++;
@@ -136,7 +149,7 @@ void BuildVerticesFromTexts(const TextObj *texts, int count) {
         int len = (int)strlen(t->text);
 
         int total_chars = 0;
-        { int ci2 = 0; while (ci2 < len) { int cp2; utf8_decode(t->text, &ci2, &cp2); if (cp2 > 32 && cp2 != 10) total_chars++; } }
+        { int ci2 = 0; while (ci2 < len) { int cp2; utf8_decode(t->text, len, &ci2, &cp2); if (cp2 > 32 && cp2 != 10) total_chars++; } }
 
         float char_progress = t->opacity * (float)total_chars;
         int full_chars = (int)char_progress;
@@ -150,7 +163,7 @@ void BuildVerticesFromTexts(const TextObj *texts, int count) {
         int ci = 0;
         while (ci < len) {
             int cp;
-            utf8_decode(t->text, &ci, &cp);
+            utf8_decode(t->text, len, &ci, &cp);
             if (cp == 10) { prev_cp = 0; continue; }
             if (cp < 32) { prev_cp = cp; continue; }
 
@@ -184,7 +197,7 @@ void BuildVerticesFromTexts(const TextObj *texts, int count) {
         ci = 0;
         while (ci < len) {
             int cp;
-            utf8_decode(t->text, &ci, &cp);
+            utf8_decode(t->text, len, &ci, &cp);
 
             if (cp == 10) {
                 cursor_x = t->x - text_width * 0.5f;
