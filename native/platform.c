@@ -442,10 +442,21 @@ static void *g_ss_map = NULL;
 static int EnsureScreenshotBuffer(VkDeviceSize size) {
     if (g_ss_buf != VK_NULL_HANDLE && g_ss_size >= size) return 1;
     if (g_ss_buf != VK_NULL_HANDLE) {
+        /* A frame in flight may still be DMA-ing into the OLD buffer (the arm
+           happened before its draw, the grow happens before the next one), and
+           a frame whose copy already landed names it in g_ss_frame.  Freeing
+           underneath either is use-after-free.  The shared-buffer wait covers
+           both. */
+        Render_WaitAllInFlight();
         vkDestroyBuffer(g_dev, g_ss_buf, NULL);
         vkFreeMemory(g_dev, g_ss_mem, NULL);
         g_ss_buf = VK_NULL_HANDLE;
         g_ss_mem = VK_NULL_HANDLE;
+        g_ss_map = NULL;
+        // The buffer we were going to read is gone: forget the copy too, or
+        // SaveScreenshot would read g_ss_map == NULL through the "reliable"
+        // path.
+        g_ss_copied = 0;
     }
 
     // Allocate a pure host-readable staging buffer (HOST_VISIBLE, NOT
@@ -485,6 +496,9 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
     if (chosen == UINT32_MAX) {
         vkDestroyBuffer(g_dev, g_ss_buf, NULL);
         g_ss_buf = VK_NULL_HANDLE;
+        // Stale size would make the next call answer "already big enough"
+        // for a buffer that no longer exists.
+        g_ss_size = 0;
         return 0;
     }
 
@@ -497,10 +511,19 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
         vkDestroyBuffer(g_dev, g_ss_buf, NULL);
         g_ss_buf = VK_NULL_HANDLE;
         g_ss_mem = VK_NULL_HANDLE;
+        g_ss_size = 0;
+        return 0;
+    }
+    if (vkMapMemory(g_dev, g_ss_mem, 0, size, 0, &g_ss_map) != VK_SUCCESS) {
+        vkDestroyBuffer(g_dev, g_ss_buf, NULL);
+        vkFreeMemory(g_dev, g_ss_mem, NULL);
+        g_ss_buf = VK_NULL_HANDLE;
+        g_ss_mem = VK_NULL_HANDLE;
+        g_ss_map = NULL;
+        g_ss_size = 0;
         return 0;
     }
     g_ss_size = size;
-    vkMapMemory(g_dev, g_ss_mem, 0, size, 0, &g_ss_map);
     return 1;
 }
 
