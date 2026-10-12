@@ -51,7 +51,7 @@ class FrameServer:
 
     def __init__(self, scene_cls, width=1920, height=1080,
                  max_workers=4, max_pending=32, hidden=True):
-        from real_time_manim.vulkan_bind import MLWindow
+        from real_time_manim.window import MLWindow
 
         prev_mode = MLWindow._schedule_mode
         prev_hidden = MLWindow._hidden_default
@@ -221,7 +221,7 @@ _LAST_WINDOWS = []
 
 
 def _install_registry_capture():
-    from real_time_manim.vulkan_bind import MLWindow
+    from real_time_manim.window import MLWindow
     if getattr(MLWindow, '_capture_hooked', False):
         return
     orig_init = MLWindow.__init__

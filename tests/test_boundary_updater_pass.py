@@ -30,8 +30,8 @@ if REPO not in sys.path:
 
 from manim import Animation, Dot, RIGHT
 
-from real_time_manim import vulkan_bind
 from real_time_manim.vulkan_bind import MLWindow, _drive_mobject_updaters
+from real_time_manim.window import play as _play
 
 
 class StubScene:
@@ -64,13 +64,15 @@ def _run(anim, duration, monkeypatch, events):
     window = StubWindow(scene := StubScene())
     tl = StubTimeline(anim, duration)
 
-    original = vulkan_bind._drive_mobject_updaters
+    # `_run_timeline` lives in `window/play.py`, so the driver is looked up
+    # there -- patch the namespace the call site reads from.
+    original = _play._drive_mobject_updaters
 
     def spy(mob_scene, dt, *args, **kwargs):
         events.append(("drive", mob_scene, dt))
         return original(mob_scene, dt, *args, **kwargs)
 
-    monkeypatch.setattr(vulkan_bind, "_drive_mobject_updaters", spy)
+    monkeypatch.setattr(_play, "_drive_mobject_updaters", spy)
     MLWindow._run_timeline(window, tl)
     return scene, tl
 
