@@ -691,14 +691,20 @@ static void CopySwapchainImageToBuffer(uint32_t img_idx, VkBuffer dst, int w, in
 // bulk-copy the raw bytes into CPU cache (vectorized memcpy) and convert there.
 static unsigned char *g_conv_buf = NULL;
 static VkDeviceSize g_conv_size = 0;
-static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
+static int ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
+    if (out == NULL || g_ss_map == NULL) return 0;
     VkDeviceSize raw_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (g_conv_size < raw_size) {
+        unsigned char *fresh = (unsigned char *)malloc((size_t)raw_size);
+        if (fresh == NULL) return 0;    // keep the old (too small) buffer
         free(g_conv_buf);
-        g_conv_buf = (unsigned char *)malloc((size_t)raw_size);
+        g_conv_buf = fresh;
+        // Only publish the new size once the allocation succeeded: publishing
+        // it first made a later call treat the NULL buffer as usable and
+        // memcpy from g_ss_map into unallocated memory.
         g_conv_size = raw_size;
     }
-    if (g_conv_buf == NULL) return;
+    if (g_conv_buf == NULL) return 0;
     unsigned char *raw = g_conv_buf;
     memcpy(raw, g_ss_map, (size_t)raw_size);
     int rowBytes = ((w * 3 + 3) & ~3);
@@ -711,6 +717,32 @@ static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
             dst[x * 3 + 2] = row[x * 4 + 2];  // R
         }
     }
+    return 1;
+}
+
+// Decide where SaveScreenshot's pixels come from.  Returns 1 when the staging
+// buffer holds usable pixels, 0 when the caller must say "no frame yet".
+//
+//  * g_ss_copied  -- the reliable path: the frame copied itself out before
+//    present, and its fence (waited here) tells us the copy landed.
+//  * g_ss_arm     -- a readback is armed but the frame that will service it has
+//    not been drawn yet (the live `start_record` worker polls faster than the
+//    render loop, and the first frame of a fast record arms before its draw).
+//    Answer "no frame yet" so the caller retries: taking the post-present
+//    fallback here would hand back the frame from BEFORE the arm, i.e. exactly
+//    the stale picture the arm exists to avoid.
+//  * otherwise    -- nothing was ever armed.  The spec leaves a presented
+//    image's content undefined (the presentation engine owns it) and it has
+//    been observed to come back stale, so this is only a best-effort guess.
+static int ResolveScreenshotSource(int w, int h) {
+    if (g_ss_copied) {
+        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
+        g_ss_copied = 0;
+        return 1;
+    }
+    if (g_ss_arm) return 0;
+    CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
+    return 1;
 }
 
 // SaveScreenshot reads the swapchain framebuffer directly (independent of the
@@ -725,21 +757,12 @@ __declspec(dllexport) int SaveScreenshot(const char *path) {
     VkDeviceSize img_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (!EnsureScreenshotBuffer(img_size)) return 0;
 
-    if (g_ss_copied) {
-        // Reliable path: the frame copied its own image before present; its
-        // fence tells us when the copy is done (host-coherent memory, no flush).
-        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
-        g_ss_copied = 0;
-    } else {
-        // Fallback: the last presented image, copied after the fact.  The spec
-        // leaves its content undefined (presentation engine owns it) and it has
-        // been observed to come back stale -- request a readback before drawing.
-        CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
-    }
+    if (!ResolveScreenshotSource(w, h)) return 0;
 
     int rowBytes = ((w * 3 + 3) & ~3);
     unsigned char *bgr = (unsigned char *)malloc((size_t)rowBytes * (size_t)h);
-    ConvertBGRAtoBGR(w, h, bgr);
+    if (bgr == NULL) return 0;
+    if (!ConvertBGRAtoBGR(w, h, bgr)) { free(bgr); return 0; }
 
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
