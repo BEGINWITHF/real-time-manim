@@ -42,7 +42,7 @@ def frame_mean(fs, t):
 def collect(times):
     """Read every t twice inside one window (a fresh window per call)."""
     from real_time_manim.frames import FrameServer
-    from scenes.demo_scene import DemoCreate
+    from examples.scenes import DemoCreate
 
     fs = FrameServer(DemoCreate)
     try:

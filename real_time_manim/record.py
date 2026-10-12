@@ -137,7 +137,7 @@ class _AutoRecord:
                  on_init: Callable[[Any, str], None],
                  on_close: Callable[[Any], None],
                  verbose: bool = True):
-        import real_time_manim.vulkan_bind as vb
+        import real_time_manim.window as vb
         self._vb = vb
         self._out_path = out_path
         self._on_init = on_init
@@ -187,7 +187,7 @@ def _run(scene, out_path: str, on_init, on_close,
     rec = _AutoRecord(out_path, on_init, on_close, verbose=verbose)
     # ``hidden`` decides whether the scene's windows are *created* hidden (never
     # shown, so nothing pops onto the desktop) -- not merely hidden afterwards.
-    from real_time_manim.vulkan_bind import MLWindow
+    from real_time_manim.window import MLWindow
     prev_hidden = MLWindow._hidden_default
     if hidden is not None:
         MLWindow._hidden_default = bool(hidden)

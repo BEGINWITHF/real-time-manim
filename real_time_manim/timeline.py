@@ -232,14 +232,14 @@ class Timeline:
                 # stored.  manim-native classes such as AddTextWordByWord read
                 # it, so the timeline path has to do the same (lazy import: this
                 # module is imported by vulkan_bind).
-                from real_time_manim.vulkan_bind import _setup_anim_scene
+                from real_time_manim.window.scene import _setup_anim_scene
                 _setup_anim_scene(anim, self.scene)
                 anim.begin()          # manim's begin() takes no time argument
             else:
                 anim.begin(0.0)       # our animations take an absolute start time
             # Phase 3: a manim-native animation writes no render channels of its
             # own, so install the adapter that derives them from its state.
-            from real_time_manim.render_hooks import install_hooks
+            from real_time_manim.render.hooks import install_hooks
             install_hooks(anim)
             begun.append(entry)
         self.duration = max(
@@ -300,7 +300,7 @@ class Timeline:
         # state itself stays a pure function of t, so random access is intact.
         dt = 0.0 if (self._last_t is None or t <= self._last_t) else t - self._last_t
         if dt > 0.0:
-            from real_time_manim.vulkan_bind import _drive_mobject_updaters
+            from real_time_manim.window.scene import _drive_mobject_updaters
             _drive_mobject_updaters(self.scene, dt)
         self._last_t = t
         self.window.sync(self.scene)

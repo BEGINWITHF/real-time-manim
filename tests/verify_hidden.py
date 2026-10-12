@@ -10,7 +10,7 @@ Modes:
   shot             compare the BMP screenshot path with the exact readback
   lag              does a read follow the frame just drawn, in any cadence?
 
-Needs the dev scene files (`scenes/`), so it runs from a working tree rather
+Needs the dev scene files (`examples/scenes/`), so it runs from a working tree rather
 than an installed package.  Prints one JSON line per mode.
 
 Asserted properties (each was a real bug, see tests/test_frame_access.py):
@@ -59,7 +59,7 @@ def main():
 
     if mode in ("frames", "frames_visible"):
         from real_time_manim.frames import FrameServer
-        from scenes.demo_scene import DemoCreate
+        from examples.scenes import DemoCreate
 
         t0 = time.perf_counter()
         fs = FrameServer(DemoCreate, hidden=(mode == "frames"))
@@ -92,7 +92,7 @@ def main():
 
     elif mode == "fast":
         from real_time_manim.record import fast_record_scene
-        from scenes.demo_scene import DemoFadeInFadeOut as SceneCls
+        from examples.scenes import DemoFadeInFadeOut as SceneCls
         import real_time_manim.vulkan_bind as vb
 
         seen = {}
@@ -131,7 +131,7 @@ def main():
         # Compare the BMP screenshot path with the deterministic FrameServer
         # readback at the same t (documents the known rough edge).
         from real_time_manim.frames import FrameServer
-        from scenes.demo_scene import DemoCreate
+        from examples.scenes import DemoCreate
         import numpy as np
         from PIL import Image
 
@@ -160,7 +160,7 @@ def main():
         # Does the readback follow the frame just drawn?  Draw one t repeatedly
         # and compare; then again with an extra tick() between draw and read.
         from real_time_manim.frames import FrameServer
-        from scenes.demo_scene import DemoCreate
+        from examples.scenes import DemoCreate
         import numpy as np
         from PIL import Image
 

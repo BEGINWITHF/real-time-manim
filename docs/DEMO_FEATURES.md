@@ -1,6 +1,6 @@
 # Manim-Vulkan Demo Scenes — Feature Reference
 
-All 77 demo scenes in `scenes/demo_scene.py`, listing every animation, the parameters used in each demo, and which demo uses them.
+All 82 demo scenes in `examples/scenes/` (one module per topic — `basics`, `timing`, `creation`, `indication`, `transform`, `latex`; `examples/scenes/demo_scene.py` re-exports them all), listing every animation, the parameters used in each demo, and which demo uses them.
 
 ---
 

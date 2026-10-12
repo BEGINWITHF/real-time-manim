@@ -35,12 +35,10 @@ Homepage = "https://github.com/BEGINWITHF/real-time-manim"
 Documentation = "https://github.com/BEGINWITHF/real-time-manim#readme"
 Source = "https://github.com/BEGINWITHF/real-time-manim"
 
-[tool.setuptools]
-packages = [
-    "real_time_manim",
-    "real_time_manim.animations",
-    "real_time_manim.utils",
-]
+# Auto-discover the package tree (real_time_manim and every subpackage) so a
+# new subpackage never has to be listed by hand.
+[tool.setuptools.packages.find]
+include = ["real_time_manim*"]
 
 [tool.setuptools.package-data]
 real_time_manim = ["vulkan_core.dll", "logo.ico"]

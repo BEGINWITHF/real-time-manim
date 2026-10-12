@@ -41,7 +41,7 @@ def _runner_script(num, desc, cls_name):
         "import sys, os, shutil; from real_time_manim.record import scene_lifecycle\n"
         f"sys.path.insert(0, {PROJECT!r})\n"
         "import real_time_manim.vulkan_bind as vb\n"
-        f"from scenes.demo_scene import {cls_name}\n"
+        f"from examples.scenes import {cls_name}\n"
         f"out = {out!r}\n"
         "os.makedirs(os.path.dirname(out), exist_ok=True)\n"
         "# restore cached LaTeX SVGs so MathTex scenes skip recompiling\n"
