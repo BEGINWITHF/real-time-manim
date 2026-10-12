@@ -426,6 +426,9 @@ uint32_t Tex_ItemCount(void) {
 
 void Tex_EndFrame(void) {
     if (g_tex_vertex_count == 0) return;
+    /* Same shared-buffer rule as update_vertex_buffer: this buffer is read by
+       every frame in flight, and we are about to overwrite it. */
+    Render_WaitAllInFlight();
     void *mapped = NULL;
     VkDeviceSize size = sizeof(float) * g_tex_vertex_count * TEX_FLOATS_PER_VERTEX;
     vkMapMemory(g_dev, g_tex_vert_buf_mem, 0, size, 0, &mapped);
