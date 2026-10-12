@@ -1062,7 +1062,28 @@ int Render_IsReady(void) {
 
 }
 
+void Render_WaitAllInFlight(void) {
+    /* The host-visible vertex buffers are SHARED by every frame in flight, and
+       both writers below run from Render_DrawScene -- i.e. BEFORE
+       Render_DrawFrame waits for this slot's fence.  With 2+ swapchain images
+       the PREVIOUS frame's command buffer was still reading those bytes while
+       we overwrite them, which the spec forbids and which showed up as torn
+       geometry on heavy scenes.
+
+       Waiting for every in-flight fence is what costs us the CPU/GPU overlap,
+       but it is the only correct thing to do with a single shared buffer: a
+       per-frame ring buffer would need img_count * 100 MB of host memory.  At
+       the 60 fps target the GPU frame is well inside the 16.6 ms budget, so
+       the stall is not on the critical path. */
+    if (g_in_flight_fences != NULL && g_swapchain_img_count > 0) {
+        vkWaitForFences(g_dev, g_swapchain_img_count, g_in_flight_fences,
+                        VK_TRUE, UINT64_MAX);
+    }
+}
+
 void update_vertex_buffer(const void *data, VkDeviceSize size) {
+
+    Render_WaitAllInFlight();
 
     void *mapped_data;
 
