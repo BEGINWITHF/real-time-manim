@@ -66,31 +66,46 @@ __declspec(dllexport) void AddLineStrip(
     const float *points, const float *alphas, int num_points,
     int width, int r, int g, int b, float alpha)
 {
+    if (points == NULL) return;
     if (num_points < 2 || g_strip_count >= MAX_LINE_STRIPS) return;
-    if (num_points > MAX_STRIP_POINTS) num_points = MAX_STRIP_POINTS;
-    if (g_strip_pool_used + num_points > MAX_STRIP_POOL_POINTS) return;
 
-    int cmd_index = g_strip_count;
-    LineStripObj *s = &g_strips[cmd_index];
-    s->pt_start = g_strip_pool_used;
-    g_strip_pool_used += num_points;
-    s->num_points = num_points;
-    s->width = width;
-    s->r = r; s->g = g; s->b = b;
-    s->alpha = alpha;
-    s->has_per_vertex_alpha = (alphas != 0);
-    for (int i = 0; i < num_points * 2; i++) {
-        g_strip_pool_xy[s->pt_start * 2 + i] = points[i];
-    }
-    if (alphas) {
-        for (int i = 0; i < num_points; i++) {
-            g_strip_pool_a[s->pt_start + i] = alphas[i];
+    /* A strip longer than MAX_STRIP_POINTS used to be SILENTLY cut off, so the
+       stroke simply stopped mid-path -- a visible break with no warning (and
+       callers such as the surface-lab ribbons do exceed it).  Emit the
+       overflow as extra strips instead, each starting on the previous strip's
+       last point so the run stays continuous. */
+    int remaining = num_points;
+    int src = 0;
+    while (remaining >= 2 && g_strip_count < MAX_LINE_STRIPS) {
+        int take = remaining > MAX_STRIP_POINTS ? MAX_STRIP_POINTS : remaining;
+        if (g_strip_pool_used + take > MAX_STRIP_POOL_POINTS) return;
+
+        int cmd_index = g_strip_count;
+        LineStripObj *s = &g_strips[cmd_index];
+        s->pt_start = g_strip_pool_used;
+        g_strip_pool_used += take;
+        s->num_points = take;
+        s->width = width;
+        s->r = r; s->g = g; s->b = b;
+        s->alpha = alpha;
+        s->has_per_vertex_alpha = (alphas != 0);
+        for (int i = 0; i < take * 2; i++) {
+            g_strip_pool_xy[s->pt_start * 2 + i] = points[(src * 2) + i];
         }
+        if (alphas) {
+            for (int i = 0; i < take; i++) {
+                g_strip_pool_a[s->pt_start + i] = alphas[src + i];
+            }
+        }
+        g_strip_count++;
+        /* Drawn at its submission position: the stroke belongs to the mobject
+           that is being sent right now, not to the end of the frame. */
+        DrawCmd_Push(CMD_LINE_STRIP, cmd_index);
+
+        remaining -= take - 1;      /* the next strip restarts on the last point */
+        src += take - 1;
+        if (take < 2) break;
     }
-    g_strip_count++;
-    /* Drawn at its submission position: the stroke belongs to the mobject
-       that is being sent right now, not to the end of the frame. */
-    DrawCmd_Push(CMD_LINE_STRIP, cmd_index);
 }
 
 void ResetLineStrips(void) {
