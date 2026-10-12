@@ -278,6 +278,11 @@ __declspec(dllexport) void AddPolygon(float x, float y, int r, int g, int b, int
 }
 
 __declspec(dllexport) void AddDashedLine(float x1, float y1, float x2, float y2, int width, int r, int g, int b, float dash_length, float gap_length, float alpha) {
+    /* The dash loop advances by dash_length/gap_length each step, so a pair of
+       non-positive lengths leaves `pos` where it was and spins forever with the
+       CPU pinned (Python's own guards do not cover every caller, e.g. a grow
+       animation that scales the dash to 0 mid-flight). */
+    if (!(dash_length > 0.0f) || !(gap_length > 0.0f)) return;
     if (g_dashed_line_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_dashed_lines[g_dashed_line_count] = (DashedLineObj){ x1, y1, x2, y2, width, r, g, b, dash_length, gap_length, alpha };
         g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_DASHED_LINE, g_dashed_line_count };
