@@ -59,6 +59,17 @@ VkSemaphore *g_render_done_sems = NULL;
 
 VkFence *g_in_flight_fences = NULL;
 
+/* How many entries `g_img_avail_sems` / `g_render_done_sems` /
+   `g_in_flight_fences` / `g_cmd_bufs` actually hold.  These four are sized from
+   the swapchain's image count, and `CreateSwapchain` is free to return a
+   DIFFERENT count on a rebuild (the spec allows the implementation to pick its
+   own, and drivers do change it when the window changes display or is
+   maximised).  `RecreateSwapchain` used to rebuild only the framebuffers and
+   image views, so a rebuild that grew the image count left `g_current_frame`
+   walking off the end of the semaphore/fence/command-buffer arrays -- see
+   `EnsurePerFrameObjects`. */
+uint32_t g_per_frame_count = 0;
+
 VkBuffer g_vert_buf = VK_NULL_HANDLE;
 
 VkDeviceMemory g_vert_buf_mem = VK_NULL_HANDLE;
@@ -860,6 +871,8 @@ static void CreateCommandBuffers(void) {
 
     vkAllocateCommandBuffers(g_dev, &ai, g_cmd_bufs);
 
+    g_per_frame_count = g_cmd_buf_count;
+
 }
 
 static void CreateSyncObjects(void) {
@@ -889,6 +902,56 @@ static void CreateSyncObjects(void) {
         vkCreateFence(g_dev, &fci, NULL, &g_in_flight_fences[i]);
 
     }
+
+    g_per_frame_count = g_swapchain_img_count;
+
+}
+
+/* Tear down and rebuild the four per-frame arrays to match `g_swapchain_img_count`.
+
+   `RecreateSwapchain` rebuilds the framebuffers and image views against the
+   count the new swapchain reports, but these arrays were sized from the count
+   the ORIGINAL swapchain reported.  A rebuild whose image count grew then left
+   `g_current_frame = (g_current_frame + 1) % g_swapchain_img_count` indexing
+   past the end of the semaphore, fence and command-buffer arrays -- an
+   out-of-bounds read of an uninitialised handle fed straight into
+   `vkWaitForFences` / `vkQueueSubmit`.  Called only when the count really
+   changed, so the common resize path does no extra work. */
+static void EnsurePerFrameObjects(void) {
+
+    if (g_per_frame_count == g_swapchain_img_count) return;
+
+    for (uint32_t i = 0; i < g_per_frame_count; i++) {
+
+        vkDestroySemaphore(g_dev, g_img_avail_sems[i], NULL);
+
+        vkDestroySemaphore(g_dev, g_render_done_sems[i], NULL);
+
+        vkDestroyFence(g_dev, g_in_flight_fences[i], NULL);
+
+    }
+
+    free(g_img_avail_sems);
+
+    free(g_render_done_sems);
+
+    free(g_in_flight_fences);
+
+    g_img_avail_sems = NULL;
+
+    g_render_done_sems = NULL;
+
+    g_in_flight_fences = NULL;
+
+    vkFreeCommandBuffers(g_dev, g_cmd_pool, g_cmd_buf_count, g_cmd_bufs);
+
+    free(g_cmd_bufs);
+
+    g_cmd_bufs = NULL;
+
+    CreateCommandBuffers();
+
+    CreateSyncObjects();
 
 }
 
@@ -1075,6 +1138,11 @@ void RecreateSwapchain(void) {
     CreateSwapchain();
     CreateImageViews();
     CreateFramebuffers();
+    /* The new swapchain is allowed to report a different image count than the
+       one these were sized from, so realign the per-frame arrays (no-op when
+       the count is unchanged, which is the usual case). */
+    EnsurePerFrameObjects();
+    if (g_current_frame >= g_swapchain_img_count) g_current_frame = 0;
 }
 
 void Render_Cleanup(void) {
@@ -1085,7 +1153,10 @@ void Render_Cleanup(void) {
 
     CleanupSwapchain();
 
-    for (uint32_t i = 0; i < g_swapchain_img_count; i++) {
+    /* Destroy exactly as many as were allocated: `g_per_frame_count` is the
+       size of these arrays, and `g_swapchain_img_count` is what the last
+       swapchain reported -- they can differ if a rebuild was interrupted. */
+    for (uint32_t i = 0; i < g_per_frame_count; i++) {
         vkDestroySemaphore(g_dev, g_img_avail_sems[i], NULL);
         vkDestroySemaphore(g_dev, g_render_done_sems[i], NULL);
         vkDestroyFence(g_dev, g_in_flight_fences[i], NULL);
