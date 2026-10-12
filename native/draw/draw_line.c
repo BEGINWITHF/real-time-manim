@@ -113,6 +113,84 @@ void ResetLineStrips(void) {
     g_strip_pool_used = 0;
 }
 
+/* Unit direction of the strip's (i0 -> i1) segment; 0 if it is degenerate. */
+static int StripDir(int base, int i0, int i1, float *ux, float *uy) {
+    float dx = g_strip_pool_xy[(base + i1) * 2] - g_strip_pool_xy[(base + i0) * 2];
+    float dy = g_strip_pool_xy[(base + i1) * 2 + 1] - g_strip_pool_xy[(base + i0) * 2 + 1];
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 0.0001f) return 0;
+    *ux = dx / len;
+    *uy = dy / len;
+    return 1;
+}
+
+/* The two corners that BOTH quads meeting at (px,py) have to end on.
+
+   Cutting each quad with its own perpendicular end cap (the old behaviour)
+   misses a wedge on the outside of every turn -- base ~ half_w * turn_angle,
+   about 1 px all round a stroked 48-gon, rasterised as dark ticks across the
+   border -- and covers a matching wedge twice on the inside, which composites
+   brighter while alpha < 1.  Cutting both quads along ONE line makes them
+   tile exactly; for that line to reach the outer mitre point (and the inner
+   one on the far side) it must pass through the joint along n_in + n_out,
+   the bisector of the two caps.  Both neighbours call this with the joint's
+   own (in,out) directions, so they compute bit-identical corners and share
+   an edge with no crack.
+
+   Open strip ends pass their direction twice: n + n is that segment's own
+   normal, i.e. the plain perpendicular cap drawn before.  A direction
+   flagged missing (zero-length neighbour) is filled from the surviving side. */
+static void JointCutCorners(
+    float px, float py,
+    int have_in, float inx, float iny,
+    int have_out, float outx, float outy,
+    float half_w,
+    float *ax, float *ay, float *bx, float *by)
+{
+    if (!have_in && !have_out) {
+        inx = 1.0f; iny = 0.0f;
+        outx = 1.0f; outy = 0.0f;
+    } else if (!have_in) {
+        inx = outx; iny = outy;
+    } else if (!have_out) {
+        outx = inx; outy = iny;
+    }
+
+    float cx = -iny - outy;         /* n_in + n_out, the cut's direction */
+    float cy = inx + outx;
+    float cl = sqrtf(cx * cx + cy * cy);
+    if (cl < 0.5f) {
+        /* Turn past ~151 deg: the mitre would reach beyond 4 half widths
+           (and at exactly 180 deg the normals cancel).  Share a plain cap
+           line instead; only such near-fold-back joints keep a notch. */
+        cx = -iny;
+        cy = inx;
+        cl = 1.0f;
+    }
+    cx /= cl;
+    cy /= cl;
+
+    /* Intersect the cut line (px,py) + t*(cx,cy) with the incoming
+       segment's offset lines (px,py) +- half_w*n + s*(inx,iny); crossing
+       with the direction (n cross in == -1) gives t * (cx cross in) == -+
+       half_w. */
+    float denom = cx * iny - cy * inx;
+    if (denom > -1e-4f && denom < 1e-4f) {
+        /* unreachable: |denom| = cos(turn/2) >= 0.25 by the guard above */
+        *ax = px - iny * half_w;
+        *ay = py + inx * half_w;
+        *bx = px + iny * half_w;
+        *by = py - inx * half_w;
+        return;
+    }
+    float tp = -half_w / denom;     /* on the +normal side */
+    float tm = half_w / denom;
+    *ax = px + tp * cx;
+    *ay = py + tp * cy;
+    *bx = px + tm * cx;
+    *by = py + tm * cy;
+}
+
 void BuildVerticesFromLineStripAt(int si) {
     LineStripObj *s = &g_strips[si];
     int n = s->num_points;
@@ -122,6 +200,19 @@ void BuildVerticesFromLineStripAt(int si) {
     float nr = s->r / 255.0f, ng = s->g / 255.0f, nb = s->b / 255.0f;
     float thick = (float)s->width;
     float half_w = thick * 0.5f + 0.5f;
+
+    /* A strip whose last point comes back to its first is a closed outline:
+       its seam is then a joint like any other, while the two open ends of a
+       partial stroke keep their perpendicular caps. */
+    int closed = 0;
+    float seam_x = 0.0f, seam_y = 0.0f;
+    if (n >= 3) {
+        seam_x = g_strip_pool_xy[base * 2];
+        seam_y = g_strip_pool_xy[base * 2 + 1];
+        float ddx = seam_x - g_strip_pool_xy[(base + n - 1) * 2];
+        float ddy = seam_y - g_strip_pool_xy[(base + n - 1) * 2 + 1];
+        closed = (ddx > -1e-3f && ddx < 1e-3f && ddy > -1e-3f && ddy < 1e-3f);
+    }
 
     for (int i = 0; i < n - 1; i++) {
         if (g_vertex_count + 6 > MAX_VERTICES) break;
@@ -136,19 +227,65 @@ void BuildVerticesFromLineStripAt(int si) {
         float len = sqrtf(dx * dx + dy * dy);
         if (len < 0.0001f) continue;
 
-        float nx = (-dy / len) * half_w;
-        float ny = (dx / len) * half_w;
+        float ux = dx / len;
+        float uy = dy / len;
 
         float a0 = s->has_per_vertex_alpha ? g_strip_pool_a[base + i] : s->alpha;
         float a1 = s->has_per_vertex_alpha ? g_strip_pool_a[base + i + 1] : s->alpha;
 
-        PushVertex(x0 + nx, y0 + ny, nr, ng, nb, a0);
-        PushVertex(x0 - nx, y0 - ny, nr, ng, nb, a0);
-        PushVertex(x1 + nx, y1 + ny, nr, ng, nb, a1);
+        /* Start cap.  Both neighbours fetch a joint's directions through the
+           same StripDir calls, so their corners are bit-identical. */
+        float jx = x0, jy = y0;
+        float inx = ux, iny = uy, outx = ux, outy = uy;
+        int have_in = 1, have_out = 1;
+        if (i > 0) {
+            have_in = StripDir(base, i - 1, i, &inx, &iny);
+            have_out = StripDir(base, i, i + 1, &outx, &outy);
+        } else if (closed) {
+            jx = seam_x; jy = seam_y;
+            have_in = StripDir(base, n - 2, n - 1, &inx, &iny);
+            have_out = StripDir(base, 0, 1, &outx, &outy);
+        }
+        float sxa, sya, sxb, syb;
+        JointCutCorners(jx, jy, have_in, inx, iny, have_out, outx, outy,
+                        half_w, &sxa, &sya, &sxb, &syb);
 
-        PushVertex(x0 - nx, y0 - ny, nr, ng, nb, a0);
-        PushVertex(x1 - nx, y1 - ny, nr, ng, nb, a1);
-        PushVertex(x1 + nx, y1 + ny, nr, ng, nb, a1);
+        /* End cap. */
+        jx = x1; jy = y1;
+        inx = ux; iny = uy; outx = ux; outy = uy;
+        have_in = 1; have_out = 1;
+        if (i < n - 2) {
+            have_in = StripDir(base, i, i + 1, &inx, &iny);
+            have_out = StripDir(base, i + 1, i + 2, &outx, &outy);
+        } else if (closed) {
+            jx = seam_x; jy = seam_y;
+            have_in = StripDir(base, n - 2, n - 1, &inx, &iny);
+            have_out = StripDir(base, 0, 1, &outx, &outy);
+        }
+        float exa, eya, exb, eyb;
+        JointCutCorners(jx, jy, have_in, inx, iny, have_out, outx, outy,
+                        half_w, &exa, &eya, &exb, &eyb);
+
+        /* A segment shorter than its two mitre cuts would bow-tie (the cut
+           corners cross past each other); keep the plain caps there rather
+           than emit a self-crossing quad. */
+        if ((exa - sxa) * ux + (eya - sya) * uy <= 0.0f ||
+            (exb - sxb) * ux + (eyb - syb) * uy <= 0.0f) {
+            float nx = -uy * half_w;
+            float ny = ux * half_w;
+            sxa = x0 + nx; sya = y0 + ny;
+            sxb = x0 - nx; syb = y0 - ny;
+            exa = x1 + nx; eya = y1 + ny;
+            exb = x1 - nx; eyb = y1 - ny;
+        }
+
+        PushVertex(sxa, sya, nr, ng, nb, a0);
+        PushVertex(sxb, syb, nr, ng, nb, a0);
+        PushVertex(exa, eya, nr, ng, nb, a1);
+
+        PushVertex(sxb, syb, nr, ng, nb, a0);
+        PushVertex(exb, eyb, nr, ng, nb, a1);
+        PushVertex(exa, eya, nr, ng, nb, a1);
     }
 }
 
