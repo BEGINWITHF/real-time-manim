@@ -1,0 +1,193 @@
+"""Give manim's own animations the render-state channels RTM's senders read.
+
+This is the public half: `install_hooks` wraps a manim animation's
+`interpolate`, `derive_channels` re-derives the channels from the
+animation's own state every frame, `clear_hooks` unwraps it.
+`Timeline.finalize` installs the hooks; `install_hooks` is idempotent
+and recurses into composite animations."""
+
+from __future__ import annotations
+
+import logging
+
+from real_time_manim.render.hook_channels import (
+    _write_fade,
+    _write_grow,
+    _write_indicate,
+    _write_passing_flash,
+    _write_progress,
+    _write_rotate,
+    _write_transform,
+    _write_updates,
+)
+from real_time_manim.render.hook_rules import (
+    _children,
+    _is_container,
+    _kind_of,
+    _refresh_opacity,
+)
+
+logger = logging.getLogger(__name__)
+
+
+
+def _is_rtm_animation(anim):
+    """RTM's own classes write the channels themselves -- leave them alone."""
+    try:
+        from real_time_manim.animations.base import Animation as RtmAnimation
+    except Exception:                     # pragma: no cover
+        return False
+    return isinstance(anim, RtmAnimation)
+
+
+# ---------------------------------------------------------------------------
+# install / clear
+# ---------------------------------------------------------------------------
+
+def _snapshot_pivots(anim, mob):
+    """Capture begin-state pivots on the animation.
+
+    The grow/rotate channels need the point that was valid at ``begin()``; reading
+    the mobject's centre on every frame would drift once it starts scaling.
+    """
+    if mob is None:
+        return
+    kind = _kind_of(anim)
+    try:
+        if kind == "grow":
+            point = getattr(anim, "point", None)
+            if point is None and "GrowArrow" in type(anim).__name__ and hasattr(mob, "get_start"):
+                point = mob.get_start()
+            edge = getattr(anim, "edge", None)
+            if point is None and edge is not None and hasattr(mob, "get_critical_point"):
+                point = mob.get_critical_point(edge)
+            if point is None and hasattr(mob, "get_center"):
+                point = mob.get_center()
+            anim._rtm_grow_point = point
+        elif kind == "rotate":
+            about = getattr(anim, "about_point", None)
+            if about is None and hasattr(mob, "get_center"):
+                about = mob.get_center()
+            anim._rtm_pivot = about
+    except Exception:                      # pragma: no cover - mapping aid only
+        logger.debug("pivot snapshot failed for %s", type(anim).__name__, exc_info=True)
+
+
+def install_hooks(anim) -> None:
+    """Wrap `anim.interpolate` so a manim-native animation drives RTM's channels.
+
+    Call it right after `anim.begin()`.  Idempotent, and it recurses into
+    composite animations (`AnimationGroup`, `Succession`, `LaggedStart`, `Add`).
+    """
+    if getattr(anim, "_rtm_hooks_installed", False):
+        return
+    if _is_rtm_animation(anim):
+        anim._rtm_hooks_installed = True          # it writes its own channels
+        for sub in _children(anim):
+            install_hooks(sub)
+        return
+
+    original = anim.interpolate
+
+    def interpolate(alpha):
+        out = original(alpha)
+        try:
+            # recurse=False: children derive themselves through their own
+            # wrapped interpolate, already driven by manim with their sub_alpha.
+            # Recursing here would re-derive them from THIS animation's alpha.
+            derive_channels(anim, alpha, recurse=False)
+        except Exception:                # a hook must never break a render
+            logger.debug("render hook failed for %s", type(anim).__name__, exc_info=True)
+        return out
+
+    anim.interpolate = interpolate
+    anim._rtm_orig_interpolate = original
+    anim._rtm_hooks_installed = True
+    _snapshot_pivots(anim, getattr(anim, "mobject", None))
+
+    # derive the begin state too, so frame 0 is not rendered from the defaults.
+    # recurse=True here (the opposite of the wrapper above): at install time no
+    # child has been driven yet, so this is what gives them their start state.
+    try:
+        derive_channels(anim, 0.0, recurse=True)
+    except Exception:
+        logger.debug("render hook (begin) failed for %s", type(anim).__name__, exc_info=True)
+
+    for sub in _children(anim):
+        install_hooks(sub)
+
+
+def clear_hooks(anim) -> None:
+    """Undo `install_hooks` (keeps a reused animation from double-wrapping)."""
+    original = getattr(anim, "_rtm_orig_interpolate", None)
+    if original is not None:
+        anim.interpolate = original
+        try:
+            del anim._rtm_orig_interpolate
+        except AttributeError:
+            pass
+    anim._rtm_hooks_installed = False
+    for sub in _children(anim):
+        clear_hooks(sub)
+
+
+# ---------------------------------------------------------------------------
+# channel derivation
+# ---------------------------------------------------------------------------
+
+def derive_channels(anim, alpha, recurse=True) -> None:
+    """Write the render-state channels for `anim` at `alpha`.
+
+    ``recurse`` matters only for composites, and it must differ per call site:
+
+    * ``True`` (the default) is right for the install-time call, because that
+      is what gives every child its **start** state before any playback.
+    * ``False`` is required from a composite's own wrapper.  manim's
+      ``AnimationGroup.interpolate``/``Succession.interpolate`` already drive
+      each child with that child's *own* sub_alpha, and ``install_hooks`` has
+      wrapped every child, so those calls write correct channels; deriving the
+      children again here -- with the **group's** alpha, because a composite
+      matches no ``_RULES`` bucket and falls straight through to the recursion
+      below -- overwrites them.  Measured effect of getting this wrong:
+      ``Succession(Create, Rotate, FadeOut)`` re-derived its Create child at the
+      group alpha, so at group 0.5 a finished Create (sub_alpha 1.0) was written
+      back to 0.5 and the circle sat half-drawn.
+    """
+    mob = getattr(anim, "mobject", None)
+    if mob is None:
+        if recurse:
+            for sub in _children(anim):             # composite: children carry mobjects
+                derive_channels(sub, alpha)
+        return
+
+    kind = _kind_of(anim)
+    if kind == "passing_flash":
+        _write_passing_flash(anim, mob, alpha)
+    elif kind == "progress":
+        _write_progress(anim, mob, alpha)
+    elif kind == "method":
+        # same mobject animated through a method: the specialised senders keep
+        # drawing it (fills included), only the opacity registry needs a refresh
+        if not _is_container(mob):
+            _refresh_opacity(mob)
+    elif kind == "transform":
+        _write_transform(anim, mob, alpha)
+    elif kind == "grow":
+        _write_grow(anim, mob, alpha)
+    elif kind == "rotate":
+        _write_rotate(anim, mob, alpha)
+    elif kind == "fade":
+        _write_fade(anim, mob, alpha)
+    elif kind == "indicate":
+        _write_indicate(anim, mob, alpha)
+    elif kind == "updates":
+        _write_updates(anim, mob, alpha)
+    else:
+        # Unknown class: log it (the plan wants the mapping table visible) and
+        # write NOTHING.  Guessing "it is probably a morph" and setting
+        # `_transforming` made `.animate.scale()` render as a static final state.
+        logger.debug("no render hook for %s", type(anim).__name__)
+
+    if recurse:
+        for sub in _children(anim):
+            derive_channels(sub, alpha)
