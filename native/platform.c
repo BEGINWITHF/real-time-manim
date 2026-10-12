@@ -327,6 +327,7 @@ __declspec(dllexport) void AddText(float x, float y, int r, int g, int b, float 
 
 __declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long long digest, const unsigned char *rgba, int w, int h, const float *xy8, float opacity) {
     if (g_image_quad_count >= MAX_IMAGE_QUADS || g_draw_cmd_count >= MAX_DRAW_CMDS) return;
+    if (rgba == NULL || xy8 == NULL || w <= 0 || h <= 0) return;
     if (Tex_Ensure(token, digest, rgba, w, h) < 0) return;         // upload failed / table full
     ImageQuad *q = &g_image_quads[g_image_quad_count];
     q->token = token;
