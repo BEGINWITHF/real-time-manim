@@ -23,12 +23,22 @@ real-time-manim/
 ├── requirements.txt            # manim>=0.20.0, numpy
 ├── README.md                   # Project overview (roadmap)
 │
-├── core/
-│   ├── __init__.py             # (empty — package marker)
-│   ├── vulkan_bind.py          # MLWindow class — the bridge between Python and the DLL
-│   ├── vulkan_shapes.py        # ShapeMixin — converts mobjects to DLL draw calls (rect, circle, ellipse, polygon, arrow, line, etc.)
-│   ├── vulkan_text.py          # TextMixin — renders Text/MathTex via bezier paths and DLL text API
-│   ├── vulkan_util.py          # Coordinate conversion (manim → screen), color helpers
+├── real_time_manim/
+│   ├── window/                 # MLWindow — the bridge between Python and the DLL, assembled from mixins
+│   │   ├── core.py             # window creation, DLL binding, per-frame sync (CoreMixin)
+│   │   ├── paint.py            # turning mobjects into native draw calls (PaintMixin)
+│   │   ├── play.py             # the play loop and timeline renderer (PlayMixin)
+│   │   ├── recording.py        # screenshots and video capture (RecordingMixin)
+│   │   └── mathtex.py / scene.py / paint_order.py / patches.py
+│   ├── vulkan_bind.py          # Facade re-exporting window/ — the old import path still works
+│   ├── render/                 # mobject → DLL senders (formerly vulkan_shapes/text/util/image)
+│   │   ├── shapes/             # ShapeMixin — rect, circle, ellipse, polygon, arrow, line, paths
+│   │   ├── text/               # TextMixin — Text/MathTex glyphs and bezier paths
+│   │   ├── hooks.py            # render hooks for manim's own animations
+│   │   ├── image.py            # textured quads (image → Vulkan texture)
+│   │   └── util.py             # Coordinate conversion (manim → screen), color helpers
+│   ├── vulkan_shapes.py / vulkan_text.py / vulkan_util.py /
+│   ├── vulkan_image.py / render_hooks.py   # shims re-exporting render/ (old import paths)
 │   ├── rate_functions.py       # Easing functions (smooth, linear, there_and_back, etc.)
 │   ├── utils/
 │   │   └── paths.py            # Path helpers (straight_path, path_along_arc) for Transform
@@ -74,8 +84,11 @@ real-time-manim/
 │   │   └── fragment.frag       # Fragment shader (solid color with alpha)
 │   └── build.bat               # Compilation script
 │
-└── scenes/
-    └── demo_scene.py           # 80+ demo scenes showcasing all animation types
+├── examples/
+│   ├── scenes/                 # 82 demo scenes showcasing all animation types, one module per topic
+│   │   └── demo_scene.py       # facade re-exporting them all (+ the batch MP4 recorder)
+│   └── timeline_seek.py        # timeline seeking demo
+└── tests/                      # pytest suite
 ```
 
 ---
@@ -299,6 +312,22 @@ Screen (Vulkan window) / BMP capture → ffmpeg → MP4
 | `TracedPath` | `_send_vmobject` (polyline mode) | Line strip with opacity gradient |
 | `VMobject` (generic) | `_send_vmobject` | Bezier path rendering |
 
+#### Stroke rasterisation: `_stroke_layers(px, alpha)`
+
+Native widths are integers and a quad of native width `w` paints `w + 1` px, so a
+sub-pixel stroke is drawn as an integer core laid over a `core + 1`-wide band at
+`alpha * frac`. **Both cover the core pixels**, so at `alpha < 1` the two must be
+solved together or they stack: an inner pixel came out `1-(1-a)(1-a*frac)`.
+
+Opaque strokes saturate and hide it (which is why every width calibration was done
+opaque), but a translucent one did not: a Square and a Circle posed statically at
+`stroke_opacity = 0.345` peaked at 117/255 and 118/255 against CE's 93/255 and
+91/255 (x1.26, x1.29), and a fading `DashedLine` came out 1.37x CE's dash. The
+inner layer is now `1 - (1-alpha)/(1-alpha*frac)`, which is **exactly the old value
+at `alpha == 1`** and lands the composite on `alpha` below it. Probes:
+`_stroke_check.py` (static), `_fade_check.py` (fading), test
+`test_closed_stroke_strip.py::test_stroke_layers_composite_onto_the_requested_alpha`.
+
 ---
 
 ## 7. Animation State Tracking
@@ -340,7 +369,7 @@ Special mobject attributes (set dynamically during animations):
 # Install dependencies
 pip install -r requirements.txt
 
-# Run a demo scene (index into demo_scene.py classes)
+# Run a demo scene (index into the gallery under examples/scenes)
 python run.py 0          # DemoCreate
 python run.py 1          # DemoWriteUnwrite
 python run.py 5          # DemoTransformMatchingShapes
