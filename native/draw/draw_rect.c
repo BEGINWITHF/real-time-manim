@@ -34,8 +34,18 @@ void BuildVerticesFromRects(const Rect *rects, int count) {
 
         float drawn = perimeter * sp;
 
-        /* Fill: triangle fan from stroke start (rot_c[0]), following border path */
-        if (nr > 0.001f || ng > 0.001f || nb > 0.001f) {
+        /* Fill: triangle fan from stroke start (rot_c[0]), following border path.
+
+           Whether there IS a fill is answered by the ALPHA, not by the colour:
+           a fill may legitimately be pure black (`config.background_color`
+           defaults to black, so a swatch filled with it is r=g=b=0).  Reading
+           `r|g|b != 0` silently dropped every black-filled Rectangle and let
+           whatever sat behind it show through -- the same defect and the same
+           measurement that `draw_polygon.c`'s fill test was already fixed for
+           (see the note there: "silently dropped every black-filled shape").
+           The border below is a separate decision and still keys off
+           `border_width`. */
+        if (r->alpha > 0.0001f) {
             float start_x = rot_c[0][0];
             float start_y = rot_c[0][1];
             float cum = 0.0f;
