@@ -194,7 +194,7 @@ A custom reimplementation of Manim's animation classes that works with the Vulka
 - Stores `mobject`, `run_time`, `rate_func`, `lag_ratio`
 - `begin(t)`: records start time
 - `interpolate(t)`: computes `alpha = (t - start_time) / run_time`, applies rate_func, calls `interpolate_mobject(alpha)`
-- Uses global dictionaries (`_anim_opacity`, `_anim_rotation`, `_anim_rotation_delta`) keyed by `id(mob)` to track per-mobject animation state without modifying mobject attributes
+- Uses global dictionaries (`_anim_opacity`, `_anim_rotation`, `_anim_rotation_delta`) keyed weakly BY THE MOBJECT ITSELF (not by `id(mob)`: an id-keyed entry outlives its owner and CPython reuses ids, so a freed mobject's verdict -- a faded-out 0.0 -- lands on the next mobject allocated at that address) to track per-mobject animation state without modifying mobject attributes
 
 **Key Animation Types**:
 
@@ -202,10 +202,10 @@ A custom reimplementation of Manim's animation classes that works with the Vulka
 |-----------|----------|
 | `Create` | Stroke draw-on: `_vulkan_progress` goes 0→1 |
 | `Write` | Stroke draw-on + fill reveal per letter |
-| `FadeIn/FadeOut` | Opacity 0→1 / 1→0 via `_anim_opacity` |
+| `FadeIn/FadeOut` | Opacity 0→1 / 1→0: manim writes the eased value into the mobject's own `*_rgbas`, which every sender already folds into the primitive — so the opacity registry is **cleared to 1.0** for anything that has arrays (`_refresh_opacity`), otherwise the fade applied twice (measured: 0.084 vs CE's 0.084²). Only a `DashedLine`'s primitive ignores its arrays and still takes the animation's value |
 | `Transform` | Shape morph: copies source→target, interpolates points each frame |
 | `FadeTransform` | Crossfade: source fades out, ghost (stretched target copy) fades in with shape morph |
-| `GrowFromCenter` | Scale from 0→1 via `_grow_scale` around `_grow_point` |
+| `GrowFromCenter` | manim's own grows are Transforms: `interpolate` already scales the points, so no channel is written (`_write_grow` only stamps `_grow_scale`/`_grow_point` for the animations that do NOT move points -- `Flash`, `Circumscribe`) |
 | `Indicate` | Temporary scale pulse |
 | `Succession` | Sequential sub-animations |
 | `AnimationGroup` | Parallel sub-animations |
