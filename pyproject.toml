@@ -30,6 +30,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 
+# Typst is optional: without it the auto-route silently stays on real LaTeX.
+[project.optional-dependencies]
+typst = ["typst>=0.14"]
+
 [project.urls]
 Homepage = "https://github.com/BEGINWITHF/real-time-manim"
 Documentation = "https://github.com/BEGINWITHF/real-time-manim#readme"

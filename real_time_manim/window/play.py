@@ -75,20 +75,32 @@ class PlayMixin:
                 appended = True
 
         curr_mobjects = self.scene.get_mobject_family_members()
+        # Appends go through Scene.add, not a bare list append: CE's add
+        # restructures first, pulling any already-top-level FAMILY member out
+        # of the list before the new root goes on the end.  Without that
+        # absorb, `scene.add(eq1)` + `play(FadeOut-ish anim on Group(eq1, ...))`
+        # leaves eq1 top-level as well as inside the Group, so
+        # clean_up_from_scene removes only the Group and eq1's parts stay in
+        # the scene forever -- TransformMatchingTex's "old letters never left"
+        # after every match.  The family-membership guard above already skips
+        # mobjects that are merely submobjects, which is the case where CE's
+        # restructure would have restructured them out of their parent; what
+        # reaches the add here is genuinely new at the top level, exactly
+        # where CE absorbs-and-appends too.
         for a in real_anims:
             m = getattr(a, "mobject", None)
             if m is not None and m not in curr_mobjects:
-                self.scene.mobjects.append(m)
+                self.scene.add(m)
                 curr_mobjects += m.get_family()
                 appended = True
             for mob in (getattr(a, "mobjects", None) or []):
                 if mob not in curr_mobjects:
-                    self.scene.mobjects.append(mob)
+                    self.scene.add(mob)
                     curr_mobjects += mob.get_family()
                     appended = True
             cur = getattr(a, "cursor", None)
             if cur is not None and cur not in curr_mobjects:
-                self.scene.mobjects.append(cur)
+                self.scene.add(cur)
                 curr_mobjects += cur.get_family()
                 appended = True
 

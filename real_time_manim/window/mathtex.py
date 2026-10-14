@@ -10,6 +10,9 @@ from manim import (
 
 from manim.mobject.text.tex_mobject import MathTex as _OrigMathTex
 from manim.mobject.text.tex_mobject import MathTexPart
+from manim.mobject.text.tex_mobject import Tex as _OrigTex
+
+from real_time_manim import typst_support as _typst
 
 def _patched_break_up_by_substrings(self):
     """Reorganize submobjects into MathTexPart instances.
@@ -385,6 +388,11 @@ def _native_mathtex_init(self, *tex_strings, arg_separator=' ',
 # The old native-text fallback rendered many commands literally (e.g. \\frac,
 # \\sqrt, \\mathbb, matrices, accents) instead of as math glyphs/layout.
 # Set _USE_NATIVE_MATHTEX = True to bypass LaTeX entirely (fast, Unicode-only).
+#
+# On top of that, the Typst auto-route (typst_support) intercepts MathTex
+# strings that lie inside the Typst-convertible subset and compiles them
+# with the in-process Typst backend; everything else still goes to real
+# LaTeX.  RTM_TYPST=0 turns the Typst layer off.
 _OrigMathTexInit = _OrigMathTex.__init__
 _USE_NATIVE_MATHTEX = False
 
@@ -392,8 +400,17 @@ _USE_NATIVE_MATHTEX = False
 def _mathtex_init_dispatch(self, *args, **kwargs):
     if _USE_NATIVE_MATHTEX:
         _native_mathtex_init(self, *args, **kwargs)
-    else:
-        _OrigMathTexInit(self, *args, **kwargs)
+        return
+    if _typst.ENABLED and not isinstance(self, _OrigTex):
+        try:
+            if _typst.typst_mathtex_init(self, *args, **kwargs):
+                return
+            _typst._debug(f"not convertible to Typst, using LaTeX: {args!r}")
+        except Exception as exc:
+            # Compile error inside Typst: fall back to LaTeX, same result
+            # the user asked for, just slower.  RTM_TYPST_DEBUG=1 shows why.
+            _typst._debug(f"{type(exc).__name__}: {exc}")
+    _OrigMathTexInit(self, *args, **kwargs)
 
 
 _OrigMathTex.__init__ = _mathtex_init_dispatch

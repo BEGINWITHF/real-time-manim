@@ -19,4 +19,8 @@ from real_time_manim.compat import apply_manim_shims as _apply_manim_shims
 
 _apply_manim_shims()
 
-__all__ = ["__version__"]
+# Typst layer: the Typst/TypstMath mobjects (re-exported from ManimCE) plus the
+# LaTeX->Typst auto-routing that window.mathtex installs on MathTex.
+from real_time_manim.typst_support import MathTypst, Typst, TypstMath
+
+__all__ = ["__version__", "Typst", "MathTypst", "TypstMath"]

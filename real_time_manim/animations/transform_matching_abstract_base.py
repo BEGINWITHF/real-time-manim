@@ -7,6 +7,25 @@ from real_time_manim.animations.fade_in import FadeIn
 from real_time_manim.animations.fade_transform import FadeTransform
 
 
+class _WrappedFadeOut(FadeOut):
+    """FadeOut of a DETACHED wrapper group (see TransformMatchingAbstractBase).
+
+    The paint pipeline walks the SCENE tree, which reaches the wrapped parts
+    through their real parents (eq1, ...), never through this wrapper -- so
+    opacity parked only on the wrapper never applied and the unmatched source
+    parts stayed fully opaque for the whole fade.  Park on the wrapper AND
+    its direct children: the children are the nodes the tree visits, and
+    paint multiplies parent x child alpha, so parking at exactly one visited
+    level gives the right result.  (Parking on the whole family would square
+    it: part alpha x glyph alpha.)
+    """
+
+    def _park_opacity(self, mob, value):
+        super()._park_opacity(mob, value)
+        for sm in getattr(mob, "submobjects", ()):
+            set_anim_opacity(sm, value)
+
+
 class TransformMatchingAbstractBase(Animation):
     def __init__(
         self,
@@ -97,9 +116,9 @@ class TransformMatchingAbstractBase(Animation):
             fade_source = VGroup(*fade_source_parts)
             fade_target_copy = VGroup(*fade_target_parts).copy()
             self._anims.append(
-                FadeOut(fade_source, shift=None,
-                        target_position=fade_target_copy,
-                        run_time=self.run_time)
+                _WrappedFadeOut(fade_source, shift=None,
+                                target_position=fade_target_copy,
+                                run_time=self.run_time)
             )
             self._anims.append(
                 FadeIn(fade_target_copy, shift=None,
@@ -128,6 +147,17 @@ class TransformMatchingAbstractBase(Animation):
         return mobs
 
     def clean_up_from_scene(self, scene):
+        # CE resets every sub-animation before the source leaves the scene
+        # ("Interpolate all animations back to 0 to ensure source mobjects
+        # remain unchanged"): Transform.interpolate(0) puts the moved parts
+        # back and the fades restore their opacity, so a source the caller
+        # still holds a reference to is pristine once it is removed.
+        # Best-effort per anim -- a failed reset must not stop the removal.
+        for anim in getattr(self, "_anims", []):
+            try:
+                anim.interpolate(0.0)
+            except Exception:
+                pass
         if self.mobject in scene.mobjects:
             scene.remove(self.mobject)
         ftc = getattr(self, '_fade_target_copy', None)
