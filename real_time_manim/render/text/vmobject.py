@@ -101,6 +101,89 @@ def _mitre_room_filter(pts, half_w):
     return pts
 
 
+def _cut_cubics_at(flat, n, progress):
+    """Truncate a bezier control-point array to the first ``progress`` of it.
+
+    ``flat`` is the stride-3 screen-space array ``_send_vmobject`` builds and
+    hands to native ``AddBezierPath``: four control points per cubic, the
+    groups NOT overlapping (the layout native reads at ``draw_bezier.c:79-85``
+    and the stroke walk indexes with ``si * 4``).
+
+    native's ``tessellate_fill`` (``draw_bezier.c:268-282``) samples EVERY
+    cubic and never reads ``bp->progress``, so a filled shape arriving mid-
+    ``Create`` painted its WHOLE fill on the first frame while only the
+    outline swept -- measured at 90-100 % of the finished ink on frame one
+    against ManimCE's 0 %.  Cutting the ARRAY instead makes the fill follow
+    the pen: the trailing cubic is split with De Casteljau at the exact
+    parameter, so the cut lands mid-segment just as the stroke window does (a
+    Circle's cubic is 45 degrees of arc, so a whole-segment cut would
+    staircase again -- the very bug the stroke walk was fixed for).
+
+    Returns ``(cut_flat, cut_n)``.  ``cut_n`` can drop below native's
+    ``num_points < 8`` floor for a short prefix; the caller skips the
+    submission then, which is correct -- a wedge shorter than two cubics has
+    no area worth drawing, and manim's own Create has already cut the points
+    in that case anyway.
+    """
+    seg_count = n // 4
+    if seg_count < 1 or progress <= 0.0:
+        return flat, 0
+    if progress >= 1.0:
+        return flat, n
+    target = seg_count * progress
+    vis_end = int(math.floor(target))
+    t_end = target - vis_end
+    if t_end <= 1e-9:
+        # An exact boundary cuts at the END of the previous cubic, not the
+        # start of this one (progress 0 would otherwise draw a dot).
+        vis_end -= 1
+        t_end = 1.0
+    if vis_end < 0:
+        return flat, 0
+    keep = vis_end + 1
+    # NO `keep >= seg_count` shortcut here.  `progress < 1.0` already bounds
+    # `target` below `seg_count`, so `vis_end <= seg_count - 1` and the 12
+    # floats read below always sit inside the array -- but bailing out to the
+    # whole path for `keep == seg_count` (i.e. every progress in
+    # [7/8, 1.0) on an 8-cubic Circle) drew the COMPLETE fill for the last
+    # eighth of the animation.  Measured on Create(Arc().set_fill): RTM
+    # tracked CE within 2 % for 33 frames, then stepped +2485 px in one frame
+    # against CE's +417.
+    # De Casteljau: splitting (p0..p3) at t yields the first half
+    # (p0, a, d, f) -- an exact reparameterisation, not an approximation.
+    b = vis_end * 4 * 3
+    p0x, p0y = flat[b], flat[b + 1]
+    p1x, p1y = flat[b + 3], flat[b + 4]
+    p2x, p2y = flat[b + 6], flat[b + 7]
+    p3x, p3y = flat[b + 9], flat[b + 10]
+    t = t_end
+    ax = p0x + (p1x - p0x) * t
+    ay = p0y + (p1y - p0y) * t
+    bx = p1x + (p2x - p1x) * t
+    by = p1y + (p2y - p1y) * t
+    cx = p2x + (p3x - p2x) * t
+    cy = p2y + (p3y - p2y) * t
+    dx = ax + (bx - ax) * t
+    dy = ay + (by - ay) * t
+    ex = bx + (cx - bx) * t
+    ey = by + (cy - by) * t
+    fx = dx + (ex - dx) * t
+    fy = dy + (ey - dy) * t
+    cut = list(flat[:b])
+    cut.extend((p0x, p0y, 0.0, ax, ay, 0.0, dx, dy, 0.0, fx, fy, 0.0))
+    if keep < 2:
+        # native refuses a path shorter than two cubics (`num_points < 8`),
+        # and the fallback would be the WHOLE array -- the pop again.  Pad
+        # with a degenerate cubic sitting on the cut point instead: every
+        # control point is the same pixel, so it adds no area (the scanline
+        # skips its zero-length edges) and its winding term is zero, but the
+        # path clears the floor and the wedge can start as small as the pen
+        # likes instead of jumping from nothing to a full 45-degree slice.
+        cut.extend((fx, fy, 0.0, fx, fy, 0.0, fx, fy, 0.0, fx, fy, 0.0))
+        keep = 2
+    return cut, keep * 4
+
+
 class VMobjectMixin:
 
 
@@ -704,18 +787,64 @@ class VMobjectMixin:
         else:
             _fr2, _fg2, _fb2 = fri, fgi, fbi
             _gx1 = _gy1 = _gx2 = _gy2 = 0.0
+        # native's tessellate_fill samples every cubic and never reads
+        # `progress`, so a fill revealed by `_vulkan_progress` (RTM's own
+        # Create) arrived WHOLE on the first frame -- measured at 90-100 % of
+        # the finished ink on frame one against ManimCE's 0 %, while only the
+        # outline swept.  Cut the ARRAY to the drawn prefix instead.  Skipped
+        # when manim itself already cut the points (`_vulkan_points_partial`,
+        # which makes point_path_bounds return 1.0) and for a bounds window
+        # (ShowPassingFlash), where show_fill is already 0.
+        #
+        # A prefix shorter than native's `num_points < 8` floor cannot be
+        # submitted at all -- and falling back to the WHOLE array there would
+        # put the pop straight back on the first frames, which are exactly the
+        # ones under the floor.  Hold the fill back instead: it is a sliver of
+        # a sliver, and the stroke already marks where the pen is.
+        _fill_arr, _fill_n, _fill_progress = arr, n, progress
+        if show_fill and progress < 1.0:
+            _cut_flat, _cut_n = _cut_cubics_at(flat, n, progress)
+            if _cut_n >= 8:
+                _fill_arr = (ctypes.c_float * len(_cut_flat))(*_cut_flat)
+                _fill_n = _cut_n
+                # The array now ENDS at the pen tip, so native must not also
+                # window it: pass a complete path.
+                _fill_progress = 1.0
+            else:
+                show_fill = 0
         self.dll.AddBezierPath(
-            arr, n,
+            _fill_arr, _fill_n,
             sri, sgi, sbi, stroke_w,
             fri, fgi, fbi, fill_alpha,
-            progress, 0, show_fill, a,
+            _fill_progress, 0, show_fill, a,
             _fr2, _fg2, _fb2, _gx1, _gy1, _gx2, _gy2,
         )
 
         if do_stroke:
             seg_count = n // 4
-            vis_start = int(seg_count * progress_lower)
-            vis_end = int(seg_count * progress_upper)
+            # Cut the window at an EXACT fraction of a segment, never at whole
+            # segments.  `int(seg_count * progress)` advanced the reveal one
+            # cubic at a time, and manim builds a Circle from only EIGHT cubics
+            # -- so `Create(Circle)` jumped 45 degrees at a time, standing
+            # still for several frames and then snapping forward a whole
+            # eighth of the outline (measured on the 01-安装 demo video and
+            # reproduced with a recorder probe: the drawn length took the
+            # values 0.125, 0.250, ... 1.000 of the perimeter and nothing in
+            # between).  native's own stroke tessellator already cuts at a
+            # fractional `partial_t` (draw_bezier.c:144-170); this walk, which
+            # is what a stroke-only path actually takes, has to match it.
+            f_start = seg_count * progress_lower
+            f_end = seg_count * progress_upper
+            vis_start = int(math.floor(f_start))
+            t_start = f_start - vis_start        # fraction in at segment vis_start
+            vis_end = int(math.floor(f_end))
+            t_end = f_end - vis_end               # fraction in at segment vis_end
+            if t_end <= 1e-9:
+                # An exact segment boundary cuts at the END of the previous
+                # segment, not at the start of this one (progress 1.0 would
+                # otherwise lose the last segment, progress 0.0 draw a dot).
+                vis_end -= 1
+                t_end = 1.0
             stroke_pts = []
             # One strip per contour: several disjoint contours live in the same
             # point list (`VMobject.start_new_path`), and walking them as a
@@ -749,8 +878,21 @@ class VMobjectMixin:
                 chord = math.hypot(p3x-p0x, p3y-p0y)
                 est = (cpoly + chord) * 0.5
                 seg_samples = int(max(8.0, min(256.0, math.ceil(est / STEP_PX))))
+                # The window's ends land INSIDE a segment: the first visible
+                # segment starts at t_start, the last one stops at t_end.
+                # Evaluating the cubic there makes the pen tip move
+                # continuously instead of snapping forward a whole segment at
+                # a time (a Circle is only 8 cubics, so a whole segment is 45
+                # degrees of arc -- see the vis_start/vis_end block above).
+                lo_t = t_start if si == vis_start else 0.0
+                hi_t = t_end if si == vis_end else 1.0
+                if hi_t <= lo_t:
+                    prev_pt = (p3x, p3y)
+                    continue
+                span = hi_t - lo_t
+                seg_samples = max(1, int(math.ceil(seg_samples * span)))
                 for s in range(seg_samples + 1):
-                    t = s / seg_samples
+                    t = lo_t + span * (s / seg_samples)
                     u = 1.0 - t
                     bx = u*u*u*p0x + 3*u*u*t*p1x + 3*u*t*t*p2x + t*t*t*p3x
                     by = u*u*u*p0y + 3*u*u*t*p1y + 3*u*t*t*p2y + t*t*t*p3y

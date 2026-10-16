@@ -26,7 +26,7 @@ class FadeOut(Animation):
         self._start_positions = []
         self._orig_points = {}
         for mob in self.mobjects:
-            set_anim_opacity(mob, 1.0)
+            self._park_opacity(mob, 1.0)
             self._start_positions.append(mob.get_center().copy())
             if self.fade_scale != 1.0:
                 self._orig_points[id(mob)] = [
@@ -34,6 +34,18 @@ class FadeOut(Animation):
                     for fm in mob.family_members_with_points()
                     if fm is not mob
                 ]
+
+    def _park_opacity(self, mob, value):
+        """Record ``value`` as ``mob``'s animated opacity.
+
+        The paint walk multiplies opacity top-down the scene tree, so the
+        value has to land on a node that walk actually visits.  Parking on
+        ``mob`` itself is right whenever ``mob`` is (or sits inside) the
+        scene tree; subclasses that fade a DETACHED wrapper override this to
+        also cover the nodes the tree reaches through the wrapper's real
+        parents.
+        """
+        set_anim_opacity(mob, value)
 
     def interpolate(self, t):
         if getattr(self, '_use_alpha', False):
@@ -47,7 +59,7 @@ class FadeOut(Animation):
         opacity = 1.0 - alpha
 
         for i, mob in enumerate(self.mobjects):
-            set_anim_opacity(mob, opacity)
+            self._park_opacity(mob, opacity)
 
             if self.fade_scale != 1.0:
                 target_scale = 1.0 + (self.fade_scale - 1.0) * alpha
@@ -73,6 +85,6 @@ class FadeOut(Animation):
     def finish(self):
         super().finish()
         for mob in self.mobjects:
-            set_anim_opacity(mob, 0.0)
+            self._park_opacity(mob, 0.0)
             for fm, orig in self._orig_points.get(id(mob), []):
                 fm.points = orig.copy()

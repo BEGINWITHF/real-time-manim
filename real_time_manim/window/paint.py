@@ -835,7 +835,14 @@ class PaintMixin:
             # Circle branch below: a shape that is being drawn comes off the
             # point path, which renders the points that are actually there.
             _e_progress = getattr(mob, '_vulkan_progress', 1.0)
-            if 0.0 < _e_progress < 1.0:
+            # Same window rule as the Circle branch: a ShowPassingFlash carries
+            # lower/upper, and `_send_ellipse` reads only `_vulkan_progress`, so
+            # once `upper` clamps to 1.0 the window is dropped and the whole
+            # ellipse is drawn (RTM's own flash, which never writes
+            # `_vulkan_progress`, bails at `progress <= 0` and draws nothing at
+            # all).  An explicit window takes the point path, which honours it.
+            _e_window = hasattr(mob, "_vulkan_progress_upper")
+            if _e_window or 0.0 < _e_progress < 1.0:
                 self._send_vmobject(mob, a, w, h,
                                     None if is_text else parent_offset, rot,
                                     is_text=is_text)
@@ -852,6 +859,23 @@ class PaintMixin:
             # on-curve start instead of `mob.width`, which also measured the
             # off-curve handles and inflated a rotating circle by 3.46 %).
             _c_progress = getattr(mob, '_vulkan_progress', 1.0)
+            # A ShowPassingFlash publishes its sweep as a lower/upper WINDOW,
+            # not as a single progress: `_write_passing_flash` sets
+            # `_vulkan_progress = upper` too, so once `upper` clamps to 1.0 the
+            # test `0.0 < progress < 1.0` goes FALSE and the shape falls to
+            # `_send_circle`, which reads only `_vulkan_progress` (1.0) and
+            # never `point_path_bounds` -- the last slice of the sweep drew the
+            # WHOLE disc instead of [lower, 1.0].  Measured on
+            # ShowPassingFlash(time_width=0.3): frames 43-60 went to
+            # `_send_circle` with window (0.7, 1.0).  RTM's OWN
+            # ShowPassingFlash is worse -- it never writes `_vulkan_progress`
+            # at all (it stays at the 0.0 `begin()` set), so the test failed at
+            # EVERY frame and `_send_circle` bailed at `progress <= 0`: a flash
+            # over a Circle emitted zero shape calls for the whole animation
+            # while Line and Square, whose senders read `point_path_bounds`,
+            # drew fine.  An explicit window therefore takes the point path,
+            # which honours lower and upper.
+            _c_window = hasattr(mob, "_vulkan_progress_upper")
             # A Circle inside a 3D scene is not a circle on screen.  At phi=70 a
             # horizontal cap projects to a 60x21 px ELLIPSE, while `_send_circle`
             # draws a full-radius disc from `mob.width` -- measured on
@@ -866,7 +890,7 @@ class PaintMixin:
                 _vp3d = _vp is not None and _vp.rotation is not None
             except Exception:
                 _vp3d = False
-            if _vp3d or 0.0 < _c_progress < 1.0:
+            if _vp3d or _c_window or 0.0 < _c_progress < 1.0:
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)
             else:
@@ -919,11 +943,18 @@ class PaintMixin:
             # fill_opacity=1 and stroke_width=0, which is the normal way to
             # make a filled wedge.
             _arc_progress = getattr(mob, '_vulkan_progress', 1.0)
+            # Same window rule as Circle/Ellipse: a ShowPassingFlash carries
+            # lower/upper, but `_send_arc` reads only `_vulkan_progress`, so
+            # once `upper` clamps to 1.0 the window is dropped and the WHOLE
+            # arc is drawn; RTM's own flash never writes `_vulkan_progress` at
+            # all, so `_send_arc` bailed at `progress <= 0` and a flash over a
+            # stroke-only Arc emitted zero shape calls for the whole animation.
+            _arc_window = hasattr(mob, "_vulkan_progress_upper")
             try:
                 _arc_fill = float(mob.fill_rgbas[:, 3].max())
             except Exception:
                 _arc_fill = 0.0
-            if (0.0 < _arc_progress < 1.0 or _arc_fill > 0.0
+            if (_arc_window or 0.0 < _arc_progress < 1.0 or _arc_fill > 0.0
                     or getattr(mob, '_transforming', False)):
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)

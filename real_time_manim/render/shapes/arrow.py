@@ -5,6 +5,10 @@ import math
 import numpy as np
 from real_time_manim.render.util import manim_to_screen, get_opacity, point_path_bounds
 
+# Distinguishes "this attribute was absent" from "present but None" when a
+# temporary window is put back the way it was found.
+_MISSING = object()
+
 
 class ArrowMixin:
 
@@ -89,9 +93,31 @@ class ArrowMixin:
         # the head to `_send_arrow_tip` -- that reads the TIP submobject's
         # points, which manim cut with its own sub_alpha, exactly as CE draws
         # it.  Untagged (a flash, a stagger driver) keeps the plain progress.
-        progress = point_path_bounds(mob)[1]
-        if progress <= 0:
+        # It returns a PAIR and only the upper end was read: the shaft ran from
+        # its own start to `upper`, so an explicit window (ShowPassingFlash)
+        # lost its `lower` edge and the sweep GREW from the start instead of
+        # sliding.  Measured against ManimCE on
+        # ShowPassingFlash(time_width=0.3) over Arrow(LEFT*3, RIGHT*3): CE's
+        # ink rises to 28 % of the finished arrow and returns to 0 as the
+        # window slides off, while RTM ramped to 100 % and stuck there (mean
+        # |CE-RTM| 44.3 points, worst 99.9).  An untagged mobject reports
+        # lower == 0.0, so a plain Create/Uncreate is untouched by this.
+        progress_lower, progress_upper = point_path_bounds(mob)
+        if progress_upper <= 0:
             return
+        progress = progress_upper
+        # An explicit window is what a ShowPassingFlash publishes, and CE applies
+        # it to EVERY member of the family separately
+        # (ShowPartial.interpolate_submobject -> pointwise_become_partial on
+        # each submobject, manim/animation/creation.py:126-134), so the tip gets
+        # the SAME lower/upper over its OWN contour.  Handing the tip the window
+        # is what makes the head light up only as the sweep reaches it -- CE's
+        # tip band measures 0 px through frames 5-20, 93 % at frame 40, back to
+        # 5 % at 55, where a head pinned whole to the apex never leaves the
+        # screen.  Without a window the synthesised head below is kept, so a
+        # Create still reveals its tip at full size as it arrives (the behaviour
+        # `_send_arrow` was measured with).
+        _windowed = hasattr(mob, "_vulkan_progress_upper")
         # The real tip is a submobject with its own geometry -- shape, size and
         # hollow-vs-filled all live there (manim builds seven different ones).
         # It is drawn instead of the synthesised triangle below, except during a
@@ -105,7 +131,7 @@ class ArrowMixin:
             except Exception:
                 tip_pts = None
         use_real_tip = (tip_pts is not None and len(tip_pts) >= 3
-                        and progress >= 1.0)
+                        and (progress >= 1.0 or _windowed))
         r, g, b = self._stroke_color(mob)
         so = get_opacity(mob, 'stroke', 1.0)
         # The incoming alpha belongs to the HEAD; the shaft additionally folds
@@ -155,23 +181,35 @@ class ArrowMixin:
         # own condition instead of riding the shaft's early returns.
         can_stroke = so > 0 and px > 0 and length > 0
         if can_stroke:
+            # The END is measured from the shaft's own start, so it is computed
+            # BEFORE the start is moved to `lower` -- otherwise `ex` would be
+            # `upper` of a segment that already began at `lower`.
             if progress >= 1.0:
                 ex, ey = base_x, base_y
             else:
                 ex = sx1 + (base_x - sx1) * progress
                 ey = sy1 + (base_y - sy1) * progress
+            # A plain Create reports lower == 0.0 and is untouched; only an
+            # explicit window moves the start.
+            if progress_lower > 0.0:
+                stx = sx1 + (base_x - sx1) * progress_lower
+                sty = sy1 + (base_y - sy1) * progress_lower
+            else:
+                stx, sty = sx1, sy1
             # `length` above measures to the TIP's apex, which stays out at the
             # arrowhead even while ShowPartial has collapsed the shaft's own
             # points to nothing -- so the shaft can still be a single point when
             # `can_stroke` says otherwise.  A collapsed path inks nothing in
             # manim either; native has no direction for the quad.
-            if abs(ex - sx1) >= 1e-6 or abs(ey - sy1) >= 1e-6:
+            if abs(ex - stx) >= 1e-6 or abs(ey - sty) >= 1e-6:
                 # NB: `px` is reassigned to the head's perpendicular below
                 # (px = -uy), so the shaft is emitted while it still holds the
                 # stroke width.
-                self._emit_stroke(sx1, sy1, ex, ey, px, r, g, b, a)
+                self._emit_stroke(stx, sty, ex, ey, px, r, g, b, a)
         if use_real_tip:
-            self._send_arrow_tip(mob, tip, head_a, w, h, rot, parent_offset)
+            self._send_arrow_tip(mob, tip, head_a, w, h, rot, parent_offset,
+                                 window=(progress_lower, progress_upper)
+                                 if _windowed else None)
             return
         # The head is its own filled triangle, so the shaft's invisibility does
         # not take it with it (comment at `can_stroke`).  Only the shaft's
@@ -194,7 +232,8 @@ class ArrowMixin:
             3, head_verts, progress, head_a, 1,
         )
 
-    def _send_arrow_tip(self, mob, tip, a, w, h, rot, parent_offset=None):
+    def _send_arrow_tip(self, mob, tip, a, w, h, rot, parent_offset=None,
+                        window=None):
         """Draw the arrow's own `ArrowTip` submobject (report #9).
 
         `_send_arrow` used to synthesise a fixed 3-vertex triangle whose only
@@ -211,8 +250,31 @@ class ArrowMixin:
         centre is displaced by however far that centre itself travels when the
         arrow rotates.  That centre-displacement decomposition is the same one
         the VGroup walk uses for its children.
+
+        `window` is the flash's ``(lower, upper)`` pair, applied to the TIP's own
+        contour the way CE applies it: `ShowPartial.interpolate_submobject` walks
+        `get_all_families_zipped` and calls `pointwise_become_partial` on every
+        member with the SAME bounds (manim/animation/creation.py:126-134), so the
+        head lights up only as the sweep reaches it rather than sitting whole on
+        the apex.  It is stamped on the tip for the duration of the call and
+        removed after, so the next animation cannot inherit a stale window.
         """
         rot_orig = -rot
+        _saved = None
+        if window is not None:
+            # Remember whatever the tip already carried so it can be put back:
+            # a nested arrow may own a window of its own, and overwriting it
+            # (or leaving mine behind) would clip the NEXT animation.
+            _saved = {a: getattr(tip, a, _MISSING)
+                      for a in ("_vulkan_progress_lower",
+                                "_vulkan_progress_upper",
+                                "_vulkan_points_partial")}
+            tip._vulkan_progress_lower = float(window[0])
+            tip._vulkan_progress_upper = float(window[1])
+            # The window is a clip over the tip's COMPLETE contour, so a cut-path
+            # tag from an earlier Create would describe the wrong points (same
+            # rule `_write_passing_flash` applies to the whole family).
+            tip._vulkan_points_partial = False
         offset = None if parent_offset is None else np.array(parent_offset,
                                                              dtype=float)
         pg_gs = getattr(mob, '_grow_scale', None)
@@ -253,6 +315,13 @@ class ArrowMixin:
                 del tip._grow_scale
             if need_gp:
                 del tip._grow_point
+            if _saved is not None:
+                for _attr, _value in _saved.items():
+                    if _value is _MISSING:
+                        if hasattr(tip, _attr):
+                            delattr(tip, _attr)
+                    else:
+                        setattr(tip, _attr, _value)
 
     def _send_line(self, mob, a, w, h, rot, parent_offset=None):
         # The endpoints must come from the path itself.  `TipableVMobject`
@@ -385,14 +454,30 @@ class ArrowMixin:
         # `progress * cut` of the line.  `point_path_bounds` returns 1.0 for a
         # tagged path and the plain progress otherwise (same rule as
         # `_send_rectangle`, plan 4.2).
-        progress = point_path_bounds(mob)[1]
-        if progress <= 0:
+        #
+        # It returns a PAIR and only the upper end was read: the stroke ran from
+        # the line's own start to `upper`, so an explicit window
+        # (ShowPassingFlash) lost its `lower` edge and the sweep GREW from the
+        # start instead of sliding -- measured on
+        # ShowPassingFlash(time_width=0.3) over a Line, the lit count reached
+        # 1980 px = 100 % of the full line, where Square (which does honour the
+        # window) held 30 %.  An untagged mobject reports lower == 0.0, so a
+        # plain Create/Uncreate is untouched by this.
+        progress_lower, progress_upper = point_path_bounds(mob)
+        if progress_upper <= 0:
             return
+        # the END is measured from the line's own start, so it is computed
+        # BEFORE the start is moved to `lower` -- otherwise `ex` would be
+        # `upper` of a segment that already began at `lower`.
+        progress = progress_upper
         if progress >= 1.0:
             ex, ey = sx2, sy2
         else:
             ex = sx1 + (sx2 - sx1) * progress
             ey = sy1 + (sy2 - sy1) * progress
+        if progress_lower > 0.0:
+            sx1 = sx1 + (sx2 - sx1) * progress_lower
+            sy1 = sy1 + (sy2 - sy1) * progress_lower
         # A path the cut collapsed to a point has nothing to stroke: manim's
         # butt cap inks nothing, and native would have no direction to build
         # the quad from (ShowPartial at sub_alpha 0 is the common case).
