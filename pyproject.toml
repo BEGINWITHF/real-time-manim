@@ -12,8 +12,36 @@ authors = [{ name = "Tagin T" }]
 keywords = ["manim", "vulkan", "renderer", "animation", "gpu"]
 requires-python = ">=3.11"
 dependencies = [
-    "manim>=0.20.0",
-    "numpy",
+    # RTM bundles the ManimCE source it drives (real_time_manim/manim, see
+    # real_time_manim/manim/UPSTREAM.md), so ManimCE itself is NOT a dependency
+    # -- only its third-party runtime requirements are, minus `click`, which
+    # was there for the `manim` CLI that RTM does not ship.
+    "audioop-lts>=0.2.1 ; python_full_version >= '3.13'",
+    "av>=15.0",
+    "beautifulsoup4>=4.12",
+    "cloup>=2.0.0",
+    "decorator>=4.3.2",
+    "isosurfaces>=0.1.1",
+    "manimpango>=0.6.1,<1.0.0",
+    "mapbox-earcut>=1.0.0",
+    "moderngl-window>=2.0.0",
+    "moderngl>=5.7.0,<6.0.0",
+    "networkx>=2.6",
+    "numpy>=2.1",
+    "pillow>=11.0",
+    "pycairo>=1.14,<2.0.0",
+    "pydub>=0.22.0",
+    "pygments>=2.17",
+    "rich>=12.0.0",
+    "scipy>=1.13.0",
+    "scipy>=1.15.0 ; python_full_version >= '3.13'",
+    "screeninfo>=0.7.0",
+    "skia-pathops>=0.9.0",
+    "srt>=3.0.0",
+    "svgelements>=1.9.0",
+    "tqdm>=4.21.0",
+    "typing-extensions>=4.12.0",
+    "watchdog>=2.0.0",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,8 +59,12 @@ classifiers = [
 ]
 
 # Typst is optional: without it the auto-route silently stays on real LaTeX.
+# `test` reinstalls ManimCE for the test-suite, which imports `manim` directly.
+# (RTM's own `import manim` statements resolve to the bundled copy, so the
+# suite still runs without this extra -- but then it exercises the bundle.)
 [project.optional-dependencies]
 typst = ["typst>=0.14"]
+test = ["manim>=0.20.0", "pytest>=8.0"]
 
 [project.urls]
 Homepage = "https://github.com/BEGINWITHF/real-time-manim"
@@ -45,7 +77,17 @@ Source = "https://github.com/BEGINWITHF/real-time-manim"
 include = ["real_time_manim*"]
 
 [tool.setuptools.package-data]
-real_time_manim = ["vulkan_core.dll", "logo.ico"]
+real_time_manim = [
+    "vulkan_core.dll",
+    "logo.ico",
+    # data files of the bundled ManimCE copy
+    "manim/py.typed",
+    "manim/**/*.cfg",
+    "manim/**/*.frag",
+    "manim/**/*.glsl",
+    "manim/**/*.mtp",
+    "manim/**/*.md",
+]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__", "*.pyc"]
