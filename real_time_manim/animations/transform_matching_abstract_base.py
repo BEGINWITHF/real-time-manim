@@ -26,6 +26,23 @@ class _WrappedFadeOut(FadeOut):
             set_anim_opacity(sm, value)
 
 
+class _WrappedFadeTransform(FadeTransform):
+    """FadeTransform of a DETACHED wrapper group (see TransformMatchingAbstractBase).
+
+    Same story as _WrappedFadeOut: the source group holds the real parts as
+    children but is itself unreachable from the scene tree, so the fade
+    opacity parked on the wrapper never applied -- the source stayed fully
+    opaque while its morph ghost faded in, ending on the wrong glyphs
+    ("act" instead of "hat", "+" instead of "-").  Park on the wrapper and
+    its direct children, exactly one tree-visited level.
+    """
+
+    def _park_opacity(self, mob, value):
+        super()._park_opacity(mob, value)
+        for sm in getattr(mob, "submobjects", ()):
+            set_anim_opacity(sm, value)
+
+
 class TransformMatchingAbstractBase(Animation):
     def __init__(
         self,
@@ -79,13 +96,20 @@ class TransformMatchingAbstractBase(Animation):
         key_mapped_target = VGroup()
         for key1, key2 in self.key_map.items():
             if key1 in source_map and key2 in target_map:
-                key_mapped_source.add(source_map[key1])
-                key_mapped_target.add(target_map[key2])
+                # Flatten to wrapper -> parts (same as the fade_source branch
+                # below): the parts are the nodes the paint walk visits, and
+                # _WrappedFadeTransform parks opacity on the wrapper's direct
+                # children.  Adding the shape-map GROUP instead would nest one
+                # level deeper, park on that detached group, and leave the
+                # real part -- reached through its real parent -- untouched.
+                key_mapped_source.add(*source_map[key1].submobjects)
+                key_mapped_target.add(*target_map[key2].submobjects)
                 source_map.pop(key1, None)
                 target_map.pop(key2, None)
         if len(key_mapped_source.submobjects) > 0:
             self._anims.append(
-                FadeTransform(key_mapped_source, key_mapped_target, run_time=self.run_time)
+                _WrappedFadeTransform(key_mapped_source, key_mapped_target,
+                                      run_time=self.run_time)
             )
 
         fade_source_parts = []
@@ -107,7 +131,8 @@ class TransformMatchingAbstractBase(Animation):
             fade_source = VGroup(*fade_source_parts)
             fade_target = VGroup(*fade_target_parts)
             self._anims.append(
-                FadeTransform(fade_source, fade_target, run_time=self.run_time)
+                _WrappedFadeTransform(fade_source, fade_target,
+                                      run_time=self.run_time)
             )
         else:
             # Fade out mismatched source parts, fade in mismatched target parts.
@@ -169,6 +194,13 @@ class TransformMatchingAbstractBase(Animation):
                 scene.remove(sub_anim.mobject)
             if hasattr(sub_anim, 'target_mobject') and sub_anim.target_mobject in scene.mobjects:
                 scene.remove(sub_anim.target_mobject)
+            # FadeTransform's morph ghost was presented as an extra scene root
+            # (see play._present_detached_animated); TMA drives its sub-anims
+            # itself and never calls their clean_up_from_scene, so remove the
+            # ghost here or it lingers in the tree at parked opacity 0.
+            ghost = getattr(sub_anim, '_ghost', None)
+            if ghost is not None and ghost in scene.mobjects:
+                scene.remove(ghost)
         if self.target_mobject not in scene.mobjects:
             scene.add(self.target_mobject)
         set_anim_opacity(self.target_mobject, 1.0)

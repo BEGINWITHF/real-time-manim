@@ -21,6 +21,28 @@ from real_time_manim.rate_functions import (
     _smooth, _linear, _double_smooth, _there_and_back,
 )
 
+
+def place_cursor_after(cursor, glyph, buff):
+    """Park ``cursor`` just to the right of ``glyph``, the way manim does.
+
+    manim's ``TypeWithCursor``/``UntypeWithCursor`` position the caret with
+    ``cursor.next_to(last_glyph, RIGHT, buff=self.buff)``, whose empirical
+    contract is *the cursor's LEFT edge sits ``buff`` to the right of the
+    glyph's right edge* (measured on ``Text("Inserting")[3]`` with a 0.14-wide
+    ``Rectangle`` and ``buff=0.12``: glyph right ``-0.104`` -> cursor
+    ``-0.016..0.156``).
+
+    The old code did ``move_to(glyph_center)`` and then ``shift(width/2 +
+    buff * 4)``: the mysterious ``* 4`` put the caret ``0.48`` right of the
+    glyph instead of ``0.12`` -- the wiki report "光标过于偏右"
+    (03-动画/文字与数字/01b-带光标打字), and it ignored the cursor's own width
+    (a 0.5-wide caret needs its centre half a width further on).
+    """
+    centre = np.asarray(cursor.get_center(), dtype=float).copy()
+    centre[0] = float(glyph.get_right()[0]) + float(buff) + float(cursor.get_width()) / 2.0
+    cursor.move_to(centre)
+    return cursor
+
 # Shared state/helpers live in real_time_manim.state (so the renderer no longer
 # depends on this package); re-exported here so existing imports keep working.
 from real_time_manim.state import (
@@ -121,8 +143,57 @@ class Animation:
         raw_sub_alpha = max(0.0, min(1.0, value - lower))
         return self.rate_func(raw_sub_alpha)
 
+    # ------------------------------------------------------------------
+    # Getters/setters -- manim CE ``Animation`` parity.
+    #
+    # RTM used to implement ``set_rate_func`` only; every other chainable
+    # accessor raised ``AttributeError`` the moment a script called it
+    # (wiki 03-动画/通用/01-生命周期与公共参数: "其余链式方法…调用即
+    # AttributeError").  manim's implementations are trivial attribute
+    # accessors that return ``self`` so they can be chained, e.g.
+    # ``anim.set_run_time(2).set_rate_func(linear)`` -- mirror them exactly
+    # (see ``real_time_manim/manim/animation/animation.py``:``set_run_time``
+    # .. ``is_introducer``).
+    # ------------------------------------------------------------------
+    def set_run_time(self, run_time):
+        """Set the run time (seconds).  Returns ``self`` (chainable)."""
+        self.run_time = run_time
+        return self
+
+    def get_run_time(self):
+        """Return the run time in seconds."""
+        return self.run_time
+
     def set_rate_func(self, func):
+        """Set the rate function.  Returns ``self`` (chainable, as in manim)."""
         self.rate_func = func
+        return self
+
+    def get_rate_func(self):
+        """Return the current rate function."""
+        return self.rate_func
+
+    def set_name(self, name):
+        """Set the display name used by ``str()``/``repr()``.  Chainable."""
+        self.name = name
+        return self
+
+    def is_introducer(self):
+        """True when the animation adds its mobject to the scene on begin()."""
+        return bool(self.introducer)
+
+    def is_remover(self):
+        """True when the animation removes its mobject from the scene on end()."""
+        return bool(self.remover)
+
+    def copy(self):
+        """Deep copy of this animation (manim's ``Animation.copy`` is ``deepcopy``).
+
+        The copy carries its own ``mobject`` and timing state, so it can be
+        scheduled again without disturbing the original.
+        """
+        import copy as _copy
+        return _copy.deepcopy(self)
 
     def clean_up_from_scene(self, scene):
         pass

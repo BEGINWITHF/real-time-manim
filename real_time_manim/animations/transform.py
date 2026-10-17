@@ -1,6 +1,34 @@
 from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity
 import numpy as np
-from real_time_manim.utils.paths import path_along_arc, straight_path
+from real_time_manim.utils.paths import path_along_arc, rotation_matrix, straight_path
+
+_OUT = np.array([0.0, 0.0, 1.0])
+
+
+def _path_along_circles(arc_angle, circles_centers, axis=_OUT):
+    """manim's ``utils.paths.path_along_circles``.
+
+    Every point orbits its own centre: the end points are de-rotated by
+    ``arc_angle``, linearly interpolated toward from the start points, and
+    the whole set is then rotated back by ``alpha * arc_angle`` -- so a
+    non-``None`` ``path_arc_centers`` bends the interpolation path exactly
+    the way CE's ``Transform`` does.  ``circles_centers`` may be one point
+    or one centre per point (both broadcast).
+    """
+    centers = np.asarray(circles_centers, dtype=float)
+    axis_vec = np.asarray(axis, dtype=float).reshape(3)
+    norm = np.linalg.norm(axis_vec)
+    unit_axis = _OUT if norm < 1e-12 else axis_vec / norm
+
+    def path(start_points, end_points, alpha):
+        detransformed_end_points = centers + np.dot(
+            end_points - centers, rotation_matrix(-arc_angle, unit_axis).T
+        )
+        rot = rotation_matrix(alpha * arc_angle, unit_axis)
+        lerped = (1.0 - alpha) * start_points + alpha * detransformed_end_points
+        return centers + np.dot(lerped - centers, rot.T)
+
+    return path
 
 
 class Transform(Animation):
@@ -19,6 +47,13 @@ class Transform(Animation):
     def path_func(self):
         if self._path_func is not None:
             return self._path_func
+        # CE precedence: an explicit path_func wins, then a non-None
+        # ``path_arc_centers`` generates the ``path_along_circles`` path,
+        # and only then the plain ``path_arc`` / straight path apply.
+        if self._path_arc_centers is not None:
+            return _path_along_circles(
+                self._path_arc, self._path_arc_centers, self._path_arc_axis
+            )
         if abs(self._path_arc) < 1e-9:
             return straight_path
         return path_along_arc(self._path_arc, self._path_arc_axis)

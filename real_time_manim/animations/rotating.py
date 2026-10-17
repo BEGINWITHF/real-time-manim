@@ -47,6 +47,28 @@ class Rotating(Animation):
             return False
         return not np.allclose(np.array(self._axis, dtype=float), OUT)
 
+    def _should_bake(self):
+        """Bake the rotation into the point arrays, per frame.
+
+        True for a non-z axis (a real 3D rotation) AND for any rotation about
+        an EXPLICIT pivot (``about_point``/``about_edge``).  The draw-time
+        channel (``set_anim_rotation`` + ``_rotation_about_point``) is only
+        honoured by the primitive senders (``_send_square`` orbits the centre
+        about the pivot); ``_send_polygon`` and the generic point path rotate
+        the vertices about the shape's OWN centre and ignore the pivot, so an
+        explicit pivot came out as a spin-in-place.  Measured on wiki
+        ``03-动画/移动与旋转/01-旋转-rotating_edge.mp4``
+        (``Rotating(tri, 90*DEGREES, about_edge=UP)``): RTM's teal-Triangle
+        centroid crawled to (248.9, 193.6) while CE's orbited the top-edge
+        hinge to (276.8, 165.7) -- mean|d| 1.21.  A default pivot (own centre)
+        needs no orbit and keeps the cheap channel path.
+        """
+        if self._rotation_about_point is not None:
+            return True
+        if self._axis is None:
+            return False
+        return not np.allclose(np.array(self._axis, dtype=float), OUT)
+
     def begin(self, t):
         super().begin(t)
         self._start_rotation = get_anim_rotation(self.mobject)
@@ -58,19 +80,31 @@ class Rotating(Animation):
             self.mobject._rotation_about_point = self._rotation_about_point.copy()
         else:
             self._rotation_about_point = None
-        if self._is_3d_axis():
+        if self._should_bake():
             self.mobject._rotation_3d = True
+            # The bake rewrites the point arrays every frame, and the primitive
+            # senders (`_send_square` / `_send_circle` / ...) rebuild the shape
+            # from class attributes and would ignore the baked geometry --
+            # exactly the rule `animations.rotate` follows.  The final rotation
+            # stays in the points, so the flag stays on.
+            self.mobject._transforming = True
             self._start_points = {}
             for sub in self.mobject.family_members_with_points():
                 if hasattr(sub, 'points') and len(sub.points) > 0:
                     self._start_points[id(sub)] = sub.points.copy()
                     set_anim_rotation(sub, 0.0)
+            # A container's own channel rotation is not in the family walk;
+            # zero it so the sender does not re-apply it over the baked points.
+            set_anim_rotation(self.mobject, 0.0)
         else:
             self.mobject._rotation_3d = False
 
     def finish(self):
         super().finish()
-        if not self._is_3d_axis() and self._rotation_about_point is not None:
+        # The per-frame bake already leaves the points at the final rotation, so
+        # the fallback bake below must be skipped whenever `_should_bake()` held
+        # -- otherwise it would rotate the finished points a SECOND time.
+        if not self._should_bake() and self._rotation_about_point is not None:
             pivot = np.array(self._rotation_about_point, dtype=float)
             rot = get_anim_rotation(self.mobject)
             if abs(rot) > 1e-12:
@@ -101,8 +135,11 @@ class Rotating(Animation):
         alpha = self.rate_func(alpha)
         angle = self.rot_angle * alpha
 
-        if self._is_3d_axis():
-            axis = np.array(self._axis, dtype=float)
+        if self._should_bake():
+            # `axis` defaults to OUT for a pivot-only rotation (Rotating's
+            # `axis=None`), which is the in-plane hinge CE rotates about.
+            axis_raw = self._axis if self._axis is not None else OUT
+            axis = np.array(axis_raw, dtype=float)
             axis_norm = np.linalg.norm(axis)
             if axis_norm < 1e-12:
                 return

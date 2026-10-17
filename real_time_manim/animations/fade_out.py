@@ -29,10 +29,21 @@ class FadeOut(Animation):
             self._park_opacity(mob, 1.0)
             self._start_positions.append(mob.get_center().copy())
             if self.fade_scale != 1.0:
+                # Same rule as ``FadeIn.begin`` -- see the long comment there.
+                # manim CE's ``FadeOut`` fades to ``mobject.copy().scale(scale)``
+                # (``fading.py``), so the WHOLE family shrinks, including a
+                # plain shape's own points.  The old ``if fm is not mob`` filter
+                # dropped the mobject itself, so a leaf VMobject (Circle,
+                # Square, Dot, ...) captured an empty list and ``scale=`` was
+                # silently ignored -- measured: ``FadeOut(Circle(r=0.68),
+                # scale=0.5)`` kept width 1.3600 end to end, while CE goes
+                # 1.3600 -> 1.1900 -> 1.0200 -> 0.8500 -> 0.6800.
+                # Containers (Text/VGroup) have no points of their own, so
+                # dropping the filter leaves them unchanged.
                 self._orig_points[id(mob)] = [
                     (fm, fm.get_points().copy())
                     for fm in mob.family_members_with_points()
-                    if fm is not mob
+                    if len(getattr(fm, "points", ())) > 0
                 ]
 
     def _park_opacity(self, mob, value):
