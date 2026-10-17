@@ -262,6 +262,51 @@ class PrimitiveMixin:
             pass
         return mob.width / 2.0
 
+    @staticmethod
+    def _circle_round_radius(mob):
+        """The shared anchor radius while the path still IS one circle, else None.
+
+        `_send_circle` strokes a native disc from ONE radius, which is only
+        correct while every anchor sits at that radius.  A `Circle` that was
+        `stretch`ed, `apply_matrix`ed or had its points generated anisotropically
+        keeps class `Circle` but its path is an ELLIPSE -- measured on
+        `Circle(radius=0.9).stretch(1.6, 0)`: anchor distances 1.44 / 1.201 /
+        0.9 / 1.201 / ... while CE strokes a 2.88x1.8 ellipse and RTM drew a
+        uniform disc of radius 1.44 (`_oncurve_radius` reads `get_start()`,
+        which is the x-extreme anchor on such a path).
+
+        manim stores a cubic as 4 control points with the anchor at the stride
+        (`points[0::4]`; the handles of an r=0.9 circle sit at 0.9311), so the
+        check samples exactly the anchors.  The centre is the anchors' own bbox
+        centre -- `get_center()` is family-wide and drifts when the circle
+        carries submobjects.  A rotating circle stays round: its anchors keep a
+        constant distance while the handles sweep.
+
+        Returns the shared radius, or None when the anchors disagree; the
+        caller then routes the shape through the point path, which tessellates
+        the bezier that is actually there.
+        """
+        try:
+            pts = getattr(mob, "points", None)
+            if pts is None or len(pts) < 4:
+                return None
+            anchors = np.asarray(pts[0::4], dtype=float)
+            lo = anchors.min(axis=0)
+            hi = anchors.max(axis=0)
+            c = (lo + hi) / 2.0
+            d = np.linalg.norm(anchors[:, :2] - c[:2], axis=1)
+            d = d[np.isfinite(d)]
+            if len(d) == 0:
+                return None
+            r = float(d.min())
+            if r <= 0.0:
+                return None
+            if float(d.max()) > r * 1.001:
+                return None
+            return r
+        except Exception:
+            return None
+
     def _send_circle(self, mob, a, w, h, rot, parent_offset=None):
         cx, cy, cz = mob.get_center()
         if parent_offset is not None:

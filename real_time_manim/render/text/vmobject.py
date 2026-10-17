@@ -8,6 +8,31 @@ import ctypes
 import math
 from real_time_manim.render.util import manim_to_screen, get_opacity, point_path_bounds, shaded_fill_rgb, shaded_fill_gradient
 
+
+def _black_fill_is_real(mob):
+    """True when an all-zero ``fill_rgbas`` really IS the mobject's colour.
+
+    A ``VMobject`` whose fill colour was never set keeps ``fill_rgbas`` at
+    zeros, which is indistinguishable from a deliberate black fill -- so both
+    senders resolve the ambiguity with ``get_color()``.  ``BackgroundRectangle``
+    (what ``add_background_rectangle`` installs) is the counter-example: black
+    IS its colour (``BackgroundRectangle.set_style`` hard-codes
+    ``fill_color=BLACK``, and the caller's ``opacity`` rides ``fill_opacity``),
+    while ``get_color()`` returns the colour of the mobject it BACKS.  The
+    fallback therefore repainted every label's black backing plate with the
+    label's own colour: wiki ``02-Mobject通用/05-样式与颜色``
+    "lable应为黑底" -- RTM drew the plate behind "READABLE" as
+    (223,238,217) white-ish where CE has (32,47,23), i.e. the black 0.75
+    plate over the coloured bars.
+    """
+    try:
+        from manim import BackgroundRectangle
+        if isinstance(mob, BackgroundRectangle):
+            return True
+    except Exception:                          # pragma: no cover - no manim
+        pass
+    return False
+
 def _mitre_room_filter(pts, half_w):
     """Drop the vertices that leave a corner's mitre cut without room.
 
@@ -481,7 +506,7 @@ class VMobjectMixin:
                         fb = float(frgbas[0][2])
                 except Exception:
                     pass
-                if fr == 0 and fg == 0 and fb == 0:
+                if fr == 0 and fg == 0 and fb == 0 and not _black_fill_is_real(mob):
                     try:
                         c = mob.get_color()
                         fr, fg, fb = float(c[0]), float(c[1]), float(c[2])
@@ -563,7 +588,7 @@ class VMobjectMixin:
                 fa = max(float(s[3]) for s in _stops)
         except Exception:
             pass
-        if fr == 0 and fg == 0 and fb == 0:
+        if fr == 0 and fg == 0 and fb == 0 and not _black_fill_is_real(mob):
             # The fill colour is literally black, which is ambiguous: it may be
             # the real colour or just "unset".  Take the colour from
             # `get_color()`, but do NOT touch `fa` when the rgba data was read
@@ -582,7 +607,14 @@ class VMobjectMixin:
                 fr, fg, fb = 1.0, 1.0, 1.0
                 if not _fa_measured:
                     fa = 1.0
-            if is_text and fr == 0 and fg == 0 and fb == 0:
+            # ... with one exception: a TEXT member whose rgba data really is
+            # black.  `to_original_color()` (wiki 02-Mobject通用/05-样式与颜色,
+            # "「color」消失被错误显示成了变白") resets every glyph through
+            # `mob.set_color(self.color)`, and `Text.color` is `#000000`, so the
+            # arrays read `[0, 0, 0, 1]` -- an EXPLICIT black that CE paints
+            # black (the word simply vanishes on the black stage).  Only the
+            # "no rgba data at all" case may fall back to white.
+            if is_text and not _fa_measured and fr == 0 and fg == 0 and fb == 0:
                 fr, fg, fb = 1.0, 1.0, 1.0
 
         # A `shade_in_3d` face is lit by the ThreeDCamera's light source;

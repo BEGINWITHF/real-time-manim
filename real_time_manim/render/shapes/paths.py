@@ -11,7 +11,7 @@ class PathMixin:
 
 
     def _stroke_polyline_with_progress(self, flat, closed, lower, upper,
-                                       r, g, b, px, alpha):
+                                       r, g, b, px, alpha, join=0):
         """Stroke the [lower, upper] stretch of a screen-space polyline.
 
         ``flat`` is x0,y0,x1,y1,... in screen pixels; ``lower``/``upper`` are
@@ -105,17 +105,80 @@ class PathMixin:
                 remaining = 0.0
         if len(pts) < 4:
             return
-        self._emit_stroke_strip(pts, px, r, g, b, alpha)
+        if join == 1 and closed and lower <= 1e-9 and upper >= 1.0 - 1e-9:
+            # Full closed contour of a BEVEL-joint mobject: native's strip
+            # would mitre the corners and push a tip out of them (see
+            # `_emit_stroke_bevel`).  A windowed or open stroke keeps the
+            # mitred strip, which is the right answer for it.
+            self._emit_stroke_bevel(pts, px, r, g, b, alpha)
+        else:
+            self._emit_stroke_strip(pts, px, r, g, b, alpha)
 
-    def _stroke_points_polyline(self, points, w, h, parent_offset, rot, sx, sy):
-        """Screen-space polyline for a VMobject's points (groups of 4 control points).
+    @staticmethod
+    def _anchor_joins(prev_end, start, mob=None):
+        """True when two consecutive cubic anchors are the SAME point (CE's rule).
+
+        manim's cairo camera never joins two curves whose anchors differ: it
+        calls ``ctx.new_sub_path()`` and a plain ``move_to`` there
+        (``camera/camera.py:715-760``), and the split itself comes from
+        ``VMobject.get_subpath_split_indices_from_points(points, n_dims=2)`` --
+        "a split is introduced wherever two consecutive anchors differ",
+        ``np.isclose`` with ``rtol=1e-5`` / ``atol=tolerance_for_point_equality``
+        (1e-6), i.e. 1e-6 manim units ~ 7e-5 px.  Only a real discontinuity --
+        a repeated path jumping back to its start -- can trip it.
+        """
+        if mob is not None:
+            try:
+                fn = getattr(mob, "consider_points_equals_2d", None)
+                if fn is not None:
+                    return bool(fn(prev_end, start))
+            except Exception:                       # pragma: no cover
+                pass
+        atol = 1e-6
+        if mob is not None:
+            try:
+                atol = float(getattr(mob, "tolerance_for_point_equality", 1e-6)
+                             or 1e-6)
+            except Exception:                       # pragma: no cover
+                atol = 1e-6
+        try:
+            a = np.asarray(prev_end, dtype=float).ravel()[:2]
+            b = np.asarray(start, dtype=float).ravel()[:2]
+        except Exception:                           # pragma: no cover
+            return True
+        with np.errstate(invalid="ignore"):
+            return bool(np.all(np.abs(a - b) <= atol + 1e-5 * np.abs(b)))
+
+    def _stroke_points_subpaths(self, points, w, h, parent_offset, rot, sx, sy,
+                                mob=None):
+        """Screen-space polylines, ONE PER SUBPATH, for a VMobject's points.
 
         Cubic segments are subdivided so that roughly every 3 screen pixels is a
         straight run (the same length-aware rule the text stroke uses): the
         caller's points are the *real* geometry, so a partially drawn or scaled
         arc is already encoded in them (plan 4.2).
+
+        Runs are split wherever a curve's end anchor is not the next curve's
+        start anchor -- the exact place CE starts a NEW subpath (see
+        :meth:`_anchor_joins`).  Without it the tessellator silently bridged the
+        gap: it skipped each cubic's first sample ("the shared endpoint is not
+        repeated"), so the two anchors became one straight EDGE of the polyline
+        and the pen drew a chord between the subpaths.
+
+        Measured on wiki ``02-Mobject通用/04b-缩放旋转与变形-进阶``
+        ``repeat_rev.mp4`` ("错误的在红花结束时将arc补成封闭图形"): the sample does
+        ``arc.reverse_points()`` then ``arc.repeat(2)``, which appends a second
+        copy of the points, so curve 8 starts at the arc's START while curve 7
+        ended at its END.  RTM then stroked one 165.5 px straight step from
+        (448.7, 366.3) back to (581.3, 270.0) -- screen coords at 960x540 --
+        i.e. the chord that closes the 252 deg arc into a "pie".  CE emits no
+        such edge (its two subpaths are two ``move_to``s) and the frame diff
+        against the CE twin was exactly those 171 px in bbox x[224..290]
+        y[134..182] (480x270 scale), 0 px before ``repeat`` ran and 171 px from
+        frame 30 on, peak 208.
         """
-        flat = []
+        runs = []
+        cur = []
         n = len(points)
         # manim stores a shape's cubics as runs of 4 control points -- Arc, Sector
         # and Annulus all come out as a multiple of 4 (measured: Arc(180°) = 32,
@@ -128,10 +191,15 @@ class PathMixin:
             stride, n_seg = 3, (n - 1) // 3
         else:
             stride, n_seg = 4, max(0, (n - 3) // 4)
+        prev_end = None
         for si in range(n_seg):
             idx = si * stride
             if idx + 3 >= n:
                 break
+            if prev_end is not None and not self._anchor_joins(
+                    prev_end, points[idx], mob):
+                runs.append(cur)                    # CE: new_sub_path, no chord
+                cur = []
             ctrl = []
             for k in range(4):
                 p = points[idx + k]
@@ -150,15 +218,23 @@ class PathMixin:
             chord = math.hypot(p3x - p0x, p3y - p0y)
             est = (cpoly + chord) * 0.5
             samples = int(max(8.0, min(256.0, math.ceil(est / 3.0))))
-            start = 0 if si == 0 else 1        # the shared endpoint is not repeated
+            # the shared endpoint is not repeated -- but only INSIDE a run: the
+            # first curve of a new subpath must lay down its own anchor, or the
+            # run would start at t=1/samples and drift off the path.
+            start = 0 if not cur else 1
             for s in range(start, samples + 1):
                 t = s / samples
                 u = 1.0 - t
                 bx = u * u * u * p0x + 3 * u * u * t * p1x + 3 * u * t * t * p2x + t * t * t * p3x
                 by = u * u * u * p0y + 3 * u * u * t * p1y + 3 * u * t * t * p2y + t * t * t * p3y
-                flat.append(bx)
-                flat.append(by)
-        return flat
+                cur.append(bx)
+                cur.append(by)
+            prev_end = points[idx + 3]
+        if cur:
+            runs.append(cur)
+        # a run of fewer than 2 points cannot be stroked at all; drop it, the
+        # same bail-out `_stroke_polyline_with_progress` takes (len(flat) < 4).
+        return [r for r in runs if len(r) >= 4]
 
     def _send_arc(self, mob, a, w, h, rot=0.0, parent_offset=None):
         """Arc drawn from its own points (plan 4.2).
@@ -201,18 +277,32 @@ class PathMixin:
             cx = gp[0] + (cx - gp[0]) * grow_scale
             cy = gp[1] + (cy - gp[1]) * grow_scale
         sx, sy = manim_to_screen(cx, cy, w, h, cz)
-        flat = self._stroke_points_polyline(points, w, h, parent_offset, rot, sx, sy)
-        if len(flat) < 4:
+        # ONE flat list per CE subpath: a `repeat()`ed (or otherwise disjoint)
+        # path must not be bridged by a chord -- see `_stroke_points_subpaths`.
+        flats = self._stroke_points_subpaths(points, w, h, parent_offset, rot,
+                                             sx, sy, mob)
+        if not flats:
             return
         r, g, b = self._stroke_color(mob)
         sw = self._stroke_width(mob)
         lower, upper = point_path_bounds(mob)
+        # A partial draw walks the outline ONCE, group after group: the global
+        # window is cut at each subpath's share of the perimeter, exactly as
+        # `_send_polygon` does for a Polygram's vertex groups.
+        windows = self._group_windows(flats, lower, upper)
         # The stroke opacity rides the ALPHA, not the colour (straight-alpha
         # blend, vulkan_init.c:633) -- same rule as `_send_square`.  Baking `so`
         # into the colour made a fading arc REPLACE the background with a
         # darkening solid instead of fading out over it.
-        self._stroke_polyline_with_progress(flat, False, lower, upper,
-                                            r, g, b, sw, a * so)
+        for flat, (flat_lower, flat_upper) in zip(flats, windows):
+            # CE closes a subpath only when its first and last anchor are the
+            # same point (camera.py:755-758); an Arc stays open, a full-turn
+            # one closes, which is what it takes for the seam to mitre.
+            closed = (abs(flat[0] - flat[-2]) < 1e-3
+                      and abs(flat[1] - flat[-1]) < 1e-3)
+            self._stroke_polyline_with_progress(flat, closed, flat_lower,
+                                                flat_upper, r, g, b, sw,
+                                                a * so)
 
     @staticmethod
     def _polygram_groups(mob, verts):
@@ -428,6 +518,7 @@ class PathMixin:
                         stroke_flats, progress_lower, progress_upper)
                     stroke_closed = False
 
+        join = self._strip_join(mob)
         if fo <= 0:
             so = get_opacity(mob, 'stroke', 1.0)
             if so <= 0 or bw <= 0:
@@ -442,7 +533,7 @@ class PathMixin:
                 self._stroke_polyline_with_progress(
                     flat, stroke_closed, flat_lower, flat_upper,
                     br, bg, bb,
-                    bw, alpha * so)
+                    bw, alpha * so, join)
         else:
             fr, fg, fb = self._fill_color_lit(mob)
             # native fills a polygon with a triangle fan (draw_polygon.c), and
@@ -486,4 +577,4 @@ class PathMixin:
                     self._stroke_polyline_with_progress(
                         flat, stroke_closed, flat_lower, flat_upper,
                         br, bg, bb,
-                        bw, alpha * so)
+                        bw, alpha * so, join)

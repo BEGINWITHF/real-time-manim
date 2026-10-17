@@ -77,13 +77,29 @@ class Viewport:
     """The visible rectangle of manim space, in manim units."""
 
     __slots__ = ("center", "height", "rotation", "frame_center",
-                 "focal_distance", "exponential", "light_source")
+                 "focal_distance", "exponential", "light_source",
+                 "fixed_orientation", "base", "active_func", "unit_height")
 
     def __init__(self, center=(0.0, 0.0), height=DEFAULT_FRAME_HEIGHT, rotation=None,
                  frame_center=(0.0, 0.0, 0.0), focal_distance=None,
-                 exponential=False, light_source=None):
+                 exponential=False, light_source=None, fixed_orientation=None,
+                 base=None, active_func=None, unit_height=None):
         self.center = (float(center[0]), float(center[1]))
         self.height = float(height) or DEFAULT_FRAME_HEIGHT
+        # The height that converts a *size written in manim units* (a stroke
+        # width) to pixels.  It is `height` for every camera whose zoom really
+        # shrinks the frame (manim's `MovingCamera`), because CE builds the
+        # cairo matrix from that same shrunk frame
+        # (`Camera.get_cairo_context`: ``pw / self.frame_width``), so the line
+        # width in frame units scales with it.
+        #
+        # `ThreeDCamera` is the exception: its zoom is a factor applied INSIDE
+        # `project_points` and the matrix stays at the fixed `frame_width` /
+        # `frame_height` attributes, i.e. CE deliberately keeps the stroke
+        # width constant as you zoom ("This ensures lines have constant width as
+        # you zoom in on them." -- camera.py apply_stroke).  Positions must
+        # still scale, so `height` shrinks while `unit_height` stays 8.
+        self.unit_height = (float(unit_height) if unit_height else self.height)
         # 3x3 camera rotation for the ThreeDCamera family (None for 2D).  Taken
         # from manim's own `generate_rotation_matrix()` so both agree.
         self.rotation = rotation
@@ -99,6 +115,17 @@ class Viewport:
         # `shade_in_3d` face's colour from this, so the renderer needs it too.
         self.light_source = None if light_source is None else tuple(
             float(v) for v in light_source)
+        # `ThreeDCamera.fixed_orientation_mobjects` snapshot for this frame,
+        # keyed by ``id(mobject)`` -> the center function CE anchors on (see
+        # `fixed_orientation_viewport`).  None outside a 3D camera.
+        self.fixed_orientation = fixed_orientation
+        # Set on the temporary viewport a fixed-orientation send installs:
+        # the rotated viewport it was derived from, and the center function it
+        # was derived for -- so a nested member of the same family reuses it
+        # instead of compounding, while a member anchored by a *different*
+        # function still re-derives from `base`.
+        self.base = base
+        self.active_func = active_func
 
     def project(self, x, y, w, h, z=0.0):
         """Map a manim point to screen pixels for a ``w``x``h`` surface.
@@ -131,6 +158,71 @@ class Viewport:
 
     def __repr__(self):                          # pragma: no cover - debugging aid
         return f"Viewport(center={self.center}, height={self.height})"
+
+
+def fixed_orientation_viewport(viewport, w, h, center, func=None):
+    """The *unrotated* viewport that renders a fixed-orientation mobject.
+
+    ``ThreeDCamera.add_fixed_orientation_mobjects`` makes a mobject keep facing
+    the camera: CE's ``ThreeDCamera.transform_points_pre_display``
+    (manim/camera/three_d_camera.py:356-370) does::
+
+        center  = center_func()                 # raw manim-space centre
+        new     = self.project_point(center)    # rotated + perspective centre
+        return points + (new - center)          # glyphs stay UNROTATED
+
+    i.e. the glyph outline is drawn exactly as in a 2D scene and only its
+    centre is carried to the projected position of that centre.  RTM's senders
+    have no such path: ``Viewport.project`` rotates every point, so a
+    ``tip=(1.5, 0.5, 1.5)`` label under ``add_fixed_orientation_mobjects`` came
+    out skewed with the camera.
+
+    Measured on wiki ``06-三维/01b-三维基本体进阶``
+    ``01b-三维基本体进阶-arrow3d.mp4`` "文字动画错误" at f0 (1920x1080, the
+    whole clip is static for the first 48 frames):
+
+        label block            x span        y span
+        CE twin (ink)          1240..1580    364..408   (44 px tall, horizontal)
+        RTM video (ink)        1120..1580    352..428   (76 px tall, smeared)
+        CE rule (predicted)    1222..1556    366..410   (44 px tall)
+        RTM projection (now)   1226..1565    351..427   (76 px tall)
+
+    The two predictions land within ~2 px of their own video, so the rule above
+    *is* the difference.
+
+    Returning a viewport instead of touching the mobject keeps the 30
+    ``manim_to_screen`` call sites untouched: a plain ``rotation=None``
+    viewport whose centre is moved so that ``center`` maps to
+    ``viewport.project(center)``.  For any point ``p`` that gives
+
+        screen(p) = projected_center + scale * (p - center)
+
+    which expands to exactly CE's ``w/2 + scale*(p + project(center) - center)``
+    -- frame_center and perspective included, glyphs rigid.
+
+    Returns ``None`` when the projection is unusable (no scale, non-finite
+    numbers); the caller then keeps the ordinary path.
+    """
+    try:
+        if viewport is None or viewport.rotation is None:
+            return None
+        c = np.asarray(center, dtype=float).ravel()
+        if c.size < 3 or not np.all(np.isfinite(c[:3])):
+            return None
+        scale = screen_scale(w, h, viewport.height)
+        if not np.isfinite(scale) or scale <= 0.0:
+            return None
+        pcx, pcy = viewport.project(float(c[0]), float(c[1]), w, h, float(c[2]))
+        vcx = float(c[0]) - (pcx - 0.5 * w) / scale
+        vcy = float(c[1]) - (0.5 * h - pcy) / scale
+        if not (np.isfinite(vcx) and np.isfinite(vcy)):
+            return None
+        return Viewport((vcx, vcy), viewport.height,
+                        fixed_orientation=viewport.fixed_orientation,
+                        base=viewport, active_func=func,
+                        unit_height=viewport.unit_height)
+    except Exception:                             # pragma: no cover - defensive
+        return None
 
 
 def set_viewport(viewport):
@@ -169,12 +261,28 @@ def viewport_from_scene(scene):
                 center = np.asarray(cam.frame_center, dtype=float)[:2]
             except Exception:
                 center = (0.0, 0.0)
+            # The LIVE zoom, not ``cam.zoom``.  ``ThreeDCamera.__init__`` sets
+            # ``self.zoom`` once from its constructor argument
+            # (three_d_camera.py:67) and nothing ever writes it again;
+            # ``ThreeDScene.move_camera``/``set_camera_orientation`` animate
+            # ``cam.zoom_tracker`` instead, and ``project_points`` reads it back
+            # through ``get_zoom()`` (three_d_camera.py:321,339).  Reading the
+            # dead attribute pinned every 3D scene at zoom 1: measured on wiki
+            # 01-场景与相机/专用场景 ``02-ThreeDScene-camera.mp4`` f270 (after
+            # ``move_camera(zoom=1.8)``) CE's cube face is 672..1241 px wide
+            # while RTM's was 800..1116 -- exactly 569/1.8 -- so the whole cube
+            # stayed unzoomed for frames 223-353 (mean|diff| 5.43).
             try:
-                zoom = float(getattr(cam, "zoom", 1.0) or 1.0)
+                get_zoom = getattr(cam, "get_zoom", None)
+                zoom = (float(get_zoom()) if callable(get_zoom)
+                        else float(getattr(cam, "zoom", 1.0) or 1.0))
             except Exception:
                 zoom = 1.0
-            height = float(getattr(cam, "frame_height", DEFAULT_FRAME_HEIGHT) or
-                           DEFAULT_FRAME_HEIGHT) / (zoom if zoom > 1e-6 else 1.0)
+            if not (zoom > 1e-6):
+                zoom = 1.0
+            base_height = float(getattr(cam, "frame_height", DEFAULT_FRAME_HEIGHT) or
+                                DEFAULT_FRAME_HEIGHT)
+            height = base_height / zoom
             try:
                 frame_center = np.asarray(cam.frame_center, dtype=float).reshape(-1)[:3]
             except Exception:
@@ -193,11 +301,34 @@ def viewport_from_scene(scene):
                     light_source = np.asarray(_light.points[0], dtype=float).reshape(-1)[:3]
                 except Exception:
                     light_source = None
+            # CE's ``ThreeDCamera.modified_rgbas`` turns shading off entirely
+            # when ``should_apply_shading`` is False; the renderer had no such
+            # gate and kept shading (measured on ShadingToggle: CE changed 41864
+            # pixels of the cube cell, RTM changed 0).  Dropping the light here
+            # flips the shading helpers' "no light source -> original colours"
+            # path on (``render.util.shaded_fill_rgb`` / ``shaded_fill_gradient``),
+            # which is exactly CE's behaviour.
+            if not getattr(cam, "should_apply_shading", True):
+                light_source = None
+            # `add_fixed_orientation_mobjects` registers every FAMILY member
+            # with the center function CE anchors on (three_d_camera.py:415);
+            # snapshot it id-keyed for the senders (see
+            # `fixed_orientation_viewport`).  Built fresh each frame so a
+            # removed mobject cannot linger.
+            fixed_orientation = None
+            _fo = getattr(cam, "fixed_orientation_mobjects", None)
+            if _fo:
+                try:
+                    fixed_orientation = {id(k): v for k, v in _fo.items()}
+                except Exception:                 # pragma: no cover - defensive
+                    fixed_orientation = None
             return Viewport(center, height, rotation=rot,
                             frame_center=frame_center,
                             focal_distance=focal_distance,
                             exponential=bool(getattr(cam, "exponential_projection", False)),
-                            light_source=light_source)
+                            light_source=light_source,
+                            fixed_orientation=fixed_orientation,
+                            unit_height=base_height)
 
     frame = getattr(cam, "frame", None)
     if frame is None or not hasattr(frame, "get_center"):

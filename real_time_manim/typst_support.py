@@ -119,8 +119,11 @@ _CMD_TO_TYPST = {
     r"\emptyset": "emptyset", r"\varnothing": "emptyset",
     r"\land": "and", r"\lor": "or", r"\neg": "not", r"\lnot": "not",
     r"\forall": "forall", r"\exists": "exists", r"\nexists": "∄",
-    r"\mid": "mid", r"\parallel": "parallel", r"\nparallel": "∦",
+    r"\parallel": "parallel", r"\nparallel": "∦",
     r"\perp": "perp", r"\therefore": "therefore", r"\because": "because",
+    # NB: Typst has no `mid` identifier -- the old "mid" entry rendered as
+    # the literal italic word "mid"; use the divides sign instead.
+    r"\mid": "∣",
     # arrows (ASCII shorthands / verified names)
     r"\to": "->", r"\rightarrow": "->", r"\leftarrow": "<-",
     r"\longrightarrow": "->", r"\longleftarrow": "<-",
@@ -134,6 +137,11 @@ _CMD_TO_TYPST = {
     r"\prime": "prime",
     r"\ldots": "dots", r"\cdots": "dots.c",
     r"\vdots": "dots.v", r"\ddots": "dots.down",
+    # delimiters: Typst passes the unicode chars straight through, and this
+    # also covers bare \lfloor x \rfloor (no \left ... \right needed)
+    r"\lfloor": "⌊", r"\rfloor": "⌋",
+    r"\lceil": "⌈", r"\rceil": "⌉",
+    r"\langle": "⟨", r"\rangle": "⟩",
     # Greek: plain names are Typst identifiers; variants fall back to the
     # unicode table (Typst passes unicode math letters straight through).
     **{f"\\{name}": name for name in _GREEK},
@@ -155,11 +163,14 @@ _STRUCT = {
 }
 
 #: Commands that only change style/size and can be dropped.
+#: NB: `\not` is deliberately absent -- Typst has no generic negation bar, so
+#: dropping it would silently turn `\not\in` into `in`.  Unknown commands
+#: fail the conversion and the string falls back to real LaTeX.
 _SKIP = (
     "displaystyle", "textstyle", "scriptstyle", "limits", "nolimits",
     "big", "Big", "bigg", "Bigg", "bigl", "bigr", "bigm",
     "Bigl", "Bigr", "Bigm", "biggl", "biggr", "biggm",
-    "Biggl", "Biggr", "Biggm", "hline", "not", "left.", "right.",
+    "Biggl", "Biggr", "Biggm", "hline", "left.", "right.",
 )
 
 #: \\begin{env} -> (typst open text, typst close text).  Delimiter-less
@@ -184,21 +195,37 @@ _UNICODE_DELIMS = {  # no lr scaling for these, plain literals
 _SPECIAL_CHARS = {  # \<c> after a backslash
     "{": "{", "}": "}", "%": "%", "#": "#", "&": "&", "$": "$",
     ",": ",", ";": ";", "!": "!", "|": "|", "/": "/", "-": "-", "'": "'",
-    "~": "space", " ": "space", "<": "<", ">": ">", "(": "(", ")": ")",
-    "[": "[", "]": "]", '"': '"',
+    "~": "#h(0.3333em)", " ": "#h(0.3333em)", "<": "<", ">": ">", "(": "(",
+    ")": ")", "[": "[", "]": "]", '"': '"',
 }
 
-_ACCENTS = {"hat": "hat", "widehat": "hat", "bar": "bar",
-            "overline": "overline", "underline": "underline",
-            "tilde": "tilde", "widetilde": "tilde", "dot": "dot",
-            "ddot": "dot.double", "vec": "vec", "breve": "breve",
-            "check": "caron", "acute": "acute", "grave": "grave",
-            "mathring": "circle.small"}
+#: Accent name -> Typst source template (``{x}`` is the converted base).
+#: Render-checked against real LaTeX.  Typst has no ``vec``/``bar`` accent
+#: function and ``circle.small`` is a plain symbol: ``vec(x)`` renders as
+#: ``(x)``, ``bar(x)`` as ``|x|`` and ``circle.small(x)`` as a stray circle,
+#: so those three go through ``accent``/``overline`` instead.
+_ACCENTS = {"hat": "hat({x})", "widehat": "hat({x})", "tilde": "tilde({x})",
+            "dot": "dot({x})", "ddot": "dot.double({x})",
+            "bar": "overline({x})", "overline": "overline({x})",
+            "underline": "underline({x})", "breve": "breve({x})",
+            "check": "caron({x})", "acute": "acute({x})",
+            "grave": "grave({x})",
+            "vec": "accent({x}, →)",
+            "mathring": "accent({x}, ○)"}
 
 _TEXT_FONTS = {"mathrm": "upright", "text": "upright", "textrm": "upright",
                "textbf": "bold", "mathbf": "bold", "boldsymbol": "bold",
                "mathbb": "bb", "mathcal": "cal", "mathfrak": "frak",
                "mathsf": "sans", "textit": None, "mathit": None}
+
+#: LaTeX's \mathbf/\textbf/\mathsf are upright; Typst's bold/sans keep the
+#: math italics, so those get wrapped in upright() to match LaTeX.
+_TEXT_FORCE_UPRIGHT = {"mathbf", "textbf", "mathsf"}
+
+#: TeX spacing modifiers -> Typst code-mode width (3/18, 4/18, 5/18 em).
+#: These used to be dropped, which glued e.g. `f(x)\,dx` into `f(x)dx`.
+_TEX_SPACES = {",": "#h(0.1667em)", ":": "#h(0.2222em)",
+               ";": "#h(0.2778em)", "!": "#h(-0.1667em)"}
 
 _WORD_RE = re.compile(r"[A-Za-z0-9 ]+")
 _PLAIN_CMD_RE = re.compile(r"\\[A-Za-z]+")
@@ -347,7 +374,8 @@ class _Conv:
                 self.i += 1
                 continue
             if ch == "~":
-                out.append("space")
+                # LaTeX ~ is a non-breaking space; in math mode it draws
+                # nothing (Typst ignores whitespace in math too).
                 self.i += 1
                 continue
             if ch == "\\":
@@ -393,9 +421,9 @@ class _Conv:
             return self._cmd_word(name)
         ch = self.s[self.i]
         self.i += 1
-        if ch in ",;:!":
+        if ch in _TEX_SPACES:
             # \, \; \: \! are TeX spacing modifiers, not punctuation.
-            return None
+            return _TEX_SPACES[ch]
         if ch in _SPECIAL_CHARS:
             return _SPECIAL_CHARS[ch]
         self._fail()
@@ -435,7 +463,7 @@ class _Conv:
             return f"root({n}, {x})" if n else f"sqrt({x})"
         if name in _ACCENTS:
             x = self._arg_conv()
-            return f"{_ACCENTS[name]}({x})"
+            return _ACCENTS[name].format(x=x)
         if name in _TEXT_FONTS:
             fn = _TEXT_FONTS[name]
             raw = self._arg_raw().strip()
@@ -454,8 +482,12 @@ class _Conv:
             if not raw.isalnum():
                 self._fail()
             if len(raw) == 1:
-                return f"{fn}({raw})"
-            return f'{fn}("{raw}")'
+                body = f"{fn}({raw})"
+            else:
+                body = f'{fn}("{raw}")'
+            if name in _TEXT_FORCE_UPRIGHT:
+                body = f"upright({body})"
+            return body
         if name == "operatorname":
             raw = self._arg_raw().strip()
             if not raw or not _WORD_RE.fullmatch(raw):
@@ -531,7 +563,10 @@ class _Conv:
             self._fail()
         if entry[0] == "plain":
             if kind[0] == "plain":
-                return entry[2]
+                # Use the *right* delimiter's own closing char: identical to
+                # the opener's pair when they match, and correct for mixed
+                # pairs like \left\lceil ... \right\rfloor.
+                return kind[1][1]
             self._fail()
         # entry == ("sym", open_ch, open_ch)
         ch = entry[1]
@@ -786,8 +821,10 @@ def typst_mathtex_init(self, *tex_strings, arg_separator=" ",
         all_bodies.extend(("x^2", "x_n"))
 
     # Submit every segment to the background pool first, then await: a
-    # multi-part formula compiles in parallel instead of serially.
-    warmup_typst_math(all_bodies)
+    # multi-part formula compiles in parallel instead of serially.  Bodies
+    # repeat across parts (" + " shows up in every equation), and the SVG
+    # cache is content-hashed anyway, so compile each distinct body once.
+    warmup_typst_math(list(dict.fromkeys(all_bodies)))
 
     # ---- build the parts --------------------------------------------------
     parts = []

@@ -28,10 +28,35 @@ class FadeIn(Animation):
             set_anim_opacity(mob, 0.0)
             self._start_positions.append(mob.get_center().copy())
             if self.fade_scale != 1.0:
+                # manim CE fades in from ``mobject.copy().scale(scale_factor)``
+                # (``fading.py::_Fade._create_faded_mobject``), i.e. the whole
+                # family INCLUDING a plain shape's own points, then pointwise
+                # interpolates back to full size.  The old filter
+                # ``if fm is not mob`` captured only the *descendants*, so a
+                # leaf VMobject -- Circle/Square/Dot/Triangle, whose
+                # ``family_members_with_points()`` is just ``[mob]`` -- got an
+                # EMPTY list and ``scale=`` was silently ignored.
+                #
+                # Measured (no GPU): ``FadeIn(Circle(radius=0.68), scale=0.5)``
+                # kept width == 1.3600 for the whole run in RTM, while CE went
+                # 0.6800 -> 0.8500 -> 1.0200 -> 1.1900 -> 1.3600 at alpha
+                # 0/0.25/0.5/0.75/1.  On the wiki page
+                # 03-动画/通用/02-play与wait参数 ("shift down被展示成了up",
+                # idx15) that alone accounts for the whole residual: the
+                # circle region's mean luma tracked alpha exactly (0.101 vs
+                # 0.104 linear at alpha 0.10) instead of CE's
+                # opacity*area curve alpha*(0.5+0.5*alpha)^2 (0.283 measured
+                # vs 0.28 predicted at alpha 0.5).
+                #
+                # Containers (Text/VGroup) have no points of their own, so
+                # ``family_members_with_points()`` returns their glyph/shape
+                # leaves and their behaviour is unchanged by dropping the
+                # filter; members without points are skipped so an empty
+                # assignment never happens.
                 self._orig_points[id(mob)] = [
                     (fm, fm.get_points().copy())
                     for fm in mob.family_members_with_points()
-                    if fm is not mob
+                    if len(getattr(fm, "points", ())) > 0
                 ]
 
     def interpolate(self, t):
@@ -57,8 +82,17 @@ class FadeIn(Animation):
                         scaled[:, 1] = cy + (orig[:, 1] - cy) * target_scale
                         fm.points = scaled
 
-            if self.fade_shift is not None and alpha < 1.0:
-                mob.move_to(self._start_positions[i] + self.fade_shift * (1.0 - alpha))
+            if self.fade_shift is not None:
+                # manim: `_Fade._create_faded_mobject(fadeIn=True)` shifts the
+                # STARTING copy by ``-shift`` (``direction_modifier = -1``), so
+                # the mobject begins at ``final - shift`` and travels BY ``shift``
+                # into place.  ``FadeIn(m, shift=DOWN)`` therefore slides DOWN
+                # into view.  Adding ``+shift`` here started it BELOW and moved
+                # it up -- the wiki report "shift=DOWN 被展示成了 up"
+                # (03-动画/通用/02-play与wait参数).  At alpha == 1 the term is
+                # exactly 0, so the guard that used to skip the final frame also
+                # stopped leaving a residual offset behind.
+                mob.move_to(self._start_positions[i] - self.fade_shift * (1.0 - alpha))
 
             if self.target_position is not None and i < len(self._start_positions):
                 if hasattr(self.target_position, 'get_center'):

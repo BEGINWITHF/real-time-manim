@@ -60,6 +60,14 @@ def _runner_script(num, desc, cls_name):
         "def pc(s):\n"
         "    s._finish_fast_record(); oc(s)\n"
         "vb.MLWindow.__init__ = pi; vb.MLWindow.close = pc\n"
+        # Build the window HIDDEN (never shown), the same way fast_record_scene
+        # and FrameServer do.  Without this the real __init__ above creates the
+        # window VISIBLE (``_hidden_default`` still False) and only
+        # ``enable_fast_record(hidden=True)`` hides it a moment later -- a bright
+        # window popping up then vanishing on every scene of a batch run.  The
+        # hide has to happen at CREATION time; hiding afterwards is always too
+        # late to avoid the flash.
+        "vb.MLWindow._hidden_default = True\n"
         f"scene_lifecycle({cls_name}())\n"
         "print('SCENE_DONE')\n"
     )

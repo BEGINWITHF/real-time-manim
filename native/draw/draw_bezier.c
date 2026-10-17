@@ -236,6 +236,119 @@ static int g_cross_dir[4096];
 
 static int g_pt_sub[ MAX_BEZIER_SEGMENTS * BEZIER_SAMPLES + 1 ];
 
+/* --- fill helpers -------------------------------------------------------
+   The scanline below used to emit TWO TRIANGLES PER COVERED PIXEL (6
+   vertices each), so a fill cost 6 * area vertices.  That is affordable for
+   a glyph and catastrophic for a screen-filling path: FocusOn's starting
+   `Dot(radius = frame_x_radius + frame_y_radius)` (11.11 units, larger than
+   the frame) covers the whole 1920x1080 stage, i.e. 2 073 600 px = 12.4 M
+   vertices against MAX_VERTICES = 4.19 M.  `tessellate_fill` therefore hit
+   the cap part-way down the frame and `return`ed, so the rows below the cut
+   never got their span.
+
+   Measured on wiki 03-动画/强调与提示 (02-圈注与聚焦.mp4, reported as
+   "圆形uncreate方向错误，聚焦动画播放错误"): at f401 ManimCE carries the
+   purple spotlight over the whole frame (row luma ~19.8 everywhere) while
+   RTM matches it down to y=395 and is then PURE BLACK (row luma 0.000) to
+   the bottom -- a straight horizontal cut that moves down as the disc
+   shrinks (f410 reaches y=761, f430 y=604), i.e. exactly the signature of a
+   per-frame vertex budget running out, not of any geometry.
+
+   Only the FIRST and LAST pixel of a span are partially covered; every pixel
+   between them has coverage exactly 1.0 and therefore the same colour and
+   alpha, so they collapse into ONE quad per span.  The cost drops to
+   O(rows + columns): at most 18 vertices per row instead of 6 * width, and
+   the emitted pixels are bit-for-bit the ones the per-pixel loop produced
+   (an interior pixel's coverage is 1.0 both ways, an edge pixel keeps its
+   own partial quad). */
+
+static int push_fill_quad2(float x0, float x1, float y0, float y1,
+                           float l_r, float l_g, float l_b,
+                           float r_r, float r_g, float r_b, float a) {
+    if (g_vertex_count + 6 > MAX_VERTICES) return 0;
+    PushVertex(x0, y0, l_r, l_g, l_b, a);
+    PushVertex(x1, y0, r_r, r_g, r_b, a);
+    PushVertex(x1, y1, r_r, r_g, r_b, a);
+    PushVertex(x0, y0, l_r, l_g, l_b, a);
+    PushVertex(x1, y1, r_r, r_g, r_b, a);
+    PushVertex(x0, y1, l_r, l_g, l_b, a);
+    return 1;
+}
+
+static int push_fill_quad(float x0, float x1, float y0, float y1,
+                          float r, float g, float b, float a) {
+    return push_fill_quad2(x0, x1, y0, y1, r, g, b, r, g, b, a);
+}
+
+/* Everything one scanline span needs to shade itself; keeps the helpers
+   below at a readable parameter count. */
+typedef struct {
+    const BezierPathObj *bp;
+    float cr, cg, cb;              /* fill colour stop 0 */
+    float gr, gg, gb;              /* fill colour stop 1 (gradient) */
+    float gdx, gdy, glen2;         /* gradient axis, screen pixels */
+    float fill_alpha;
+    int gradient;
+} FillCtx;
+
+/* One anti-aliased pixel of the span.  Returns 0 only when the per-frame
+   vertex budget is spent (the caller then aborts the fill, exactly as the
+   old per-pixel loop did).  A pixel that is < 5 % covered is skipped and
+   still counts as "done" -- that is the original rule, unchanged. */
+static int push_fill_pixel(const FillCtx *c, int px, float xl, float xr,
+                           float scan_y) {
+    float seg_l = (float)px;
+    float seg_r = seg_l + 1.0f;
+    float coverage_l = (xl > seg_l) ? xl : seg_l;
+    float coverage_r = (xr < seg_r) ? xr : seg_r;
+    float coverage = coverage_r - coverage_l;
+    if (coverage < 0.05f) return 1;
+
+    // Straight-alpha fill: keep the full fill colour and fold the pixel
+    // coverage into the alpha.  Previously the colour was scaled by coverage
+    // while alpha stayed opaque, which turned low-coverage edge pixels into a
+    // dark 1px rim around glyphs (visible on any non-black background).
+    float pr = c->cr, pg = c->cg, pb = c->cb;
+    if (c->gradient) {
+        float tt = ((seg_l + 0.5f - c->bp->gx1) * c->gdx
+                    + (scan_y - c->bp->gy1) * c->gdy) / c->glen2;
+        tt = tt < 0.0f ? 0.0f : (tt > 1.0f ? 1.0f : tt);
+        pr = c->cr + (c->gr - c->cr) * tt;
+        pg = c->cg + (c->gg - c->cg) * tt;
+        pb = c->cb + (c->gb - c->cb) * tt;
+    }
+    return push_fill_quad(seg_l, seg_r, scan_y, scan_y + 1.0f,
+                          pr, pg, pb, c->fill_alpha * coverage);
+}
+
+/* Colours of the two ends of a run of fully covered pixels.  Returns 0 when
+   the interpolation parameter clamps at either end: outside [0, 1] the ramp
+   is no longer affine across the run, so linear interpolation between the
+   two end colours would NOT reproduce the per-pixel clamp -- the caller then
+   keeps the old per-pixel emission for that run. */
+static int gradient_run_colors(const BezierPathObj *bp, float xl, float xr,
+                               float scan_y, float cr, float cg, float cb,
+                               float *l_r, float *l_g, float *l_b,
+                               float *r_r, float *r_g, float *r_b) {
+    float gdx = bp->gx2 - bp->gx1;
+    float gdy = bp->gy2 - bp->gy1;
+    float glen2 = gdx * gdx + gdy * gdy;
+    if (glen2 <= 1e-6f) return 0;
+    float tl = ((xl - bp->gx1) * gdx + (scan_y - bp->gy1) * gdy) / glen2;
+    float tr = ((xr - bp->gx1) * gdx + (scan_y - bp->gy1) * gdy) / glen2;
+    if (tl <= 0.0f || tl >= 1.0f || tr <= 0.0f || tr >= 1.0f) return 0;
+    float gr = bp->fr2 / 255.0f;
+    float gg = bp->fg2 / 255.0f;
+    float gb = bp->fb2 / 255.0f;
+    *l_r = cr + (gr - cr) * tl;
+    *l_g = cg + (gg - cg) * tl;
+    *l_b = cb + (gb - cb) * tl;
+    *r_r = cr + (gr - cr) * tr;
+    *r_g = cg + (gg - cg) * tr;
+    *r_b = cb + (gb - cb) * tr;
+    return 1;
+}
+
 static void tessellate_fill(BezierPathObj *bp) {
     float fr = bp->fr / 255.0f;
     float fg = bp->fg / 255.0f;
@@ -369,37 +482,66 @@ done_sample_all:
                     if (px_end > surf_w) px_end = surf_w;
                 }
 
-                for (int px = px_start; px < px_end; px++) {
-                    float seg_l = (float)px;
-                    float seg_r = (float)px + 1.0f;
-                    float coverage_l = (xl > seg_l) ? xl : seg_l;
-                    float coverage_r = (xr < seg_r) ? xr : seg_r;
-                    float coverage = coverage_r - coverage_l;
-                    if (coverage < 0.05f) continue;
+                FillCtx ctx;
+                ctx.bp = bp;
+                ctx.cr = cr; ctx.cg = cg; ctx.cb = cb;
+                ctx.gr = gr; ctx.gg = gg; ctx.gb = gb;
+                ctx.gdx = gdx; ctx.gdy = gdy; ctx.glen2 = glen2;
+                ctx.fill_alpha = fill_alpha;
+                ctx.gradient = gradient;
 
-                    // Straight-alpha fill: keep the full fill colour and fold
-                    // the pixel coverage into the alpha.  Previously the colour
-                    // was scaled by coverage while alpha stayed opaque, which
-                    // turned low-coverage edge pixels into a dark 1px rim
-                    // around glyphs (visible on any non-black background).
-                    if (g_vertex_count + 6 > MAX_VERTICES) return;
-                    float aa = fill_alpha * coverage;
-                    float pr = cr, pg = cg, pb = cb;
-                    if (gradient) {
-                        float tt = ((seg_l + 0.5f - bp->gx1) * gdx
-                                    + (scan_y - bp->gy1) * gdy) / glen2;
-                        tt = tt < 0.0f ? 0.0f : (tt > 1.0f ? 1.0f : tt);
-                        pr = cr + (gr - cr) * tt;
-                        pg = cg + (gg - cg) * tt;
-                        pb = cb + (gb - cb) * tt;
+                /* Run of FULLY covered pixels: `p >= xl && p + 1 <= xr`, i.e.
+                   p in [ceil(xl), floor(xr - 1)].  Every one of them would be
+                   pushed with coverage exactly 1.0 and the same colour, so they
+                   become a single quad -- this is what keeps a screen-filling
+                   path inside the per-frame vertex budget (see the note above
+                   `push_fill_quad`). */
+                int full_start = (int)ceilf(xl);
+                int full_end = (int)floorf(xr - 1.0f) + 1;
+                if (full_start < px_start) full_start = px_start;
+                if (full_end > px_end) full_end = px_end;
+                if (full_end <= full_start) {
+                    /* No interior pixel: emit every pixel of the span as its
+                       own partial quad (the run collapses to nothing). */
+                    full_start = px_start;
+                    full_end = px_start;
+                }
+
+                for (int px = px_start; px < full_start; px++) {
+                    if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return;
+                }
+
+                if (full_end > full_start && gradient) {
+                    float l_r, l_g, l_b, r_r, r_g, r_b;
+                    /* pixel CENTRES of the first/last full pixel, so the two
+                       end colours are exactly what the per-pixel loop would
+                       have computed for them; Vulkan then interpolates
+                       linearly across the quad (affine ramp) and reproduces
+                       every interior pixel's colour. */
+                    if (gradient_run_colors(bp,
+                            (float)full_start + 0.5f,
+                            (float)full_end - 0.5f,
+                            scan_y, cr, cg, cb,
+                            &l_r, &l_g, &l_b, &r_r, &r_g, &r_b)) {
+                        if (!push_fill_quad2((float)full_start, (float)full_end,
+                                             scan_y, scan_y + 1.0f,
+                                             l_r, l_g, l_b, r_r, r_g, r_b,
+                                             fill_alpha)) return;
+                    } else {
+                        /* the ramp clamps inside the run: keep the old
+                           per-pixel emission for it */
+                        for (int px = full_start; px < full_end; px++) {
+                            if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return;
+                        }
                     }
-                    PushVertex(seg_l, scan_y, pr, pg, pb, aa);
-                    PushVertex(seg_r, scan_y, pr, pg, pb, aa);
-                    PushVertex(seg_r, scan_y + 1.0f, pr, pg, pb, aa);
+                } else if (full_end > full_start) {
+                    if (!push_fill_quad((float)full_start, (float)full_end,
+                                        scan_y, scan_y + 1.0f,
+                                        cr, cg, cb, fill_alpha)) return;
+                }
 
-                    PushVertex(seg_l, scan_y, pr, pg, pb, aa);
-                    PushVertex(seg_r, scan_y + 1.0f, pr, pg, pb, aa);
-                    PushVertex(seg_l, scan_y + 1.0f, pr, pg, pb, aa);
+                for (int px = full_end; px < px_end; px++) {
+                    if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return;
                 }
             }
         }
@@ -423,9 +565,42 @@ void ResetBezierPaths(void) {
     g_seg_pool_used = 0;
 }
 
-void BuildVerticesFromBezierPaths(void) {
+/* Replays every path submitted since the last reset (fill then stroke).
+   Exported so the headless probe below can drive it directly. */
+__declspec(dllexport) void BuildVerticesFromBezierPaths(void) {
     for (int i = 0; i < bezier_path_count; i++) {
         BuildVerticesFromBezierPathAt(i);
     }
     ResetBezierPaths();
+}
+
+/* --- headless regression probe -----------------------------------------
+   The renderer reaches the tessellator only through Render_DrawScene with a
+   live swapchain; nothing outside the DLL can see how many vertices a fill
+   produced, yet "did the fill finish?" is exactly what
+   wiki 03-动画/强调与提示 ("圆形uncreate方向错误，聚焦动画播放错误") was
+   broken by.  These four entry points let a pytest drive
+   AddBezierPath -> tessellate -> inspect on a machine with no GPU, no
+   window and no image: it sets the surface size, resets the per-frame
+   budget, runs the fill and reads the vertices back (NDC, as PushVertex
+   stored them).  They do not touch the Vulkan renderer at all. */
+__declspec(dllexport) unsigned int RtmTest_VertexCount(void) {
+    return g_vertex_count;
+}
+
+__declspec(dllexport) int RtmTest_ReadVertex(int index, float *out6) {
+    if (index < 0 || (uint32_t)index >= g_vertex_count || out6 == NULL) return 0;
+    const float *v = &g_vertices[(uint32_t)index * 6];
+    for (int k = 0; k < 6; k++) out6[k] = v[k];
+    return 1;
+}
+
+__declspec(dllexport) void RtmTest_ResetFrame(void) {
+    g_vertex_count = 0;
+    ResetBezierPaths();
+}
+
+__declspec(dllexport) void RtmTest_SetSurfaceSize(unsigned int w, unsigned int h) {
+    g_swapchain_ext.width = w;
+    g_swapchain_ext.height = h;
 }

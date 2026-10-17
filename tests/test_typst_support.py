@@ -42,6 +42,18 @@ pytestmark = pytest.mark.skipif(
     (r"\lim_{x \to 0} f(x)", "lim_(x -> 0) f(x)"),
     (r"\operatorname{sgn}", 'op("sgn")'),
     (r"\hat{x} + \ddot{q}", "hat(x) + dot.double(q)"),
+    (r"\vec{v}", "accent(v, →)"),
+    (r"\vec{AB}", "accent(A B, →)"),
+    (r"\bar{x}", "overline(x)"),
+    (r"\mathring{x}", "accent(x, ○)"),
+    (r"x \mid y", "x ∣ y"),
+    (r"\mathsf{A}", "upright(sans(A))"),
+    (r"\mathbf{v}", "upright(bold(v))"),
+    (r"\boldsymbol{v}", "bold(v)"),
+    (r"\textbf{hi}", 'upright(bold("hi"))'),
+    (r"\lfloor x \rfloor", "⌊ x ⌋"),
+    (r"\left\lceil x \right\rfloor", "⌈ x ⌋"),
+    (r"a\,b", "a#h(0.1667em)b"),
     (r"\mathbb{R}^n", "bb(R)^n"),
     (r"\left( \frac{a}{b} \right)", "lr(( (a)/(b) ))"),
     (r"\left\{ x \right\}", "lr({ x })"),
@@ -50,7 +62,7 @@ pytestmark = pytest.mark.skipif(
     (r"\text{speed}", 'upright("speed")'),
     (r"\mathrm{d}x", "upright(d)x"),
     (r"e^{i\pi}", "e^(i pi)"),
-    (r"\int_0^1 f(x)\,dx", "integral_0^1 f(x)d x"),
+    (r"\int_0^1 f(x)\,dx", "integral_0^1 f(x)#h(0.1667em)d x"),
 ])
 def test_converter_supported(latex, expected):
     got = ts.latex_to_typst_math(latex)
@@ -69,6 +81,8 @@ def test_converter_supported(latex, expected):
     r"a \\ b",                     # \\ outside a matrix
     r"\left[ 0, 1 \right)",        # mismatched delimiters
     r"\frac{\usepackage{x}}{2}",   # unsupported nested inside a supported cmd
+    r"\not\in",                    # no generic negation bar in Typst
+    r"\text{say \"hi\"}",          # unbalanced quotes would break the string
 ])
 def test_converter_unsupported_returns_none(latex):
     assert ts.latex_to_typst_math(latex) is None
@@ -80,6 +94,10 @@ def test_every_mapped_token_compiles_in_typst():
     import tempfile
 
     tokens = sorted(set(ts._CMD_TO_TYPST.values()))
+    # accent templates (filled with a base) and the spacing snippets that
+    # the converter splices into the middle of a formula must compile too
+    tokens += sorted({tmpl.format(x="x") for tmpl in ts._ACCENTS.values()})
+    tokens += sorted(set(ts._TEX_SPACES.values()))
     with tempfile.TemporaryDirectory() as td:
         for i, tok in enumerate(tokens):
             p = Path(td) / f"t{i}.typ"
@@ -91,6 +109,40 @@ def test_every_mapped_token_compiles_in_typst():
                 typst.compile(str(p), format="svg")
             except Exception as exc:
                 pytest.fail(f"token {tok!r} does not compile: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Typst path vs LaTeX path: structural parity
+# ---------------------------------------------------------------------------
+
+def _leaf_count(mob):
+    if not mob.submobjects:
+        return 1 if mob.get_num_points() else 0
+    return sum(_leaf_count(sub) for sub in mob.submobjects)
+
+
+@pytest.mark.parametrize("latex", [
+    r"\vec{v}",
+    r"\bar{x}",
+    r"\mathring{x}",
+    r"\mathsf{A}",
+    r"\mathbf{v}",
+    r"\lfloor x \rfloor",
+    r"\mid",
+    r"\hat{x}",
+])
+def test_typst_glyph_count_matches_latex(latex, monkeypatch):
+    """The Typst route must draw the same number of glyphs as LaTeX.
+
+    This is the guard that catches "the accent silently vanished" bugs:
+    ``\vec{v}`` is v + arrow in both renderers (2 leaves), while the old
+    ``vec(v)`` mapping drew a stray ``(v)`` instead (3 leaves).
+    """
+    m_typst = MathTex(latex)
+    monkeypatch.setattr(ts, "ENABLED", False)
+    m_latex = MathTex(latex)
+    got, want = _leaf_count(m_typst), _leaf_count(m_latex)
+    assert got == want, f"{latex}: typst drew {got} glyphs, latex drew {want}"
 
 
 # ---------------------------------------------------------------------------

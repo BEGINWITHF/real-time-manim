@@ -218,15 +218,31 @@ def shaded_fill_rgb(mob):
 
 
 def shaded_fill_gradient(mob, w, h):
-    """``(c1, c2, p1, p2)`` for a ``shade_in_3d`` face, or ``None``.
+    """``(c1, c2, p1, p2)`` for a fill CE paints as a LINEAR GRADIENT, else ``None``.
 
-    manim shades a face with two stops -- its start- and end-corner colours --
-    and Cairo interpolates across the path.  ``shaded_fill_rgb`` averages them
-    for callers that take a single colour; this returns both stops plus the
-    projected corner positions so the native bezier fill can interpolate the
-    same way.  Without it the peak of a curved surface is clipped: CE's Sphere
-    limb reaches luma 249 where the averaged colour tops out near 195.
+    Two callers, one contract: **both stops as 0-255 ints plus their two
+    projected endpoints in screen pixels**, exactly what ``_send_vmobject``
+    hands native's ``AddBezierPath(..., fr2, fg2, fb2, gx1, gy1, gx2, gy2)``
+    (``render/text/vmobject.py``).
+
+    * A ``shade_in_3d`` face: manim shades it with two stops -- its start- and
+      end-corner colours -- and Cairo interpolates across the path.
+      ``shaded_fill_rgb`` averages them for callers that take a single colour;
+      this returns both stops plus the projected corner positions so the native
+      bezier fill can interpolate the same way.  Without it the peak of a
+      curved surface is clipped: CE's Sphere limb reaches luma 249 where the
+      averaged colour tops out near 195.
+    * Any other multi-stop fill (NEW branch below): CE does the same thing for
+      them, so RTM must too -- see :func:`_multi_stop_fill_gradient`.
     """
+    grad = _shaded_face_gradient(mob, w, h)
+    if grad is not None:
+        return grad
+    return _multi_stop_fill_gradient(mob, w, h)
+
+
+def _shaded_face_gradient(mob, w, h):
+    """The original ``shade_in_3d`` branch of :func:`shaded_fill_gradient`."""
     try:
         from real_time_manim.camera_state import get_viewport
         viewport = get_viewport()
@@ -262,6 +278,106 @@ def shaded_fill_gradient(mob, w, h):
     return ((int(first[0]), int(first[1]), int(first[2])),
             (int(second[0]), int(second[1]), int(second[2])),
             (sx1, sy1), (sx2, sy2))
+
+
+def fill_gradient_stops(mob):
+    """``fill_rgbas`` when ``mob``'s fill is a MULTI-STOP ramp, else ``None``.
+
+    CE turns any ``fill_rgbas`` carrying more than one DISTINCT row into a
+    ``cairo.LinearGradient`` over ``get_gradient_start_and_end_points()`` --
+    one ``add_color_stop_rgba`` per row (``Camera.set_cairo_context_color``,
+    quoted in :func:`_multi_stop_fill_gradient`).  "More than one distinct row"
+    is therefore exactly the test for "this fill is a ramp, not a flat
+    colour"; a fill whose rows are all identical is flat and answers
+    ``None``, so every already-correct shape keeps the code path it was
+    measured on.
+
+    Two callers, one truth: :func:`_multi_stop_fill_gradient` decides *what
+    colour* to hand native, and the window's polygon dispatch decides *which
+    sender* may paint the shape at all (native's ``AddPolygon`` has no
+    gradient channel, so a ramping polygon has to go down the bezier path --
+    ``window/paint.py``).
+    """
+    try:
+        rgbas = np.asarray(mob.get_fill_rgbas(), dtype=float)
+    except Exception:
+        return None
+    if rgbas.ndim != 2 or len(rgbas) < 2:
+        return None
+    if np.allclose(rgbas[:, :3], rgbas[0][:3], atol=1e-6, rtol=0.0):
+        return None                          # every stop identical: flat
+    return rgbas
+
+
+def _multi_stop_fill_gradient(mob, w, h):
+    """``(c1, c2, p1, p2)`` for a flat-free multi-stop fill, else ``None``.
+
+    CE's own rule for a fill's colour, verbatim from
+    ``camera/camera.py:731-746`` (``Camera.set_cairo_context_color``)::
+
+        if len(rgbas) == 1:
+            ctx.set_source_rgba(*rgbas[0]...)          # flat
+        else:
+            points = vmobject.get_gradient_start_and_end_points()
+            pat = cairo.LinearGradient(*chain(*(p[:2] for p in points)))
+            offsets = np.linspace(0, 1, len(rgbas))
+            ...add_color_stop_rgba(offset, ...)        # one stop per row
+
+    so **any** ``fill_rgbas`` with more than one row is a ramp across
+    ``get_gradient_start_and_end_points()`` -- which is what
+    ``Polygon(...).set_color((C1, C2))`` (what ``Axes.get_area`` builds) and
+    ``set_sheen`` both produce.  RTM's generic filler averaged those rows
+    instead (``render/text/vmobject.py``: "Average the stops"), painting the
+    whole shape ONE flat mid colour.
+
+    Measured on wiki ``05-坐标系与图表/06-面积与黎曼矩形``
+    ``06-面积与黎曼矩形-area.mp4`` "有渐变色没有正确生效" at f220 (960x540 →
+    1920x1080 video), the filled band along one scan line:
+
+        x       RTM (before)   CE
+        0.40    (65,116,95)    (70,114,79)   <- CE near the GREEN stop
+        0.55    (65,116,95)    (61,114,104)
+        0.70    (65,116,95)    (61,114,104)  -> rising to the BLUE_C stop
+
+    and ``(65,116,95)`` is exactly the mean of the two stops blended at the
+    polygon's 0.6 opacity over black: 0.6 * mean(BLUE_C, GREEN) =
+    0.6 * (110,195,162) = (66,117,97).  The gradient was replaced by its own
+    average -- peak pixel error 80/255, 350 px off per frame, mean|diff| 1.025.
+
+    Only two stops can be handed to native (``AddBezierPath`` takes
+    ``fr2/fg2/fb2`` + one axis), so first/last rows become the ramp's ends.
+    That is EXACT for a 2-row fill (manim's normal case) and for the N-row
+    arrays ``update_rgbas_array`` stretches linearly; a fill whose rows are all
+    equal is flat and returns None, so every already-correct shape keeps taking
+    the code path it was measured on.
+
+    The axis is ``get_gradient_start_and_end_points()`` itself -- the method CE
+    calls -- projected through the same ``manim_to_screen`` that draws the
+    shape, so a zooming/panning camera keeps the ramp pinned to the geometry.
+    """
+    rgbas = fill_gradient_stops(mob)
+    if rgbas is None:
+        return None
+    first = rgbas[0][:3]
+    last = rgbas[-1][:3]
+    try:
+        p1, p2 = mob.get_gradient_start_and_end_points()
+    except Exception:
+        return None
+    p1 = np.asarray(p1, dtype=float).ravel()
+    p2 = np.asarray(p2, dtype=float).ravel()
+    s1 = manim_to_screen(float(p1[0]), float(p1[1]), w, h,
+                         float(p1[2]) if p1.size > 2 else 0.0)
+    s2 = manim_to_screen(float(p2[0]), float(p2[1]), w, h,
+                         float(p2[2]) if p2.size > 2 else 0.0)
+    if abs(s2[0] - s1[0]) < 1e-6 and abs(s2[1] - s1[1]) < 1e-6:
+        # Degenerate axis (a sheen direction the projection collapses): cairo
+        # would draw a constant, and native's gradient maths would divide by
+        # |g|^2 == 0 -- keep the old single-colour path instead of a NaN fill.
+        return None
+    c1 = tuple(int(round(float(v) * 255)) for v in first)
+    c2 = tuple(int(round(float(v) * 255)) for v in last)
+    return c1, c2, (float(s1[0]), float(s1[1])), (float(s2[0]), float(s2[1]))
 
 
 def get_stroke_rgb(mob):

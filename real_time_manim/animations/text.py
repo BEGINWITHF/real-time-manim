@@ -1,6 +1,7 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
-from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity
-import numpy as np
+from real_time_manim.animations.base import (
+    Animation, set_anim_opacity, get_anim_opacity, place_cursor_after,
+)
 from manim import Text, VGroup
 from real_time_manim.rate_functions import _smooth
 
@@ -90,9 +91,7 @@ class TextDecimalNumber(Text):
 
         if index > 0:
             last_visible = self.all_submobs[index - 1]
-            last_center = last_visible.get_center()
-            self.cursor.move_to(last_center)
-            self.cursor.shift(np.array([1, 0, 0]) * (last_visible.get_width() / 2 + self.buff * 4))
+            place_cursor_after(self.cursor, last_visible, self.buff)
         else:
             self.cursor.move_to(self.all_submobs[0].get_center())
 
@@ -115,9 +114,7 @@ class TextDecimalNumber(Text):
     def finish(self):
         Animation.finish(self)
         if self.all_submobs:
-            last = self.all_submobs[-1]
-            self.cursor.move_to(last.get_center())
-            self.cursor.shift(np.array([1, 0, 0]) * (last.get_width() / 2 + self.buff * 4))
+            place_cursor_after(self.cursor, self.all_submobs[-1], self.buff)
         if self.keep_cursor_y:
             self.cursor.move_to([
                 self.cursor.get_center()[0],

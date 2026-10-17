@@ -113,6 +113,15 @@ class GlyphMixin:
             b = sum(float(s[2]) for s in stops) / n
             if r != 0.0 or g != 0.0 or b != 0.0:
                 return int(round(r * 255)), int(round(g * 255)), int(round(b * 255))
+            # Data that is there and is BLACK is an EXPLICIT black, not
+            # "unset": `Text.to_original_color()` resets every glyph through
+            # `set_color(Text.color)` and `Text.color` is `#000000`, so CE
+            # paints the word black -- i.e. it disappears.  Falling through to
+            # `default` repainted it with the container's colour, which for a
+            # Text is white (the wiki report "「color」消失被错误显示成了变白",
+            # 02-Mobject通用/05-样式与颜色).  Only a glyph with no rgba data at
+            # all reaches `default`.
+            return 0, 0, 0
         return default
 
     def _send_text_write(self, mob, letter_alphas, w, h, alpha=1.0,

@@ -11,7 +11,7 @@ A `Scene` is just an object that holds the window and mobjects; it is not
 rendered by Manim's own renderer. Open an `MLWindow`, bind the scene, play, close:
 
 ```python
-from manim import Scene, Square, BLUE
+from real_time_manim import Scene, Square, BLUE      # ManimCE comes bundled
 from real_time_manim.vulkan_bind import MLWindow, Create, Wait
 
 class Example(Scene):

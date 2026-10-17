@@ -55,7 +55,50 @@ class StrokeMixin:
                 return float(viewport.height) or 8.0
         except Exception:                          # pragma: no cover - defensive
             pass
+        # No viewport == a plain Scene with no camera frame.  Its visible
+        # height is whatever ``config.frame_height`` says, NOT a hardcoded 8.0.
+        # Positions already scale by ``config.frame_width`` (``screen_scale``),
+        # so a SIZE that assumed the default 8-unit frame did not follow a
+        # ``config.frame_height`` override while its own position did -- the
+        # wiki 02-画幅坐标 "curve vs straight" scaling bug: halving the frame
+        # (``frame_y_radius``/``frame_x_radius``) doubled the Square (its
+        # points scale with ``config.frame_width``) but left the Circle/Dot at
+        # half the size (their radius used the hardcoded 8).  Reading config
+        # keeps the default (8.0) case byte-identical and makes an override
+        # scale sizes consistently with positions.
+        try:
+            from manim import config
+            fh = float(config.frame_height)
+            if fh > 0.0:
+                return fh
+        except Exception:                          # pragma: no cover - no manim
+            pass
         return DEFAULT_FRAME_HEIGHT
+
+    @staticmethod
+    def _unit_frame_height():
+        """The frame height a *stroke width* converts with (see Viewport.unit_height).
+
+        Same as :meth:`_visible_frame_height` for every camera whose zoom really
+        shrinks the frame -- manim's `MovingCamera` scales the cairo matrix with
+        the frame, so its line width scales too.  A `ThreeDCamera` zoom is
+        applied inside `project_points` while the matrix keeps the fixed frame,
+        so CE keeps the stroke width constant; using the zoomed height there
+        drew a `move_camera(zoom=1.8)` cube's edges 1.8x too thick.
+        """
+        try:
+            from real_time_manim.camera_state import get_viewport
+        except Exception:                              # pragma: no cover
+            return StrokeMixin._visible_frame_height()
+        try:
+            viewport = get_viewport()
+            if viewport is not None:
+                height = float(getattr(viewport, "unit_height", 0.0) or 0.0)
+                if height > 0.0:
+                    return height
+        except Exception:                              # pragma: no cover - defensive
+            pass
+        return StrokeMixin._visible_frame_height()
 
     def _stroke_width(self, mob):
         sw_manim = get_stroke_w(mob)
@@ -68,7 +111,7 @@ class StrokeMixin:
         # scales strokes with it -- using the default 8 drew them half as thick
         # (CameraFamilyScene luma 1.12 vs CE 1.82).
         h = getattr(self, 'win_h', 800)
-        return sw_manim * 0.01 * (h / self._visible_frame_height())
+        return sw_manim * 0.01 * (h / self._unit_frame_height())
 
     @staticmethod
     def _stroke_layers(px, alpha):
@@ -179,6 +222,95 @@ class StrokeMixin:
         coords = (ctypes.c_float * len(pts))(*[float(v) for v in pts])
         for _w, _a in self._stroke_layers(px, alpha):
             self.dll.AddLineStrip(coords, None, n, _w, r, g, b, _a)
+
+    @staticmethod
+    def _strip_join(mob):
+        """Native join style for ``mob``'s stroked outline: 0 mitre, 1 bevel.
+
+        manim gives a mobject a ``joint_type`` that Cairo honours when it
+        strokes the path (``Camera.apply_stroke``:
+        ``ctx.set_line_join(LINE_JOIN_MAP[vmobject.joint_type])``); the default
+        ``LineJointType.AUTO`` leaves Cairo's own default, which is MITER.
+        The faces of manim's 3D solids are the exception --
+        ``manim/mobject/three_dimensions.py:583`` builds a ``Cube``'s faces
+        with ``joint_type=LineJointType.BEVEL``.
+        """
+        name = getattr(getattr(mob, "joint_type", None), "name", "") or ""
+        return 1 if name == "BEVEL" else 0
+
+    def _emit_stroke_bevel(self, pts, px, r, g, b, alpha):
+        """Stroke a CLOSED contour with BEVEL corners instead of mitres.
+
+        Native's line strips always mitre, and a mitre tip sticks out of the
+        corner by ``half_w / sin(interior / 2)``.  That is what a
+        ``LineJointType.AUTO`` mobject should get (Cairo mitres), but a BEVEL
+        one must stop at the straight cut between the two outer offset points.
+        Measured on wiki ``06-三维`` ``01-三维基本体-cube.mp4`` ("白色包边末端
+        处理不对"): at the cube's silhouette corners RTM put a white tip where
+        ManimCE has pure background -- f5, corner (1385.4, 584.1): RTM white
+        runs to x=1394 (tip ~8 px past the vertex, exactly
+        ``half_w / sin(24 deg)`` for the face's 48 deg corner) while CE stops
+        at x=1389, the bevel's cut line ``outA -> outB``.  68 px of ink in 6
+        clusters, all of them at silhouette corners.
+
+        Decomposition (no native change): every edge becomes its own
+        two-point strip -- native only mitres JOINTS, and a 2-point strip has
+        none, so each edge keeps the plain butt cap that ends at the vertex --
+        and every CONVEX corner gets the missing bevel triangle
+        ``(vertex, outA, outB)`` through ``AddPolygon``.  Concave corners need
+        no triangle: there the two quads already overlap.  The two pieces
+        never overlap each other, so a fading outline still composites once.
+
+        Only used for the full, closed contour of a complete (un-windowed)
+        stroke; a partial draw keeps the mitred strip.
+        """
+        n = len(pts) // 2
+        if n < 3:
+            return
+        P = [(float(pts[2 * i]), float(pts[2 * i + 1])) for i in range(n)]
+        if abs(P[0][0] - P[-1][0]) < 1e-4 and abs(P[0][1] - P[-1][1]) < 1e-4:
+            P = P[:-1]
+            n = len(P)
+        if n < 3:
+            return
+        area2 = 0.0
+        for i in range(n):
+            x0, y0 = P[i]
+            x1, y1 = P[(i + 1) % n]
+            area2 += x0 * y1 - x1 * y0
+        if abs(area2) < 1e-9:
+            self._emit_stroke_strip(pts, px, r, g, b, alpha)
+            return
+        s = 1.0 if area2 > 0.0 else -1.0
+        for _w, _a in self._stroke_layers(px, alpha):
+            half_w = _w * 0.5 + 0.5      # same formula as draw_line.c:202
+            edge = (ctypes.c_float * 4)()
+            for i in range(n):
+                xp, yp = P[(i - 1) % n]
+                x0, y0 = P[i]
+                xn, yn = P[(i + 1) % n]
+                edge[0], edge[1] = xp, yp
+                edge[2], edge[3] = x0, y0
+                self.dll.AddLineStrip(edge, None, 2, _w, r, g, b, _a)
+                ux, uy = x0 - xp, y0 - yp
+                vx, vy = xn - x0, yn - y0
+                lu = math.hypot(ux, uy)
+                lv = math.hypot(vx, vy)
+                if lu < 1e-6 or lv < 1e-6:
+                    continue
+                if (ux * vy - uy * vx) / (lu * lv) * s <= 1e-4:
+                    continue             # concave: the two quads overlap
+                ux, uy = ux / lu, uy / lu
+                vx, vy = vx / lv, vy / lv
+                # outer normal = the side away from the contour's interior
+                ax = x0 + s * uy * half_w
+                ay = y0 - s * ux * half_w
+                bx = x0 + s * vy * half_w
+                by = y0 - s * vx * half_w
+                tri = (ctypes.c_float * 6)(x0, y0, ax, ay, bx, by)
+                self.dll.AddPolygon(
+                    x0, y0, r, g, b, 0, 0, 0, 0.0,
+                    3, tri, 1.0, _a, 1)
 
     def _rotate_point(self, x, y, cx, cy, angle):
         return rotate_point(x, y, cx, cy, angle)

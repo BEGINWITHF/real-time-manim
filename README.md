@@ -72,7 +72,7 @@ Write a normal Manim `Scene`, open a window, and play. Then **record it to
 `~/Downloads` with a single call**:
 
 ```python
-from manim import Scene, Square, BLUE
+from real_time_manim import Scene, Square, BLUE      # ManimCE comes bundled
 from real_time_manim.vulkan_bind import MLWindow, Create, Wait
 from real_time_manim.record import fast_record_scene
 
@@ -90,6 +90,12 @@ fast_record_scene(Hello)             # → C:\Users\<you>\Downloads\output.mp4
 
 That's it — recording starts and stops around the scene automatically, and the
 transient `media/` folder is cleaned up afterwards.
+
+> **No ManimCE install, no `import manim`.** RTM bundles the ManimCE it drives
+> (`real_time_manim/manim/`), and `import real_time_manim` re-exports its whole
+> namespace — `Scene`, every mobject, every animation, the colours, the rate
+> functions. Code written the old way (`from manim import ...`) keeps working
+> too, and gets the very same classes.
 
 ---
 

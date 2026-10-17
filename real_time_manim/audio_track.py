@@ -14,7 +14,9 @@ What this does instead:
   window's `_cursor` (the recorded timeline length so far) instead.
 * After the scene has run, `apply_sounds(files)` overlays the clips onto silence
   (pydub), then muxes the track into each produced MP4 with a second ffmpeg pass
-  (`-c:v copy`, so the video is not re-encoded).
+  (`-c:v copy`, so the video is not re-encoded).  It is also where the run's
+  subcaptions (`play(..., subcaption=...)`, collected on the window because RTM
+  has no file writer) are written out as `.srt` next to the first output video.
 """
 
 from __future__ import annotations
@@ -23,6 +25,17 @@ import os
 import subprocess
 
 _sounds = []            # list of (abs_path, start_seconds, gain_or_None)
+_sound_kwargs = []      # parallel list: extra add_sound kwargs per entry
+
+#: The ``Scene.add_sound`` keywords RTM's mix chain actually implements.
+#:
+#: manim's ``Scene.add_sound(**kwargs)`` forwards them to
+#: ``SceneFileWriter.add_audio_segment``, whose only keyword is
+#: ``gain_to_background`` -- a dB adjustment applied to the background track
+#: while the clip plays, i.e. pydub's ``gain_during_overlay``.  Anything else
+#: manim would reject anyway, so RTM names it and drops it (a warning) instead
+#: of swallowing it in silence (gap A33).
+SUPPORTED_ADD_SOUND_KWARGS = ("gain_to_background",)
 
 
 def _scene_window(scene):
@@ -44,15 +57,48 @@ def install_add_sound_hook(scene) -> None:
     original = scene.add_sound
 
     def add_sound(sound_file, time_offset=0, gain=None, **kwargs):
+        # Split the keywords RTM's mix can act on from the ones it cannot;
+        # the latter are named in a warning rather than silently discarded
+        # (gap A33).  manim's own writer only supports `gain_to_background`
+        # anyway (SceneFileWriter.add_audio_segment).
+        supported = {}
+        unsupported = []
+        for key, value in kwargs.items():
+            if key in SUPPORTED_ADD_SOUND_KWARGS:
+                supported[key] = value
+            else:
+                unsupported.append(str(key))
+        if unsupported:
+            listed = ", ".join(sorted(repr(k) for k in unsupported))
+            message = (
+                f"[RTM] Scene.add_sound(): unsupported parameter(s) {listed} "
+                "ignored -- RTM 不支持该参数: the RTM audio mix supports only "
+                "sound_file, time_offset, gain"
+                + (f", {', '.join(SUPPORTED_ADD_SOUND_KWARGS)}"
+                   if SUPPORTED_ADD_SOUND_KWARGS else "")
+                + "."
+            )
+            try:                                          # encoding-safe print
+                from real_time_manim.window.play import print_warning
+                print_warning(message)
+            except Exception:                             # pragma: no cover
+                print(message)
         win = _scene_window(scene)
         playhead = float(getattr(win, "_cursor", 0.0) or 0.0)
         try:
+            _sound_kwargs.append(dict(supported))
             _sounds.append((os.path.abspath(sound_file),
                             playhead + float(time_offset or 0.0), gain))
         except Exception:
-            pass
+            # Keep the two lists in step if the second append ever failed.
+            if len(_sound_kwargs) > len(_sounds):
+                _sound_kwargs.pop()
         try:
-            return original(sound_file, time_offset=time_offset, gain=gain, **kwargs)
+            # Forward only what manim itself accepts: an unsupported keyword
+            # reaching the file writer raises TypeError, which used to be
+            # swallowed here -- silently, for ever.
+            return original(sound_file, time_offset=time_offset, gain=gain,
+                            **supported)
         except Exception:
             # manim's file writer is not running under RTM -- our own track
             # replaces it, so a failure here is expected and harmless.
@@ -64,6 +110,16 @@ def install_add_sound_hook(scene) -> None:
 
 def reset() -> None:
     _sounds.clear()
+    _sound_kwargs.clear()
+    # Subcaptions are collected on windows that the registry keeps alive for
+    # the life of the process, so a fresh recording run has to empty them --
+    # otherwise an earlier run's cues would be exported into this run's .srt.
+    # `record._run` calls reset() before it starts the scene.
+    try:
+        from real_time_manim.window.play import clear_subcaptions
+        clear_subcaptions()
+    except Exception:                                    # pragma: no cover
+        pass
 
 
 def sounds():
@@ -91,7 +147,7 @@ def build_track(wav_path, duration=None):
     if duration is None:
         duration = max((start for _, start, _ in _sounds), default=0.0) + 1.0
     track = AudioSegment.silent(duration=int(max(duration, 0.1) * 1000))
-    for path, start, gain in _sounds:
+    for i, (path, start, gain) in enumerate(_sounds):
         if not os.path.exists(path):
             continue
         try:
@@ -103,7 +159,19 @@ def build_track(wav_path, duration=None):
                 clip = clip.apply_gain(float(gain))       # manim: gain in dB
             except Exception:
                 pass
-        track = track.overlay(clip, position=int(max(start, 0.0) * 1000))
+        overlay_kwargs = {}
+        extra = _sound_kwargs[i] if i < len(_sound_kwargs) else None
+        bg_gain = (extra or {}).get("gain_to_background")
+        if bg_gain is not None:
+            # manim's `gain_to_background` is pydub's `gain_during_overlay`:
+            # a dB adjustment applied to the existing track while this clip
+            # plays over it (SceneFileWriter.add_audio_segment).
+            try:
+                overlay_kwargs["gain_during_overlay"] = float(bg_gain)
+            except (TypeError, ValueError):
+                pass
+        track = track.overlay(clip, position=int(max(start, 0.0) * 1000),
+                              **overlay_kwargs)
     track.export(wav_path, format="wav")
     return wav_path
 
@@ -121,8 +189,38 @@ def mux_audio(mp4_path, wav_path):
     return True
 
 
+def _export_subcaptions(files, verbose=False):
+    """Record-end hook: write the run's subcaptions as ``.srt`` (gap A6).
+
+    ``record._run`` calls :func:`apply_sounds` at the end of every recording
+    with the files that were produced -- it is the one place that knows the
+    output path without ``record.py`` (owned by another session) changing.
+    The ``.srt`` lands next to the first output video, the way manim names it
+    after the video file.  Returns the path written, or None (no captions, no
+    files, or nothing to export).
+    """
+    existing = [f for f in (files or []) if os.path.exists(f)]
+    if not existing:
+        return None
+    try:
+        from real_time_manim.window.play import export_srt
+    except Exception:                                    # pragma: no cover
+        return None
+    srt_path = os.path.splitext(existing[0])[0] + ".srt"
+    try:
+        return export_srt(srt_path, verbose=verbose)
+    except OSError:                                      # pragma: no cover
+        return None
+
+
 def apply_sounds(files, verbose=False):
-    """Build the track from the recorded calls and mux it into every file."""
+    """Build the track from the recorded calls and mux it into every file.
+
+    Also exports any subcaptions the run collected (see
+    :func:`_export_subcaptions`); the two are independent, so a scene with
+    captions but no sound still gets its ``.srt``.
+    """
+    _export_subcaptions(files, verbose=verbose)
     if not _sounds or not files:
         return []
     files = [f for f in files if os.path.exists(f)]
