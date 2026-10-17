@@ -59,3 +59,16 @@ def _squish_rate_func(func, a, b):
     def result(t):
         return func((t - a) / (b - a))
     return result
+
+
+# ManimCE's public rate functions ride along, so ``real_time_manim``'s own
+# ``rate_functions`` module is a superset of the upstream one:
+# ``rate_functions.smooth`` works whether the caller came from RTM's internals
+# (which use the ``_``-prefixed copies above) or from user code that just wants
+# ``from real_time_manim import rate_functions``.
+# ``real_time_manim/__init__`` binds this module under the name ``rate_functions``
+# so it never collides with the copy re-exported by the bundled ManimCE.
+from manim.utils.rate_functions import *   # noqa: F401,F403
+from manim.utils.rate_functions import __dict__ as _manim_rate_functions_dict
+
+__all__ = [name for name in _manim_rate_functions_dict if not name.startswith("_")]

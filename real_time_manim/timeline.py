@@ -89,6 +89,26 @@ def evaluate_animation(anim, t):
         anim.interpolate(local)
 
 
+def _is_wait_animation(anim):
+    """True for manim's ``Wait`` AND RTM's own ``Wait``.
+
+    RTM exports a ``Wait`` that subclasses RTM's ``Animation``, not manim's,
+    so an ``isinstance(anim, manim.Wait)`` test misses it: a lone RTM
+    ``Wait(0.3)`` @15fps counted the stepped ``arange`` 5 frames where manim
+    writes the frozen ``int()`` 4 (BUG_REPORT L6).  ``scene.wait()`` builds a
+    manim ``Wait``; ``win.play(Wait(...))`` builds this one -- both must
+    resolve frozen-vs-stepped the same way.
+    """
+    try:
+        from manim import Wait as _ManimWait
+        if isinstance(anim, _ManimWait):
+            return True
+    except Exception:                       # pragma: no cover - manim is required
+        pass
+    from real_time_manim.animations.wait import Wait as _RTMWait
+    return isinstance(anim, _RTMWait)
+
+
 def ce_frame_count(anims, duration, fps):
     """How many frames manim itself emits for one play of ``anims``.
 
@@ -113,15 +133,15 @@ def ce_frame_count(anims, duration, fps):
     if len(anims) == 1:
         anim = anims[0]
         try:
-            from manim import Wait
             # Mirror manim's own test -- `Scene.is_current_animation_frozen_frame`
             # is `... and animations[0].is_static_wait`, i.e. plain truthiness.
             # `Scene.wait` resolves that flag from `should_update_mobjects()`, so a
             # scene *with updaters* gets False and manim STEPS the wait (measured:
             # 0.3 s -> 5 frames, ceil) while a plain scene gets True and freezes it
             # (4 frames, int).  Treating None as frozen put six updater/camera scenes
-            # one frame short of CE.
-            frozen = (isinstance(anim, Wait)
+            # one frame short of CE.  `_is_wait_animation` also matches RTM's own
+            # `Wait`, which is not a manim subclass (BUG_REPORT L6).
+            frozen = (_is_wait_animation(anim)
                       and bool(getattr(anim, "is_static_wait", False)))
         except Exception:
             frozen = False
@@ -135,6 +155,49 @@ def ce_frame_count(anims, duration, fps):
     # manim 10 frames where ceil(0.6*15) gives 9.
     import numpy as np
     return max(1, len(np.arange(0.0, duration, step)))
+
+
+def drive_animation_updaters(anim, dt):
+    """Run one animation's OWN updater pass -- manim's ``Animation.update_mobjects``.
+
+    ``Scene.update_to_time`` (manim 0.21) does three things per frame, in this
+    order::
+
+        for animation in self.animations:
+            animation.update_mobjects(dt)   # (1) this function
+            animation.interpolate(alpha)    # (2)
+        self.update_mobjects(dt)            # (3) scene/mobject updaters
+
+    RTM's timeline only ever did (2) and (3).  Step (1) is not a no-op: it walks
+    ``Animation.get_all_mobjects_to_update()`` -- everything in
+    ``get_all_mobjects()`` *except* ``self.mobject``, i.e. **the copies**
+    ``begin()`` took (``starting_mobject``, ``target_mobject``, ``target_copy``).
+
+    Those copies keep the updaters they were copied with, and a copy's updaters
+    are the only place some animations accumulate state.  The wiki report
+    ``03-动画/更新器动画/01b-更新工具与自动变化`` -- "tracepath画出的时直线" --
+    is exactly this: the sample drives
+    ``group.animate.shift(RIGHT*6)`` while ``group`` carries
+    ``add_updater(lambda m: m.rotate(-0.3))`` and a ``TracedPath`` records
+    ``circ.get_start``.  Without step (1) the two copies never rotate, so
+    ``interpolate`` keeps re-deriving ``group`` from an unrotated pair and the
+    scene pass' fresh ``rotate(-0.3)`` is wiped on the next frame: the traced
+    point only ever sits at the single offset ``0.66*sin(-0.3)``, i.e. a
+    perfectly straight horizontal line (measured: y spread 0.0000 in RTM vs
+    1.3664 for manim's own loop).
+
+    Only manim-native animations get this pass -- RTM's own classes take an
+    absolute time in ``interpolate`` and write their channels themselves, and
+    several of them expose a ``get_all_mobjects()`` whose entries are the real
+    scene mobjects (running them here would double-drive their updaters against
+    ``_drive_mobject_updaters``).
+    """
+    if not _is_manim_animation(anim):
+        return
+    updater = getattr(anim, "update_mobjects", None)
+    if not callable(updater):
+        return
+    updater(dt)
 
 
 def resolve_static_wait(scene, anims):
@@ -152,12 +215,13 @@ def resolve_static_wait(scene, anims):
     wait steps like an animation, counted ``ceil(duration*fps)``.  Measured: a
     plain scene's ``wait(0.3)`` = 4 frames, the same wait in a scene with updaters
     = 5 -- the difference behind six suite scenes one frame short of CE.
+
+    Both manim's ``Wait`` (``self.wait``) and RTM's own ``Wait``
+    (``win.play(Wait(...))``) are resolved; RTM's class used to fall through
+    the ``isinstance`` test and stayed stepped even in a plain scene
+    (BUG_REPORT L6).
     """
-    try:
-        from manim import Wait
-    except Exception:                                   # pragma: no cover
-        return
-    if len(anims) != 1 or not isinstance(anims[0], Wait):
+    if len(anims) != 1 or not _is_wait_animation(anims[0]):
         return
     wait = anims[0]
     if getattr(wait, "is_static_wait", None) is not None:
@@ -186,6 +250,10 @@ class Timeline:
         self._prepared = False
         self.duration = 0.0
         self._last_t = None        # last rendered time, for updater dt re-anchoring
+        # [start, end) spans whose wait CE renders with freeze_current_frame --
+        # computed in finalize(); inside them render_at holds the picture
+        # instead of driving updaters (see _frozen_at).
+        self._frozen_windows = []
 
     def add(self, anim, start=0.0):
         """Schedule ``anim`` to begin at global time ``start`` (seconds)."""
@@ -244,8 +312,61 @@ class Timeline:
             begun.append(entry)
         self.duration = max(
             (e["start"] + e["run_time"] for e in self._entries), default=0.0)
+        self._frozen_windows = self._compute_frozen_windows()
         self._prepared = True
         return self
+
+    def _compute_frozen_windows(self):
+        """``[start, end)`` spans whose frames CE would ``freeze_current_frame``.
+
+        CE freezes a wait ONLY when it is the play's single animation
+        (``Scene.is_current_animation_frozen_frame`` -> the lone-Wait branch of
+        ``compile_animation_data``); a Wait sharing the play with other
+        animations goes through ``play_internal`` and steps normally.  Plays
+        never overlap in time (each starts on the previous one's cursor), so
+        "no other entry overlaps this span" is the schedule-level form of
+        CE's lone-Wait rule and works for both the per-play timeline and the
+        whole-scene schedule ``FrameServer`` builds.
+
+        The eps absorbs float noise at the seams: a schedule entry's start is
+        a cumulative sum and can sit ~1 ulp off the frame grid, while entries
+        that are truly concurrent share the same start by construction, so
+        1e-9 separates the two cases by a wide margin.
+        """
+        eps = 1e-9
+        wins = []
+        for e in self._entries:
+            if e["run_time"] <= 0:
+                continue
+            anim = e["anim"]
+            if not (_is_wait_animation(anim)
+                    and getattr(anim, "is_static_wait", None) is True):
+                continue
+            a = e["start"]
+            b = a + e["run_time"]
+            concurrent = any(
+                other is not e
+                and other["start"] < b - eps
+                and a + eps < other["start"] + other["run_time"]
+                for other in self._entries)
+            if not concurrent:
+                wins.append((a, b))
+        return wins
+
+    def _frozen_at(self, t):
+        """Whether ``t`` falls inside a frozen-wait window.
+
+        The lower bound carries eps so a wait whose (cumulatively-summed)
+        start lands ~1 ulp ABOVE its own first frame still freezes that
+        frame.  The upper bound is EXACT so the first frame of a contiguous
+        next entry is never swallowed -- and it matches ``ce_frame_count``'s
+        ``int()`` cut, which is derived from the same end value: a lone play's
+        last frame is always at least one full ``dt`` below ``end``.
+        """
+        for a, b in self._frozen_windows:
+            if t >= a - 1e-9 and t < b:
+                return True
+        return False
 
     def prepare(self, *animations):
         """Convenience: schedule every animation at ``t = 0`` and finalize."""
@@ -256,8 +377,15 @@ class Timeline:
     def stateful_names(self):
         return [type(e["anim"]).__name__ for e in self._entries if e["stateful"]]
 
-    def evaluate(self, t):
-        """Set every animation's mobjects to their state at time ``t`` (no draw)."""
+    def evaluate(self, t, dt=0.0, drive=True):
+        """Set every animation's mobjects to their state at time ``t`` (no draw).
+
+        ``dt`` / ``drive`` mirror manim's per-animation updater pass (see
+        :func:`drive_animation_updaters`): ``drive=False`` is what a *seek*
+        passes, exactly like ``_drive_mobject_updaters`` -- updaters are
+        stateful, so replaying them while jumping backwards would accumulate
+        history the forward walk never had.
+        """
         if not self._prepared:
             raise RuntimeError("call finalize()/prepare() first")
         # Every entry must write *something* at every t, so the result stays a
@@ -277,11 +405,91 @@ class Timeline:
                 evaluate_animation(entry["anim"], -1.0)   # clamps to alpha 0
         # Apply pass: the entries that have started, earliest first, so the one
         # that started last wins -- exactly manim's play-a-sequence semantics.
+        # manim runs each animation's own updater pass BEFORE interpolating it
+        # (`Scene.update_to_time`), so the copies `begin()` took advance first
+        # and the interpolation then derives the mobject from that fresh state.
         for entry in sorted(self._entries, key=lambda e: e["start"]):
             if entry["start"] <= t:
+                if drive:
+                    drive_animation_updaters(entry["anim"], dt)
                 evaluate_animation(entry["anim"], t - entry["start"])
 
-    def render_at(self, t, readback=False):
+    def _frame_duration(self):
+        """Nominal seconds-per-frame of the walk currently rendering ``self``.
+
+        CE's clock advances once per *written* frame (``CairoRenderer.add_frame``
+        does ``self.time += num_frames * dt``), so the very first frame of a play
+        counts one ``dt`` too.  ``Timeline`` is handed times, not frame rates, so
+        the rate has to be recovered the same way ``PlayMixin._run_timeline``
+        picks its own: a fast record runs at its configured rate, everything else
+        at the engine's one supported rate (``TARGET_FPS``).  ``render_mp4``
+        passes its explicit ``fps`` as ``render_at(..., frame_dt=...)``.
+        """
+        win = self.window
+        fps = None
+        if getattr(win, "_fast_record", False):
+            fps = getattr(win, "_fast_record_fps", None)
+        from real_time_manim.state import TARGET_FPS
+        return 1.0 / float(fps or TARGET_FPS)
+
+    def _advance_scene_time(self, amount):
+        """Advance the renderer clock ``Scene.time`` reads (manim semantics).
+
+        ``Scene.time`` is a read-only property over ``renderer.time``
+        (``CairoRenderer.time``), which CE adds to on every emitted frame and
+        RTM never touched -- so ``self.time`` stayed ``0.0`` for a whole scene
+        (wiki 01-场景与相机/场景/01-Scene基础).  Scenes without a renderer
+        clock (stubs) fall back to their own plain ``time`` attribute.
+        """
+        if not amount or amount <= 0:
+            return
+        scene = self.scene
+        renderer = getattr(scene, "renderer", None)
+        if renderer is not None and isinstance(
+                getattr(renderer, "time", None), (int, float)):
+            renderer.time = float(renderer.time) + float(amount)
+            return
+        if "time" in getattr(scene, "__dict__", {}):
+            scene.time = float(scene.time) + float(amount)
+
+    def stop_conditions(self, t=None):
+        """Every scheduled ``Wait.stop_condition``, optionally only those whose
+        span covers ``t`` (a condition guards the wait it was built with)."""
+        eps = 1e-9
+        conds = []
+        for e in self._entries:
+            cond = getattr(e["anim"], "stop_condition", None)
+            if not callable(cond):
+                continue
+            if t is not None and not (e["start"] - eps <= t
+                                      < e["start"] + e["run_time"]):
+                continue
+            conds.append(cond)
+        return conds
+
+    def poll_stop_conditions(self, t):
+        """Evaluate the stop conditions covering ``t`` once; True = end the wait.
+
+        CE's renderer checks ``stop_condition`` once per frame *after* writing
+        that frame (``write_frame`` then ``if stop_condition(): break``), so a
+        wait ends on the frame where the condition first turns true instead of
+        running its full ``run_time``.  Forward walks only: a random-access
+        ``render_at`` never polls (``stop_condition`` is a stateful,
+        side-effecting callable), which is why seeking still follows the full
+        schedule -- wiki 01-场景与相机/场景/03-播放与等待.
+
+        A raising condition ends the wait rather than killing the render, the
+        policy ``PlayMixin._run_timeline`` already applies to the live path.
+        """
+        for cond in self.stop_conditions(t):
+            try:
+                if cond():
+                    return True
+            except Exception:
+                return True
+        return False
+
+    def render_at(self, t, readback=False, frame_dt=None):
         """Evaluate at ``t``, draw that state, and present it.  O(1) in ``t``.
 
         Order matters: the renderer draws whatever is queued, so the state at
@@ -293,16 +501,32 @@ class Timeline:
         buffer before it is presented, so a following read returns exactly this
         frame (see ``MLWindow.request_readback``).
 
+        ``frame_dt`` overrides the frame duration used for the FIRST frame's
+        contribution to ``Scene.time`` (see ``_advance_scene_time``); walks that
+        know their own fps -- ``render_mp4`` -- pass it, everything else uses
+        the window's rate.
+
         Returns False when the frame could not be drawn (window closed), True
         otherwise -- see the ``tick()`` call at the end.
         """
-        self.evaluate(t)
-        # Mobject updaters are stateful, so they accumulate only while the
-        # timeline moves forward; a seek (first frame, same t, or backwards)
-        # re-anchors with dt=0 instead of replaying history.  The animation
-        # state itself stays a pure function of t, so random access is intact.
-        dt = 0.0 if (self._last_t is None or t <= self._last_t) else t - self._last_t
-        if dt > 0.0:
+        first = self._last_t is None
+        dt = 0.0 if (first or t <= self._last_t) else t - self._last_t
+        # A frozen wait (CE's freeze_current_frame) holds the picture: no
+        # updater pass at all, exactly like CE's frozen branch, which renders
+        # one frame and repeats it WITHOUT ever calling Scene.update_mobjects.
+        # Without this gate an explicit frozen_frame=True / self.pause() in a
+        # scene with updaters kept stepping them, so the "frozen" pause moved.
+        # The gate even swallows the first-frame re-anchor (dt=0): CE never
+        # runs an updater pass inside a frozen window either.  `_last_t` still
+        # advances, so the first frame after the window steps exactly one
+        # frame of dt -- CE resumes updater time right where the wait ends.
+        drive = not self._frozen_at(t) and (dt > 0.0 or first)
+        # The gate has to be resolved BEFORE `evaluate`: the same `drive` now
+        # also runs manim's per-animation updater pass, whose copies
+        # (`starting_mobject` / `target_copy`) accumulate state just like the
+        # scene mobjects do -- see `timeline.drive_animation_updaters`.
+        self.evaluate(t, dt=dt if drive else 0.0, drive=drive)
+        if drive:
             from real_time_manim.window.scene import _drive_mobject_updaters
             _drive_mobject_updaters(self.scene, dt)
         self._last_t = t
@@ -312,7 +536,22 @@ class Timeline:
         # tick() answers False when the window is gone (WM_QUIT): the frame was
         # NOT drawn, so the caller must stop walking the schedule instead of
         # capturing a picture of nothing.
-        return bool(self.window.tick())
+        drawn = bool(self.window.tick())
+        if drawn:
+            # A9 -- CE advances ``Scene.time`` once per EMITTED frame
+            # (``CairoRenderer.add_frame`` -> ``self.time += num_frames * dt``),
+            # while RTM produced frames itself and never touched the renderer
+            # clock, so ``scene.time`` stayed 0.0 forever (wiki 01-场景与相机/
+            # 场景/01-Scene基础).  Order matters: this runs AFTER ``evaluate`` /
+            # the updater pass above, exactly like CE, whose updaters see the
+            # time as it stood before the frame was written.  The first frame of
+            # a schedule still counts one frame (``frame_dt``/``_frame_duration``)
+            # because CE counts frame 0 too; a backwards or repeated ``t`` (dt 0)
+            # adds nothing, just like re-writing a frame at the same instant.
+            self._advance_scene_time(
+                (float(frame_dt) if frame_dt else self._frame_duration())
+                if first else dt)
+        return drawn
 
     def screenshot_at(self, t, path):
         self.render_at(t, readback=True)
@@ -322,7 +561,13 @@ class Timeline:
         """Render the whole schedule forward to ``path`` (mp4) by walking ``t``
         and drawing each frame — the same ``evaluate(t)`` path that powers
         ``render_at``.  With ``realtime=True`` it paces to wall-clock (for a live
-        window); otherwise it runs as fast as it can (like a fast record)."""
+        window); otherwise it runs as fast as it can (like a fast record).
+
+        A scheduled ``Wait.stop_condition`` is polled once per drawn frame (the
+        same timing as CE's renderer and as ``PlayMixin._run_timeline``) and
+        ends the walk early, so a ``wait_until``-style wait writes only the
+        frames up to the one where its condition first fired.
+        """
         import os
         import shutil
         import subprocess
@@ -332,6 +577,7 @@ class Timeline:
         duration = float(self.duration if duration is None else duration)
         anims = [e.get("anim") for e in getattr(self, "_entries", [])]
         n_frames = ce_frame_count(anims, duration, fps)
+        frame_dt = 1.0 / float(fps)
         tmpdir = tempfile.mkdtemp(prefix="rtm_timeline_")
         # Only frames that were actually drawn may go to ffmpeg: a closed
         # window makes ``render_at`` answer False, and looping on would have
@@ -343,10 +589,14 @@ class Timeline:
             for k in range(n_frames):
                 t = k / float(fps)
                 frame_start = time.perf_counter()
-                if not self.render_at(t, readback=True) and live:
+                if not self.render_at(t, readback=True, frame_dt=frame_dt) and live:
                     break
                 self.window.screenshot(os.path.join(tmpdir, f"f_{k:05d}.bmp"))
                 written += 1
+                # A condition that fires on THIS frame ends the walk now, the
+                # frame that fired is still written (CE writes then checks).
+                if self.poll_stop_conditions(t):
+                    break
                 if realtime:
                     left = (1.0 / fps) - (time.perf_counter() - frame_start)
                     if left > 0:

@@ -51,19 +51,36 @@ def _default_out_path() -> str:
 # --------------------------------------------------------------------------
 
 def scene_lifecycle(scene) -> None:
-    """Run a scene the way Manim does: ``setup()`` first, then ``construct()``.
+    """Run a scene the way Manim does: ``setup()``, ``construct()``, ``tear_down()``.
 
-    Manim's own ``Scene.render()`` calls ``setup()`` before ``construct()``.
-    RTM used to call ``construct()`` alone, so everything a scene prepares in
-    ``setup()`` was missing -- ``LinearTransformationScene`` (``moving_vectors``),
-    ``ZoomedScene`` (``zoomed_display``), ``MovingCameraScene`` (``camera.frame``)
-    and any user ``setup()`` hook.
+    Manim's own ``Scene.render()`` calls ``setup()`` before ``construct()`` and
+    ``tear_down()`` at the end; RTM used to call ``construct()`` alone, so
+    everything a scene prepares in ``setup()`` was missing --
+    ``LinearTransformationScene`` (``moving_vectors``), ``ZoomedScene``
+    (``zoomed_display``), ``MovingCameraScene`` (``camera.frame``) and any user
+    ``setup()`` hook -- and *nothing* ever ran the ``tear_down()`` finish hook
+    (wiki 01-场景与相机/场景/01-Scene基础: "全仓库没有任何地方调
+    ``tear_down()``").
+
+    ``tear_down()`` now runs exactly once per scene, in a ``finally`` so a
+    scene that raises inside ``construct()`` still gets its finish hook (the
+    exception keeps propagating -- RTM only guarantees the hook runs).  Only
+    the user hook is called: ``Scene.tear_down`` is a no-op in manim 0.21 and
+    the file-writer teardown lives elsewhere (``renderer.scene_finished`` /
+    ``file_writer``), which RTM deliberately does not drive -- calling it here
+    would double-close encode jobs RTM never opened.
     """
     # Phase 6: capture Scene.add_sound so the recorder can mux a real track
     from real_time_manim import audio_track
     audio_track.install_add_sound_hook(scene)
     scene.setup()
-    scene.construct()
+    try:
+        scene.construct()
+    finally:
+        # Duck-typed scenes (any object with construct()) may lack the hook.
+        tear_down = getattr(scene, "tear_down", None)
+        if callable(tear_down):
+            tear_down()
 
 
 def _as_runner(scene: Union[type, Any, Callable[[], None]]) -> Callable[[], None]:
