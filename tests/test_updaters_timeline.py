@@ -92,21 +92,36 @@ def test_forward_playback_drives_updaters():
     tl = _prepared_timeline(scene)
     for t in (0.1, 0.2, 0.3):
         tl.render_at(t)
-    # the first frame re-anchors (dt unknown), then every forward step advances
-    assert len(deltas) == 2, deltas
-    assert deltas == [pytest.approx(0.1)] * 2, deltas
+    # the first frame re-anchors (dt 0.0, no time accumulated), then every
+    # forward step advances
+    assert len(deltas) == 3, deltas
+    assert deltas == [0.0] + [pytest.approx(0.1)] * 2, deltas
 
 
 def test_seek_re_anchors_without_accumulating():
     deltas = []
     scene, _ = _scene_with(lambda m, dt: deltas.append(dt))
     tl = _prepared_timeline(scene)
-    tl.render_at(0.5)          # first frame        -> re-anchor, no updater run
+    tl.render_at(0.5)          # first frame        -> re-anchor, dt 0.0
     tl.render_at(0.6)          # forward            -> dt 0.1
     tl.render_at(0.2)          # BACKWARD seek      -> dt 0.0 (no history replay)
     tl.render_at(0.2)          # same t             -> dt 0.0
     tl.render_at(0.3)          # forward again      -> dt 0.1
-    assert deltas == [pytest.approx(0.1)] * 2, deltas
+    assert deltas == [0.0] + [pytest.approx(0.1)] * 2, deltas
+
+
+def test_first_frame_anchors_updater_position():
+    """Reported: a mobject placed by an updater flashed at its creation
+    position (the screen centre) for the very first drawn frame, then jumped
+    to where the updater puts it.  ``Timeline.render_at`` now re-anchors with
+    dt=0 before that frame, the same way CE runs ``update_mobjects`` first."""
+    scene = StubScene()
+    mob = Square().move_to([3.0, 0.0, 0.0])   # creation position
+    mob.add_updater(lambda m: m.move_to([0.0, 0.0, 0.0]))
+    scene.mobjects.append(mob)
+    tl = _prepared_timeline(scene)
+    tl.render_at(0.0)                          # the first frame of the render
+    assert mob.get_center() == pytest.approx([0.0, 0.0, 0.0]), mob.get_center()
 
 
 def test_valuetracker_advances_during_playback():
