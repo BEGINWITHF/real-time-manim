@@ -214,10 +214,15 @@ def render(page_py, fragments, keep_going=False, verbose=False,
                 refreshed.append(dst)
                 print(f"  -> {dst}  ({os.path.getsize(dst)} bytes, single-clip page)")
 
-    # the stock scripts also drop a copy in assets/ -- keep that clean
+    # the stock scripts drop a copy next to themselves and/or in assets/ --
+    # keep both places clean.  `01-MovingCameraScene.py` concatenates into its
+    # *own* directory (`dst = os.path.join(HERE, ...)`) with bare PAIRS names,
+    # which used to leave `RTM code/camera_class.mp4`-style duplicates behind.
     for out_name, _f in _outputs(mod):
         for stray in (os.path.join(assets, out_name + ".mp4"),
-                      os.path.join(assets, page_name(out_name) + ".mp4")):
+                      os.path.join(assets, page_name(out_name) + ".mp4"),
+                      os.path.join(here, out_name + ".mp4"),
+                      os.path.join(here, page_name(out_name) + ".mp4")):
             if os.path.exists(stray):
                 os.remove(stray)
     return refreshed
