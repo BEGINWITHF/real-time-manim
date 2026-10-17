@@ -20,7 +20,7 @@ real-time-manim intercepts standard Manim scene code and renders all mobjects th
 ```
 real-time-manim/
 ├── run.py                      # Entry point — monkey-patches manim, runs a Scene
-├── requirements.txt            # manim>=0.20.0, numpy
+├── pyproject.toml              # ManimCE 0.21 is bundled; deps are its third-party requirements
 ├── README.md                   # Project overview (roadmap)
 │
 ├── real_time_manim/
@@ -356,7 +356,10 @@ Special mobject attributes (set dynamically during animations):
 
 ## 8. Dependencies
 
-- **Python**: `manim>=0.20.0`, `numpy`
+- **Python**: ManimCE 0.21 is **bundled** (`real_time_manim/manim/`, see its
+  `UPSTREAM.md`) -- no `manim` install -- plus ManimCE's third-party
+  requirements (`numpy`, `manimpango`, `svgelements`, `skia-pathops`, `pycairo`,
+  `moderngl`, `scipy`, `networkx`, ... listed in `pyproject.toml`)
 - **System**: Windows 10, Vulkan SDK, MiKTeX (for LaTeX/MathTex)
 - **Build**: MSVC compiler (for native DLL), `build.bat`
 - **Runtime**: `ffmpeg` on PATH (for video encoding)

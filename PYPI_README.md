@@ -69,7 +69,7 @@ Write a normal Manim `Scene`, open a window, and play. Then **record it to
 `~/Downloads` with a single call**:
 
 ```python
-from manim import Scene, Square, BLUE
+from real_time_manim import Scene, Square, BLUE      # ManimCE comes bundled
 from real_time_manim.vulkan_bind import MLWindow, Create, Wait
 from real_time_manim.record import fast_record_scene
 
