@@ -103,6 +103,23 @@ class PointMixin:
         # dashes once, from the un-animated line), so it has to be computed
         # before `_grow_scale` stretches the endpoints: a GrowFromPoint only
         # scales the existing dashes, it must not re-count them every frame.
+        #
+        # ...and equally before a `Create` SHORTENS them: ShowPartial cuts
+        # every dash, so mid-animation `get_end()` is the reveal tip, not the
+        # end of the line, and re-counting there re-spaced the whole pattern
+        # (measured on wiki 04-图形与文本 "虚线在动画播放完后被拉伸了一下":
+        # 02-线与箭头-lines.mp4 put its dashes on a 36-37 px pitch during the
+        # Create against CE's fixed 38 px, then snapped outward when it
+        # finished).  `_snapshot_dashed_extent` pinned the pre-cut extent on
+        # the mobject; use it while the start still agrees, so a line that is
+        # moved or resized later falls back to its own live endpoints.
+        full = getattr(mob, "_rtm_dash_full", None)
+        used_full = False
+        if full is not None and getattr(mob, "_vulkan_points_partial", False):
+            if np.allclose(s, full[0], atol=1e-6, rtol=0.0):
+                s = np.array(full[0], dtype=float)
+                e = np.array(full[1], dtype=float)
+                used_full = True
         base_len = float(np.linalg.norm(e - s))
         grow_scale = getattr(mob, '_grow_scale', 1.0)
         grow_pt = getattr(mob, '_grow_point', None)
@@ -137,10 +154,17 @@ class PointMixin:
         else:
             sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
-            cx, cy, cz = mob.get_center()
-            if parent_offset is not None:
-                cx += parent_offset[0]
-                cy += parent_offset[1]
+            if used_full:
+                # `s`/`e` are the uncut line and already carry grow + offset,
+                # so their midpoint is the line's centre; `get_center()` would
+                # measure the bbox of the CUT dashes instead.
+                cvec = (s + e) / 2.0
+                cx, cy, cz = float(cvec[0]), float(cvec[1]), float(cvec[2])
+            else:
+                cx, cy, cz = mob.get_center()
+                if parent_offset is not None:
+                    cx += parent_offset[0]
+                    cy += parent_offset[1]
             scx, scy = manim_to_screen(cx, cy, w, h, cz)
             sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
             sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)

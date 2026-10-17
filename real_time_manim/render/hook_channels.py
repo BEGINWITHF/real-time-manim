@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 
 from real_time_manim.state import set_anim_opacity
 from real_time_manim.render.hook_rules import (
@@ -37,8 +38,38 @@ def _write_progress(anim, mob, alpha):
             lower, upper = bounds(alpha)
         else:
             lower, upper = bounds(sub)
-    else:                                       # older/other manim: raw alpha
-        lower, upper = 0.0, alpha
+    else:
+        sub_alpha = _eased_sub_bound(anim, alpha)
+        if sub_alpha is None:
+            # MULTI-family (Write over a VGroup/Text): `_vulkan_progress` here is
+            # not a drawn fraction but the STAGGER driver `vulkan_bind` spreads
+            # as `clamp(p*N - i)` across children; manim's per-sub eased values
+            # cannot be expressed through it (see `_eased_sub_bound`).  Leave it
+            # alone so the 逐字家族 keeps its timing.
+            lower, upper = 0.0, alpha
+        else:
+            # `DrawBorderThenFill`/`Write`/`Unwrite` expose no `_get_bounds`, but
+            # the DrawBorderThenFill family STILL cuts the points itself: phase 1
+            # runs `pointwise_become_partial(outline, 0, sub)` and phase 2
+            # `interpolate`s the full outline->starting geometry (manim
+            # creation.py:274-288).  Handing a SINGLE-family target (a bare
+            # Square/Circle/glyph -- exactly the wiki's border_fill) the raw-alpha
+            # window made the senders cut the already-cut contour a SECOND time:
+            # `point_path_bounds` returned (0.0, alpha) and only `alpha` of the
+            # eased cut reached the screen.  Measured on wiki
+            # 03-动画\\创建与擦除 01-Create与画线族-border_fill (Square,
+            # DrawBorderThenFill, double_smooth): raw alpha 0.40 drew 40.0 % of
+            # the perimeter where CE draws 95.9 %, and the fill phase drew 50-80 %
+            # where CE draws 100 % -- the missing blue border of "改色时机错误".
+            # Mirror Create for that case: tag the family partial (draw the whole
+            # cut path) and set the channel to the fraction manim cut,
+            # `min(1, 2 * sub_alpha)`, so primitive senders that read
+            # `_vulkan_progress` directly (circle/ellipse) agree with the point
+            # path.  `sub_alpha` is manim's eased `get_sub_alpha`; DrawBorderThenFill
+            # then does `integer_interpolate(0, 2, sub_alpha)`, whose phase-1 cut is
+            # `2 * sub_alpha` and whose phase-2 geometry is the full shape.
+            cut_points = True
+            lower, upper = 0.0, min(1.0, 2.0 * sub_alpha)
     # Only `_vulkan_progress` here: the lower/upper pair puts the senders into
     # "bounds mode" (ShowPassingFlash's sliding window).  Setting it for the
     # Create/Write family made whole scenes lose their content (measured on
@@ -65,6 +96,8 @@ def _write_progress(anim, mob, alpha):
         members = []
     for member in members:
         member._vulkan_points_partial = True
+    if cut_points:
+        _snapshot_dashed_extent(anim, mob)
     # Letter-by-letter reveal (Write/DrawBorderThenFill) reads this map -- but
     # ONLY for text-like mobjects.  `vulkan_bind._send` switches a mobject with
     # `_letter_alphas` onto the per-glyph text path, so setting it on a container
@@ -252,6 +285,70 @@ def _family(mob):
         out.append(sub)
         out.extend(_family(sub))
     return out
+
+
+def _walk(mob):
+    """``mob`` and every descendant, pre-order (self first)."""
+    yield mob
+    for sub in getattr(mob, "submobjects", None) or []:
+        yield from _walk(sub)
+
+
+def _snapshot_dashed_extent(anim, mob):
+    """Pin every ``DashedLine`` under ``mob`` to its extent BEFORE the cut.
+
+    ``Create(DashedLine)`` is a ``ShowPartial``: ``interpolate_mobject`` runs
+    ``pointwise_become_partial`` on **every dash**, so from the first frame on
+    ``mob.get_end()`` is the REVEAL TIP, not the end of the line.
+    ``_send_dashed_line`` derives the whole dash pattern (``num_dashes``,
+    dash, gap) from ``get_start()``/``get_end()``, so it re-counted the dashes
+    against a half-length line every frame and re-spaced them.
+
+    Measured on wiki ``04-图形与文本`` ``02-线与箭头-lines.mp4`` (the 6-unit
+    DashedLine from -5.6 to 0.4, ``dash_length=0.15``, ``dashed_ratio=0.55``):
+    once finished it is 810 px long with 22 dashes on a 38 px pitch, and
+    ManimCE keeps that pitch for the whole Create -- RTM's dashes sat on a
+    36-37 px pitch for as long as the animation ran (f120: dash #11 at x=474
+    against CE's x=484; f137: last dash at x=865 against CE's x=902, i.e. a
+    whole dash short) and the pattern jumped outward on the frame the
+    animation ended -- the "虚线在动画播放完后被拉伸了一下" report.  CE never
+    moves a dash: ``DashedVMobject`` splits the line once, at construction,
+    and ``Create`` only reveals them.
+
+    ``Animation.begin`` copies the mobject into ``starting_mobject`` *before*
+    its first ``interpolate(0)``, so that copy still holds the uncut extent.
+    The tree is walked in lockstep (the copy has the same shape), and the
+    snapshot is only ever consumed while ``_vulkan_points_partial`` is set and
+    the uncut START still matches -- a line that is later moved or resized
+    falls back to its own live endpoints instead of a stale copy.
+    """
+    dashed = _load("manim", "DashedLine")
+    if not dashed:
+        return
+    if not getattr(mob, "submobjects", None):
+        return                       # nothing below this node can be a DashedLine
+    start = getattr(anim, "starting_mobject", None)
+    if start is None:
+        return
+    cur = list(_walk(mob))
+    orig = list(_walk(start))
+    if len(cur) != len(orig):
+        return
+    for c, o in zip(cur, orig):
+        if not isinstance(c, dashed):
+            continue
+        try:
+            # NOTE: a DashedLine CONTAINER has no points of its own -- its
+            # extent comes from its dashes -- so this must not be gated on
+            # ``o.points``; that check silently skipped every snapshot and
+            # left the sender re-counting against the cut line.
+            s0 = np.array(o.get_start(), dtype=float)
+            e0 = np.array(o.get_end(), dtype=float)
+            if not (np.all(np.isfinite(s0)) and np.all(np.isfinite(e0))):
+                continue
+            c._rtm_dash_full = (s0, e0)
+        except Exception:                     # pragma: no cover - mapping aid only
+            logger.debug("dashed extent snapshot failed", exc_info=True)
 
 
 def _fade_alpha(anim, alpha):

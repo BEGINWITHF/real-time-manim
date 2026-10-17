@@ -17,8 +17,14 @@ from real_time_manim.animations import (
     get_anim_opacity,
     get_anim_rotation,
 )
+from real_time_manim.camera_state import (
+    fixed_orientation_viewport,
+    get_viewport,
+    set_viewport,
+)
 from manim.mobject.text.tex_mobject import MathTexPart
 
+from real_time_manim.render.util import fill_gradient_stops
 from real_time_manim.window.paint_order import (
     NATIVE_MAX_POLYGON_VERTS,
     container_subs,
@@ -364,9 +370,67 @@ class PaintMixin:
             return
         stack.add(key)
         try:
-            return self._send_impl(*args, **kwargs)
+            return self._send_in_fixed_orientation(args, kwargs)
         finally:
             stack.discard(key)
+
+    def _send_in_fixed_orientation(self, args, kwargs):
+        """Draw a fixed-orientation mobject with CE's *unrotated* rule.
+
+        ``ThreeDCamera.add_fixed_orientation_mobjects`` keeps a label facing the
+        camera while its centre stays in 3D: CE translates the RAW points by
+        ``project_point(center) - center`` (``three_d_camera.py:356-370``), so
+        the glyphs are drawn at their 2D shape and only their centre moves.
+        The senders have no such branch -- ``Viewport.project`` rotates every
+        point -- so the wiki's ``01b-三维基本体进阶-arrow3d.mp4`` tip label came
+        out skewed with the camera ("文字动画错误").
+
+        Swapping in the viewport ``camera_state.fixed_orientation_viewport``
+        derives for this mobject makes every ``manim_to_screen`` call inside the
+        senders land on CE's numbers.  Measured on that clip at f0 (the first
+        48 frames are static): the label block is 44 px tall in CE and 76 px
+        tall in RTM, while the derived viewport predicts 44 px at y 366..410
+        against CE's ink at y 364..408 and the old projection predicts
+        351..427 -- exactly RTM's own 352..428.
+
+        The swap is narrowly gated so nothing else moves: it needs a frame
+        viewport that actually carries a 3D rotation (outside one, CE's own
+        rule is the identity) and a mobject the camera registered.
+        """
+        mob = args[0] if args else None
+        if mob is None:
+            return self._send_impl(*args, **kwargs)
+        vp = get_viewport()
+        # The FRAME viewport is the one that carries the rotation; a derived
+        # (already unrotated) one remembers where it came from, so a member
+        # anchored by a *different* center function re-derives from the frame
+        # instead of compounding on its parent's anchor.
+        frame = getattr(vp, "base", None) if vp is not None else None
+        scope = frame if frame is not None else vp
+        table = getattr(scope, "fixed_orientation", None) if scope is not None else None
+        if not table or scope.rotation is None:
+            return self._send_impl(*args, **kwargs)
+        func = table.get(id(mob))
+        if func is None:
+            return self._send_impl(*args, **kwargs)
+        if getattr(vp, "active_func", None) is func:
+            # Already inside this anchor: a family shares ONE center function
+            # (three_d_camera.py:415), so every member must keep the viewport
+            # their root derived -- recomputing per child would compound.
+            return self._send_impl(*args, **kwargs)
+        try:
+            center = func()
+        except Exception:                          # pragma: no cover - defensive
+            return self._send_impl(*args, **kwargs)
+        derived = fixed_orientation_viewport(scope, self.win_w, self.win_h,
+                                             center, func)
+        if derived is None:
+            return self._send_impl(*args, **kwargs)
+        set_viewport(derived)
+        try:
+            return self._send_impl(*args, **kwargs)
+        finally:
+            set_viewport(vp)
 
     @staticmethod
     def _paint_as_unit(mob):
@@ -876,6 +940,12 @@ class PaintMixin:
             # drew fine.  An explicit window therefore takes the point path,
             # which honours lower and upper.
             _c_window = hasattr(mob, "_vulkan_progress_upper")
+            # A Circle whose anchors no longer sit on ONE circle (stretched /
+            # apply_matrix-ed / anisotropically generated points) is an ellipse
+            # or some other bezier in a Circle's clothing: `_send_circle`'s
+            # single radius would draw it as a disc.  `_circle_round_radius`
+            # returns None for those and the point path draws the real curve.
+            _c_round = self._circle_round_radius(mob) is not None
             # A Circle inside a 3D scene is not a circle on screen.  At phi=70 a
             # horizontal cap projects to a 60x21 px ELLIPSE, while `_send_circle`
             # draws a full-radius disc from `mob.width` -- measured on
@@ -890,7 +960,7 @@ class PaintMixin:
                 _vp3d = _vp is not None and _vp.rotation is not None
             except Exception:
                 _vp3d = False
-            if _vp3d or _c_window or 0.0 < _c_progress < 1.0:
+            if _vp3d or _c_window or not _c_round or 0.0 < _c_progress < 1.0:
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)
             else:
@@ -972,8 +1042,23 @@ class PaintMixin:
             # area disappeared (GraphAreaPlot lit 8782 vs CE 27905).  Route the
             # big ones through the bezier path, which tessellates and fills up
             # to 1024 segments.
+            #
+            # A GRADIENT fill has to take that road too, whatever its size:
+            # AddPolygon carries one `r,g,b` and no axis (native/platform.h),
+            # so a ramp CE paints as a cairo.LinearGradient arrived as one flat
+            # colour.  Measured on the synthetic 5-vertex
+            # `RegularPolygon(5).set_color((RED, BLUE))` of
+            # tools/_probe_gradient_poly.py: RTM (250,99,84) across the whole
+            # shape while CE ramps (133,167,181) -> (208,123,120) along it --
+            # mean|diff| 5.74 with 80/90 frames over the 4.0 threshold.  The
+            # bezier path hands native the two stops plus the projected
+            # `get_gradient_start_and_end_points()` axis (render/util.py
+            # `shaded_fill_gradient`), which is exactly what the >64-vertex
+            # branch below has always done; small polygons keep AddPolygon.
             _verts = mob.get_vertices()
-            if _verts is not None and len(_verts) > NATIVE_MAX_POLYGON_VERTS:
+            _too_many = (_verts is not None
+                         and len(_verts) > NATIVE_MAX_POLYGON_VERTS)
+            if _too_many or fill_gradient_stops(mob) is not None:
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)
             else:

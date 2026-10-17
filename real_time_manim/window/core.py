@@ -476,10 +476,13 @@ class CoreMixin:
         # container), so the frame has to be ordered by family position instead
         # of by list position -- see ``family_index``.
         descendant_roots = set(extra_skip)
-        # The camera frame is a helper mobject, not scene content (Phase 5.1).
-        cam_frame = getattr(getattr(scene, "camera", None), "frame", None)
-        if cam_frame is not None:
-            extra_skip.add(id(cam_frame))
+        # ``MovingCamera.frame`` is *not* special-cased here: in CE it is an
+        # ordinary mobject that only shows up when the scene explicitly adds
+        # it (its default frame has zero stroke/fill, so nothing is painted),
+        # and an explicitly added, visible frame *is* drawn.  RTM used to skip
+        # it outright, which made ``self.add(self.camera.frame)`` a no-op
+        # compared with CE; only do that for frames that are not scene
+        # content, i.e. never add it implicitly -- see the sync() caller.
         if skip_ids is None:
             skip_ids = extra_skip
         else:

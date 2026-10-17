@@ -41,7 +41,21 @@ class BITMAPFILEHEADER(ctypes.Structure):
 class RecordingMixin:
 
     def screenshot(self, path):
-        path_bytes = path.encode('utf-8') if isinstance(path, str) else path
+        # The native side opens the file through the ANSI C runtime, so the
+        # path has to arrive in the system codepage.  UTF-8 bytes came back as
+        # mojibake ("cn_name_中文.bmp" landed as "cn_name_涓枃.bmp") and a
+        # non-ASCII directory failed outright (SaveScreenshot returned 0, so
+        # fast-record's segment/BMP mode silently wrote zero frames).
+        if isinstance(path, str):
+            if sys.platform == "win32":
+                try:
+                    path_bytes = path.encode('mbcs')
+                except UnicodeEncodeError:
+                    path_bytes = path.encode('utf-8')
+            else:
+                path_bytes = path.encode('utf-8')
+        else:
+            path_bytes = path
         return self.dll.SaveScreenshot(path_bytes)
 
     def request_readback(self):

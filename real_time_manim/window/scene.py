@@ -53,6 +53,20 @@ def _run_mobject_updaters(mob, dt):
         return
     updaters = getattr(mob, 'updaters', None)
     if updaters:
+        # Arm the render channels of any manim animation these updaters drive
+        # BEFORE the first call, so the very frame that starts it already
+        # renders through the right sender.  `turn_animation_into_updater` and
+        # `cycle_animation` are the only common producers, they close the
+        # animation over the updater function, and nothing else in the pipeline
+        # ever sees such an animation (see `render.hooks.
+        # install_hooks_from_updaters` for the measured cost of missing it).
+        # Cheap to re-run: an already-hooked animation short-circuits, and the
+        # whole scan is skipped for the plain lambdas that have no closure.
+        from real_time_manim.render.hooks import install_hooks_from_updaters
+        try:
+            install_hooks_from_updaters(mob)
+        except Exception:                    # a hook must never break a frame
+            pass
         for updater in updaters:
             nparams = len(inspect.signature(updater).parameters)
             if nparams == 0:
@@ -95,6 +109,23 @@ def _drive_mobject_updaters(scene, dt, patch_group=None, unpatch_group=None):
         for mob in scene.mobjects:
             if isinstance(mob, (VGroup, Group)):
                 unpatch_group(mob)
+
+    # Scene-level updaters (``Scene.add_updater``) run LAST, after every
+    # mobject updater -- exactly manim's split of ``update_mobjects`` (mobject
+    # updaters) then ``update_self`` (scene updaters), where ``update_self``
+    # documents "among all types of update functions ... scene update
+    # functions are called last".
+    #
+    # This walk used to be the ONLY updater pass RTM ran, so a scene updater
+    # registered through ``Scene.add_updater`` was never evaluated: the wiki
+    # ``03-播放与等待`` red square (driven by ``scene.add_updater``) sat still
+    # for the whole clip while the identical mobject-updater blue square
+    # climbed.  ``scene.updaters`` is a plain ``list[Callable[[float], None]]``
+    # (manim ``Scene.__init__``); a scene updater takes exactly one argument,
+    # ``dt``.  The stub scenes in the tests carry no ``updaters`` attribute at
+    # all, so read it defensively.
+    for scene_updater in list(getattr(scene, 'updaters', None) or ()):
+        scene_updater(dt)
 
 
 # Stable texture slot for the phase-5.4 camera fallback: the rasterised frame

@@ -32,7 +32,17 @@ logger = logging.getLogger(__name__)
 
 
 def _is_rtm_animation(anim):
-    """RTM's own classes write the channels themselves -- leave them alone."""
+    """RTM's own classes write the channels themselves -- leave them alone.
+
+    That includes ``_RtmAnimationAdapter`` (window/patches.py): the shell a
+    manim composite drives around one RTM animation.  It is a *manim*
+    Animation for the composite's sake, but its channels come from the
+    wrapped child, so wrapping the shell's ``interpolate`` again would only
+    derive nothing and log "no render hook" every frame.
+    """
+    inner = getattr(anim, "_rtm_inner", None)
+    if inner is not None:
+        return True
     try:
         from real_time_manim.animations.base import Animation as RtmAnimation
     except Exception:                     # pragma: no cover
@@ -129,6 +139,61 @@ def clear_hooks(anim) -> None:
     anim._rtm_hooks_installed = False
     for sub in _children(anim):
         clear_hooks(sub)
+
+
+def install_hooks_from_updaters(mob) -> int:
+    """Arm the hooks of every manim animation a mobject's UPDATER drives.
+
+    ``manim.turn_animation_into_updater`` / ``cycle_animation`` close the
+    animation over a per-frame ``update(m, dt)`` closure and hang that closure
+    on the mobject.  Such an animation never becomes a timeline entry, and
+    ``Timeline.finalize`` is the only place ``install_hooks`` runs -- so it
+    plays back with no render channels at all.
+
+    The visible casualty is a manim ``Write`` driven that way: with
+    ``_letter_alphas`` unarmed it falls back to ``_send_vmobject``, and for
+    TEXT that sender switches the outline off as soon as the fill reports any
+    visibility::
+
+        if is_text and vis_fill > 0.01:
+            do_stroke = False
+
+    manim's ``DrawBorderThenFill`` spends a glyph's whole second half ramping
+    the fill from 0 while it keeps the outline at full width, so for those
+    frames RTM drew a few-percent fill and NO outline and the letter
+    disappeared.  Measured on the wiki
+    ``03-动画/更新器动画/01b-更新工具与自动变化``: at each of ``Welcome``'s
+    seven outline->fill boundaries the word's ink fell 31571 -> 9504 (-70 %) in
+    one frame and took ~10 frames to come back, while CE's curve never drops.
+    A 120-frame probe render of that scene with the hooks armed reports 0
+    drops; the un-hooked one reports exactly 7.
+
+    Detection is deliberately narrow: only a *closure cell* holding a manim
+    ``Animation`` matches -- precisely what those two helpers build, and what
+    an ordinary lambda, ``always`` or ``always_redraw`` updater never does.
+
+    Returns how many animations were newly hooked (0 for the overwhelmingly
+    common mobject whose updaters are plain lambdas).
+    """
+    try:
+        from manim.animation.animation import Animation as ManimAnimation
+    except Exception:                       # pragma: no cover - manim is required
+        return 0
+    hooked = 0
+    for fn in (getattr(mob, "updaters", None) or ()):
+        cells = getattr(fn, "__closure__", None)
+        if not cells:
+            continue
+        for cell in cells:
+            try:
+                value = cell.cell_contents
+            except ValueError:              # empty cell, not filled in yet
+                continue
+            if isinstance(value, ManimAnimation) and not getattr(
+                    value, "_rtm_hooks_installed", False):
+                install_hooks(value)
+                hooked += 1
+    return hooked
 
 
 # ---------------------------------------------------------------------------
