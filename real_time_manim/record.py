@@ -149,18 +149,22 @@ class _NotParallelizable(RuntimeError):
 def _planned_jobs(jobs) -> int:
     """How many worker processes to use for a pipe-mode fast record.
 
-    ``None`` / ``"auto"`` picks ``min(4, cpus - 1)``; an int is taken as-is, and
-    1 (or less) means the classic single-pass route.
+    ``"auto"`` picks ``min(4, cpus - 1)``; an int is taken as-is, and 1 (or less)
+    means the classic single-pass route.  ``None`` never reaches a worker split
+    (see ``_parallel_plan``): it is the default single pass.
     """
     if jobs is None or jobs == "auto":
         return max(1, min(4, (os.cpu_count() or 2) - 1))
     return max(1, int(jobs))
 
 
-# A scene shorter than this is not worth splitting: every worker pays its own
-# interpreter + Vulkan device + construct() startup, which only pays off once
-# there are enough frames to spread.
-_AUTO_MIN_FRAMES = 40
+# ``jobs="auto"`` splits only from this many frames on.  Every worker pays its
+# own interpreter + Vulkan device + construct() startup (~0.5-1 s each,
+# measured) while the frame cost only divides by the worker count, so the two
+# cross at roughly 245 frames of 1080p60 on a 16-core machine (4 s of video):
+# below that a single pass is *faster* as well as sooner, above it splitting
+# wins (a 15 s scene records in 8.6 s with 4 workers against 15.4 s in one).
+_AUTO_MIN_FRAMES = 240
 
 
 def _has_main_guard(path: str) -> bool:
@@ -222,14 +226,22 @@ def _scene_token(scene) -> Dict[str, str]:
 
 def _parallel_plan(scene, jobs, fps: int, hidden: bool, count_only: bool,
                    segment, verbose: bool) -> Optional[Dict[str, Any]]:
-    """``{jobs, token, n_frames}`` when this record should be split, else None.
+    """``{jobs, scene_ref, n_frames}`` when this record should be split, else None.
 
-    The probe pass prepares the scene (construct + timeline, no frame drawn) so
-    the parent knows the frame count *and* that exactly one window is opened.
-    Its ``construct()`` output is deliberately left on screen: the workers then
-    run the same construct with their stdout muted, so the user sees it exactly
+    Only the explicit forms split: ``jobs=N`` and ``jobs="auto"``.  The default
+    ``jobs=None`` returns immediately -- deciding needs a probe pass that brings
+    up a window and a Vulkan device just to learn the frame count (~1.4 s
+    measured), which is not worth paying on the default path for scenes that
+    usually turn out to be short.
+
+    The probe prepares the scene (construct + timeline, no frame drawn) so the
+    parent knows the frame count *and* that exactly one window is opened.  Its
+    ``construct()`` output is deliberately left on screen: the workers then run
+    the same construct with their stdout muted, so the user sees it exactly
     once, as in a single-pass record.
     """
+    if jobs is None:                               # default: one pass, no probe
+        return None
     if count_only or segment is not None or not hidden:
         return None
     if os.environ.get("RTM_IN_WORKER"):
@@ -237,6 +249,7 @@ def _parallel_plan(scene, jobs, fps: int, hidden: bool, count_only: bool,
     want = _planned_jobs(jobs)
     if want < 2:
         return None
+    auto = jobs == "auto"
     try:
         token = _scene_token(scene)
     except _NotParallelizable as exc:
@@ -254,8 +267,8 @@ def _parallel_plan(scene, jobs, fps: int, hidden: bool, count_only: bool,
         if verbose:
             print("[rtm] scene opens %d windows; recording in one pass" % n_windows)
         return None
-    if (jobs is None or jobs == "auto") and n_frames < _AUTO_MIN_FRAMES:
-        return None
+    if auto and n_frames < _AUTO_MIN_FRAMES:
+        return None                                # not long enough to pay off
     # Never spawn a worker whose block would be empty.
     return {"jobs": min(want, n_frames), "scene_ref": token, "n_frames": n_frames}
 
@@ -593,14 +606,19 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
     verbose:
         Print per-window progress lines.
     jobs:
-        Worker processes for the pipe mode.  ``None`` / ``"auto"`` (default)
-        splits the frame range across ``min(4, cpus - 1)`` processes when the
-        scene is long enough (>= 40 frames), opens exactly one window and is
-        importable by name -- each worker renders a contiguous block into its
-        own mp4 and they are concatenated losslessly.  ``1`` forces the classic
-        single pass (bit-for-bit the pre-parallel output); a larger int asks for
-        that many workers (falling back to one pass when the scene cannot be
-        split).  Ignored for ``count_only`` and BMP ``segment`` mode.
+        Worker processes for the pipe mode.  ``None`` (default) records in one
+        pass -- no probe, nothing to pay for short clips.  ``"auto"`` first
+        probes the scene (one extra window bring-up) and then splits only if
+        that is a win: an importable single-window Scene of at least
+        ``_AUTO_MIN_FRAMES`` frames, across ``min(4, cpus - 1)`` processes.  An
+        int asks for that many workers, splitting when the scene allows it (the
+        frame count and the single-window requirement are checked once, then the
+        range is divided and the segments concatenated losslessly).  ``1`` is
+        the classic single pass.  Splitting needs a Scene *class* importable in
+        another process, so instances, lambdas and classes defined inside a
+        function (or a script with no ``if __name__ == "__main__"`` guard)
+        always fall back to one pass.  Ignored for ``count_only``, ``segment``
+        and ``hidden=False``.
 
     Returns
     -------

@@ -19,6 +19,7 @@ from real_time_manim.record import (  # noqa: E402
     _AUTO_MIN_FRAMES,
     _NotParallelizable,
     _has_main_guard,
+    _parallel_plan,
     _planned_jobs,
     _scene_token,
 )
@@ -69,15 +70,76 @@ def test_blocks_clamp_out_of_range_indexes_and_never_go_backwards():
 def test_planned_jobs_defaults_to_a_capped_cpu_count_and_honours_ints():
     assert _planned_jobs(1) == 1
     assert _planned_jobs(6) == 6
-    auto = _planned_jobs(None)
-    assert auto == _planned_jobs("auto")
+    auto = _planned_jobs("auto")
     assert 1 <= auto <= 4
     assert auto == 1 or auto <= (os.cpu_count() or 2) - 1
 
 
-def test_auto_min_frames_keeps_short_scenes_single_pass():
-    # Below this, N child interpreters cost more than they save.
-    assert _AUTO_MIN_FRAMES >= 10
+def test_the_default_never_probes_and_never_splits():
+    # Deciding needs a probe pass (window + Vulkan device, ~1.4 s), so the
+    # default must return before any of that -- ModuleLevelScene() below would
+    # otherwise be prepared here.
+    for jobs in (None, 1):
+        assert _parallel_plan(ModuleLevelScene, jobs, 60, True, False, None,
+                              False) is None
+
+
+def test_probe_modes_are_out_of_scope_for_the_single_pass_knobs():
+    # count_only, BMP segment mode and a visible window cannot be split.
+    assert _parallel_plan(ModuleLevelScene, 4, 60, True, True, None, False) is None
+    assert _parallel_plan(ModuleLevelScene, 4, 60, True, False, (0, 10),
+                          False) is None
+    assert _parallel_plan(ModuleLevelScene, 4, 60, False, False, None, False) is None
+
+
+def test_a_worker_never_splits_again(monkeypatch):
+    monkeypatch.setenv("RTM_IN_WORKER", "1")
+    assert _parallel_plan(ModuleLevelScene, 4, 60, True, False, None, False) is None
+
+
+def test_auto_splits_only_scenes_long_enough_to_pay_for_the_workers(monkeypatch):
+    import real_time_manim.frames as frames
+
+    class FakeServer:
+        duration = 0.0
+
+        def __init__(self, scene, **kwargs):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(frames, "FrameServer", FakeServer)
+    monkeypatch.setattr(frames, "_LAST_WINDOWS", [object()])
+
+    FakeServer.duration = (_AUTO_MIN_FRAMES - 1) / 60.0
+    assert _parallel_plan(ModuleLevelScene, "auto", 60, True, False, None,
+                          False) is None
+
+    FakeServer.duration = (_AUTO_MIN_FRAMES + 60) / 60.0
+    plan = _parallel_plan(ModuleLevelScene, "auto", 60, True, False, None, False)
+    assert plan is not None
+    assert plan["n_frames"] == _AUTO_MIN_FRAMES + 60
+    assert 2 <= plan["jobs"] <= 4
+    assert plan["scene_ref"]["qual"] == "ModuleLevelScene"
+
+
+def test_a_multi_window_scene_is_not_split(monkeypatch):
+    import real_time_manim.frames as frames
+
+    class FakeServer:
+        duration = 100.0
+
+        def __init__(self, scene, **kwargs):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(frames, "FrameServer", FakeServer)
+    monkeypatch.setattr(frames, "_LAST_WINDOWS", [object(), object()])
+    assert _parallel_plan(ModuleLevelScene, 4, 60, True, False, None,
+                          False) is None
 
 
 def test_module_level_scene_gets_a_module_handle():

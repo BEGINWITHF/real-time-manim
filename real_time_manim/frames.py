@@ -91,12 +91,16 @@ class FrameServer:
             ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
         # Optional: the no-conversion readback (see native/SaveScreenshotRawBGRA).
         # One memcpy of the staging buffer instead of a per-pixel BGRA->BGR loop.
-        self._raw_bgra = getattr(self.window.dll, "SaveScreenshotRawBGRA", None)
-        if self._raw_bgra is not None:
-            self._raw_bgra.restype = ctypes.c_int
-            self._raw_bgra.argtypes = [
+        # The bare `raw_bgra` alias is deliberate: tools/check_bindings.py only
+        # recognises `name = getattr(dll, 'Symbol', None)` and would otherwise
+        # report the export as called-but-never-bound (pointers truncated).
+        raw_bgra = getattr(self.window.dll, "SaveScreenshotRawBGRA", None)
+        if raw_bgra is not None:
+            raw_bgra.restype = ctypes.c_int
+            raw_bgra.argtypes = [
                 ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
                 ctypes.POINTER(ctypes.c_int)]
+        self._raw_bgra = raw_bgra
         self._raw_bgra_buf = None
         self._raw_bgr_buf = None
 

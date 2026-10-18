@@ -121,7 +121,7 @@ def main(argv=None):
         scene_cls = resolve_scene(kind, target, qual)
         # The parent already ran this construct on screen: keep the workers quiet
         # so a split record prints the scene as often as a single pass does.
-        with contextlib.redirect_stdout(open(os.devnull, "w")):
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
             server = frames.FrameServer(scene_cls)
         try:
             if index == 0:

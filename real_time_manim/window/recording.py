@@ -201,10 +201,17 @@ class RecordingMixin:
             self._fast_row_padded = ((w * 3 + 3) // 4) * 4
             # Newer DLLs hand back the raw BGRA framebuffer with no per-pixel
             # conversion (`SaveScreenshotRawBGRA`); ffmpeg eats bgra directly and
-            # drops the alpha, so the 2-million-iteration BGRA->BGR loop -- which
-            # measured ~25 ms of a ~50 ms frame -- disappears.  The BMP route
-            # stays as the fallback for a DLL without that export (and for macOS).
-            self._fast_raw_bgra = getattr(self.dll, "SaveScreenshotRawBGRA", None)
+            # drops the alpha, so the per-pixel BGRA->BGR loop disappears.  The
+            # BMP route stays as the fallback for a DLL without that export (and
+            # for macOS).  The bare `raw_bgra` alias is what
+            # tools/check_bindings.py can see, hence the explicit argtypes.
+            raw_bgra = getattr(self.dll, "SaveScreenshotRawBGRA", None)
+            if raw_bgra is not None:
+                raw_bgra.restype = ctypes.c_int
+                raw_bgra.argtypes = [
+                    ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_int)]
+            self._fast_raw_bgra = raw_bgra
             pix_fmt = "bgra" if self._fast_raw_bgra else "bgr24"
             ffmpeg_cmd = fast_pipe_ffmpeg_args(w, h, fps, pix_fmt,
                                                self._fast_record_path)
