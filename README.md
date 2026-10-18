@@ -152,11 +152,23 @@ backwards -- making those time-replayable is that document's P3.
 ```bash
 python -m real_time_manim.preview 1                       # demo #1 from run.py
 python -m real_time_manim.preview examples.scenes:DemoCreate --at 120
+python -m real_time_manim.preview 1 --controls slider     # drag a scrubber instead
+python -m real_time_manim.preview 1 --pos 1030,60         # keep previews apart
 python -m real_time_manim.preview 1 --no-bar              # type in the terminal
 ```
 
-The bar has a text field, `Jump` / `Save PNG` / `Quit`, and shows the current
-frame in its title. In the field:
+The window forces itself to the front (plain `SetForegroundWindow` is denied to a
+process that does not own the foreground, so it would otherwise open *behind*
+whatever you have maximized).
+
+The docked bar has two looks (`controls=`, or `--controls`):
+
+| `controls` | Bar | How you move |
+|------------|-----|--------------|
+| `input` (default) | `[ frame ] [Jump] [Save PNG] [Quit]` | type a frame/time, press Enter or *Jump* |
+| `slider` | `[=====\|====] [Save PNG] [Quit]` | drag the progress bar (it seeks as you drag) |
+
+Either way the title bar shows `frame 123/347  t=2.050s`. In the text field:
 
 | Input | Meaning |
 |-------|---------|
@@ -169,7 +181,6 @@ frame in its title. In the field:
 
 The same grammar is read from the terminal when the bar is unavailable (macOS,
 or `--no-bar`), so the mode never needs a GUI toolkit.
-
 ### LaTeX cache helpers (`real_time_manim.util`)
 
 Rendering `MathTex`/`Tex` compiles each formula to an SVG. Cache the results so

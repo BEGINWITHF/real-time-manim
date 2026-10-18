@@ -18,7 +18,7 @@ import sys
 VIDEO_TITLE = "Real Time Manim"
 VIDEO_CLASS = "ManimVulkanClass"
 
-user32 = kernel32 = gdi32 = None
+user32 = kernel32 = gdi32 = comctl32 = None
 
 if sys.platform == "win32":  # pragma: no cover - platform dependent
     import ctypes
@@ -27,6 +27,7 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
     gdi32 = ctypes.windll.gdi32
+    comctl32 = ctypes.windll.comctl32
     user32.FindWindowW.restype = wt.HWND
     user32.FindWindowW.argtypes = [wt.LPCWSTR, wt.LPCWSTR]
     user32.IsWindow.restype = wt.BOOL
@@ -39,6 +40,8 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
     kernel32.GetModuleHandleW.argtypes = [wt.LPCWSTR]
     gdi32.GetStockObject.restype = wt.HGDIOBJ
     gdi32.GetStockObject.argtypes = [ctypes.c_int]
+    comctl32.InitCommonControlsEx.restype = wt.BOOL
+    comctl32.InitCommonControlsEx.argtypes = [ctypes.c_void_p]
 
 
 def _top_level_windows():  # pragma: no cover - platform dependent
@@ -74,21 +77,21 @@ def _pid_of(hwnd):  # pragma: no cover - platform dependent
 
 
 def find_video_hwnd():
-    """The live Vulkan window handle, or ``None``.
+    """The live Vulkan window handle of *this process*, or ``None``.
 
-    Matches class+title first, then falls back to "any top-level window of this
-    process with our window class" -- the title is ours, but a shell or a
-    localization hook could rename it.
+    Our own process first (class + pid), so several RTM windows -- e.g. two
+    frame previews side by side -- never cross wires; the title lookup is only a
+    last-resort fallback for a window we cannot see through EnumWindows.
     """
     if user32 is None:
         return None
-    hwnd = user32.FindWindowW(VIDEO_CLASS, VIDEO_TITLE)
-    if hwnd and user32.IsWindow(hwnd):
-        return hwnd
     me = os.getpid()
     for cand in _top_level_windows():
         if _class_of(cand) == VIDEO_CLASS and _pid_of(cand) == me:
             return cand
+    hwnd = user32.FindWindowW(VIDEO_CLASS, VIDEO_TITLE)
+    if hwnd and user32.IsWindow(hwnd):
+        return hwnd
     return None
 
 
@@ -118,3 +121,32 @@ def client_rect_on_screen(hwnd):
     pt = wt.POINT(0, 0)
     user32.ClientToScreen(hwnd, ctypes.byref(pt))
     return int(pt.x), int(pt.y), int(rc.right - rc.left), int(rc.bottom - rc.top)
+
+
+def force_foreground(hwnd):
+    """Bring ``hwnd`` to the front even when another app owns the foreground.
+
+    Plain ``SetForegroundWindow`` is *denied* unless the caller is already the
+    foreground process, so a preview opened from a terminal behind a maximized
+    editor silently appears underneath it.  Flipping the window topmost,
+    activating it, then dropping the topmost bit is the standard recipe that
+    Windows does allow.
+    """
+    if user32 is None or not hwnd:
+        return False
+    import ctypes
+    import ctypes.wintypes as wt
+
+    user32.SetWindowPos.restype = wt.BOOL
+    user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_uint]
+    user32.BringWindowToTop.restype = wt.BOOL
+    user32.BringWindowToTop.argtypes = [wt.HWND]
+    SWP_NOSIZE, SWP_NOMOVE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0040
+    flags = SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+    user32.SetWindowPos(hwnd, ctypes.c_void_p(-1), 0, 0, 0, 0, flags)  # TOPMOST
+    user32.SetForegroundWindow(hwnd)
+    user32.BringWindowToTop(hwnd)
+    user32.SetWindowPos(hwnd, ctypes.c_void_p(-2), 0, 0, 0, 0, flags)  # NOTOPMOST
+    return True

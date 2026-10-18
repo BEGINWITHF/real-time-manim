@@ -25,8 +25,14 @@ those time-replayable is P3 in ``docs/2.0.0-time-addressable.md``.
 Input bar
 ---------
 On Windows the bar is a small native window docked right below the video
-window: a text field, *Jump* / *Save PNG* / *Quit* buttons, and the current
-frame in its title bar.  Accepted input:
+window.  It comes in two flavours (``controls=``):
+
+``"input"`` (default)
+    a text field + *Jump* / *Save PNG* / *Quit*.
+``"slider"``
+    a draggable progress bar (scrubber) + *Save PNG* / *Quit*.
+
+The current frame always shows in the bar's title.  Accepted input:
 
     123 / 123f   frame 123            (frame numbers are the default unit)
     1.5 / 1.5s   time 1.5 s
@@ -45,12 +51,14 @@ import argparse
 import collections
 import os
 import queue
+import re
 import sys
 import threading
 import time
 
 from real_time_manim.frames import FrameServer
 from real_time_manim.window import win32
+from real_time_manim.window.win32 import force_foreground
 
 Command = collections.namedtuple("Command", "kind value")
 
@@ -135,6 +143,52 @@ def bar_geometry(win_rect, bar_height, gap=4):
     left, _top, right, bottom = win_rect
     return (int(left), int(bottom) + int(gap),
             max(360, int(right) - int(left)), int(bar_height))
+
+
+CONTROL_ALIASES = {
+    "input": "input", "box": "input", "text": "input", "edit": "input",
+    "slider": "slider", "bar": "slider", "progress": "slider",
+    "progressbar": "slider", "scrub": "slider",
+}
+
+
+def normalize_controls(value):
+    """Map whatever the caller called it to ``"input"`` or ``"slider"``.
+
+    ``"slider"`` is the draggable scrubber (a progress bar you can drag);
+    everything else means the text field.
+    """
+    key = str(value or "input").strip().lower().replace("_", "").replace("-", "")
+    if key not in CONTROL_ALIASES:
+        raise ValueError("controls must be 'input' or 'slider', got %r"
+                         % (value,))
+    return CONTROL_ALIASES[key]
+
+
+def parse_position(value):
+    """``"X,Y"`` -> ``(x, y)``; ``None``/``""`` -> ``None``.
+
+    Used to place the video window, so several previews do not land on top of
+    each other (the native window is created with ``CW_USEDEFAULT``, which
+    Windows does not cascade for a WS_OVERLAPPEDWINDOW created per process).
+
+    Lenient about the spelling on purpose: shells love to rewrite
+    ``100,80`` -- PowerShell hands over ``(100, 80)`` -- so the two numbers are
+    just regex-extracted from whatever form arrived.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (tuple, list)):
+        if len(value) != 2:
+            raise ValueError("position must be two numbers, got %r" % (value,))
+        return (int(value[0]), int(value[1]))
+    text = str(value).strip()
+    if not text:
+        return None
+    nums = re.findall(r"-?\d+(?:\.\d+)?", text)
+    if len(nums) != 2:
+        raise ValueError("position must look like '100,200', got %r" % (value,))
+    return (int(float(nums[0])), int(float(nums[1])))
 
 
 # ---------------------------------------------------------------------------
@@ -223,10 +277,16 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
              [wt.HWND, ctypes.c_uint, _WPARAM, _LPARAM]),
             ("SetFocus", wt.HWND, [wt.HWND]),
             ("SetForegroundWindow", wt.BOOL, [wt.HWND]),
+            ("ShowWindow", wt.BOOL, [wt.HWND, ctypes.c_int]),
+            ("UpdateWindow", wt.BOOL, [wt.HWND]),
+            ("IsWindowVisible", wt.BOOL, [wt.HWND]),
             ("RegisterClassExW", wt.ATOM, [ctypes.POINTER(_WNDCLASSEXW)]),
             ("UnregisterClassW", wt.BOOL, [wt.LPCWSTR, wt.HINSTANCE]),
             ("LoadCursorW", wt.HANDLE, [wt.HINSTANCE, wt.LPCWSTR]),
             ("GetDpiForWindow", ctypes.c_uint, [wt.HWND]),
+            ("AdjustWindowRectEx", wt.BOOL,
+             [ctypes.POINTER(wt.RECT), ctypes.c_uint, wt.BOOL, ctypes.c_uint]),
+            ("GetDpiForSystem", ctypes.c_uint, []),
             ("PeekMessageW", wt.BOOL,
              [ctypes.POINTER(_MSG), wt.HWND, ctypes.c_uint, ctypes.c_uint,
               ctypes.c_uint]),
@@ -238,18 +298,29 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
             _f.argtypes = _args
 
     _WS_POPUP, _WS_CAPTION, _WS_SYSMENU = 0x80000000, 0x00C00000, 0x00080000
-    _WS_CHILD, _WS_VISIBLE, _WS_TABSTOP = 0x40000000, 0x10000000, 0x00010000
+    _WS_VISIBLE = 0x10000000
+    _WS_CHILD, _WS_TABSTOP = 0x40000000, 0x00010000
     _ES_AUTOHSCROLL = 0x0080
     _BS_DEFPUSHBUTTON = 0x0001
+    _SW_SHOW = 5
     _WM_CLOSE, _WM_DESTROY, _WM_COMMAND, _WM_SETFOCUS = 0x0010, 0x0002, 0x0111, 0x0007
+    _WM_HSCROLL = 0x0114
     _WM_SETFONT = 0x0030
     _DEFAULT_GUI_FONT = 17
     _LTGRAY_BRUSH = 1        # GetStockObject: WHITE 0, LTGRAY 1, GRAY 2, BLACK 4
     _IDC_ARROW = 32512
-    _ID_EDIT, _ID_GO, _ID_SAVE, _ID_QUIT = 1001, 1002, 1003, 1004
+    _ICC_BAR_CLASSES = 0x0004
+    _TBM_GETPOS, _TBM_SETPOS, _TBM_SETRANGE = 0x0400, 0x0405, 0x0406
+    _TBM_SETTICFREQ = 0x0414
+    _TRACKBAR_CLASS = "msctls_trackbar32"
+    _TBS_AUTOTICKS, _TBS_TOOLTIPS = 0x0001, 0x0100
+    _ID_EDIT, _ID_GO, _ID_SAVE, _ID_QUIT, _ID_SLIDER = 1001, 1002, 1003, 1004, 1005
     _PROC_REFS = []          # keep the WNDPROC alive for Windows
     _BARS = {}               # hwnd -> Win32Bar
     _CLASS_REGISTERED = False
+
+    class _INITCOMMONCONTROLSEX(ctypes.Structure):
+        _fields_ = [("dwSize", wt.DWORD), ("dwICC", wt.DWORD)]
 
     def _bar_wnd_proc(hwnd, msg, wparam, lparam):
         bar = _BARS.get(hwnd)
@@ -264,24 +335,42 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
 
 
 class Win32Bar:  # pragma: no cover - needs a Windows desktop
-    """The small docked window: ``[ frame ] [Enter] [Save PNG] [Quit]``.
+    """The small docked window under the video.
+
+    Two looks, picked by ``controls``:
+
+    ``"input"`` (default)
+        ``[ frame ] [Jump] [Save PNG] [Quit]`` -- type a frame number.
+
+    ``"slider"``
+        ``[========|===== ] [Save PNG] [Quit]`` -- drag the trackbar to scrub
+        (a "progress bar" you can drag); the current frame is in the title bar
+        either way.
 
     Everything (create, message loop, destroy) happens on one worker thread; the
-    main thread only enqueues the typed text, so no rendering ever runs here.
+    main thread only enqueues, so no rendering ever runs here.
     """
 
     CLASS_NAME = "RTMPreviewBar"
 
-    def __init__(self, submit, save, quit_, title="RTM frame preview"):
+    def __init__(self, submit, save, quit_, seek=None, controls="input",
+                 n_frames=1, title="RTM frame preview"):
         self._submit, self._save, self._quit = submit, save, quit_
+        self._seek = seek
+        self.controls = normalize_controls(controls)
+        self._n_frames = max(1, int(n_frames))
         self._title = title
         self._hwnd = None
         self._edit = None
+        self._slider = None
         self._alive = True
         self._ready = threading.Event()
         self._caption = ""
+        self._position = None          # frame the slider should show
         self._video = None
         self._thread = None
+        self._client_h = 0
+        self._outer_h = 0
 
     # -- lifecycle ----------------------------------------------------------
     def start(self, video_hwnd, timeout=5.0):
@@ -301,6 +390,10 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
         """Thread-safe: the bar's own loop applies it."""
         self._caption = str(text)
 
+    def set_position(self, frame):
+        """Thread-safe: move the scrubber to ``frame`` (slider mode)."""
+        self._position = int(frame)
+
     # -- worker thread ------------------------------------------------------
     def _run(self):
         try:
@@ -315,6 +408,15 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
         global _CLASS_REGISTERED
         hinst = _k.GetModuleHandleW(None)
         if not _CLASS_REGISTERED:
+            # The trackbar lives in the common-controls DLL (comctl32, not
+            # user32 -- and it is what registers "msctls_trackbar32").
+            if win32.comctl32 is not None:
+                icc = _INITCOMMONCONTROLSEX(
+                    ctypes.sizeof(_INITCOMMONCONTROLSEX), _ICC_BAR_CLASSES)
+                try:
+                    win32.comctl32.InitCommonControlsEx(ctypes.byref(icc))
+                except Exception:
+                    pass
             wc = _WNDCLASSEXW()
             wc.cbSize = ctypes.sizeof(_WNDCLASSEXW)
             wc.style = 0
@@ -327,66 +429,110 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
             _CLASS_REGISTERED = True
 
         scale = self._dpi_scale()
-        self._height = int(38 * scale)
-        btn_w = int(78 * scale)
+        style = _WS_POPUP | _WS_CAPTION | _WS_SYSMENU
+        # `MoveWindow` takes the OUTER size, so size for the client area we
+        # actually want and let Windows add its caption -- sizing the outer box
+        # to 34 px left ~19 px of client area and the widgets were invisible.
+        self._client_h = int(36 * scale)
+        rect = wt.RECT(0, 0, int(900 * scale), self._client_h)
+        _u.AdjustWindowRectEx(ctypes.byref(rect), style, False, 0)
+        outer_w = int(rect.right - rect.left)
+        self._outer_h = int(rect.bottom - rect.top)
 
         self._hwnd = _u.CreateWindowExW(
             0, self.CLASS_NAME, self._title,
-            _WS_POPUP | _WS_CAPTION | _WS_SYSMENU,
-            0, 0, int(900 * scale), self._height,
+            style | _WS_VISIBLE,          # without this the window stays hidden
+            0, 0, outer_w, self._outer_h,
             None, None, hinst, None)
         if not self._hwnd:
             return
         _BARS[self._hwnd] = self
 
         font = _g.GetStockObject(_DEFAULT_GUI_FONT)
+        btn_w = int(80 * scale)
         pad = int(6 * scale)
-        edit_w = max(int(120 * scale), int(520 * scale) - 3 * btn_w - 4 * pad)
-        x = pad
-        self._edit = _u.CreateWindowExW(
-            0, "EDIT", "", _WS_CHILD | _WS_VISIBLE | _WS_TABSTOP |
-            _ES_AUTOHSCROLL, x, int(8 * scale), edit_w, self._height - 2 * int(8 * scale),
-            self._hwnd, _ID_EDIT, hinst, None)
-        x += edit_w + pad
-        for i, (label, cid, style) in enumerate((
-                ("Jump", _ID_GO, _BS_DEFPUSHBUTTON),
-                ("Save PNG", _ID_SAVE, 0),
-                ("Quit", _ID_QUIT, 0))):
-            _u.CreateWindowExW(
+        ctl_h = self._client_h - 2 * pad
+        y = pad
+        controls = []
+        if self.controls == "slider":
+            x = pad
+            w = outer_w - 2 * btn_w - 3 * pad
+            self._slider = _u.CreateWindowExW(
+                0, _TRACKBAR_CLASS, "",
+                _WS_CHILD | _WS_VISIBLE | _WS_TABSTOP | _TBS_AUTOTICKS |
+                _TBS_TOOLTIPS, x, y, w, ctl_h, self._hwnd, _ID_SLIDER, hinst,
+                None)
+            _u.SendMessageW(self._slider, _TBM_SETRANGE, 1,
+                            (self._n_frames - 1) << 16 | 0)
+            _u.SendMessageW(self._slider, _TBM_SETTICFREQ,
+                            max(1, self._n_frames // 10), 0)
+            _u.SendMessageW(self._slider, _TBM_SETPOS, 1, 0)
+            controls.append(self._slider)
+            x += w + pad
+            buttons = (("Save PNG", _ID_SAVE, 0), ("Quit", _ID_QUIT, 0))
+        else:
+            x = pad
+            w = outer_w - 3 * btn_w - 4 * pad
+            self._edit = _u.CreateWindowExW(
+                0, "EDIT", "", _WS_CHILD | _WS_VISIBLE | _WS_TABSTOP |
+                _ES_AUTOHSCROLL, x, y, w, ctl_h, self._hwnd, _ID_EDIT, hinst,
+                None)
+            controls.append(self._edit)
+            x += w + pad
+            buttons = (("Jump", _ID_GO, _BS_DEFPUSHBUTTON),
+                       ("Save PNG", _ID_SAVE, 0), ("Quit", _ID_QUIT, 0))
+        for label, cid, bstyle in buttons:
+            controls.append(_u.CreateWindowExW(
                 0, "BUTTON", label, _WS_CHILD | _WS_VISIBLE | _WS_TABSTOP |
-                style, x, int(6 * scale), btn_w, self._height - 2 * int(6 * scale),
-                self._hwnd, cid, hinst, None)
+                bstyle, x, y, btn_w, ctl_h, self._hwnd, cid, hinst, None))
             x += btn_w + int(2 * scale)
-        for ctl in (self._edit,):
+        for ctl in controls:
             if ctl:
                 _u.SendMessageW(ctl, _WM_SETFONT, int(font or 0), 1)
 
         self._dock()
-        _u.SetForegroundWindow(self._hwnd)
+        # Belt and braces: WS_VISIBLE at creation plus an explicit show, so the
+        # bar is really on screen (`MoveWindow` never reveals a hidden window --
+        # which is how the first version ended up invisible while every
+        # GetWindowText/GetWindowRect probe still answered happily).
+        _u.ShowWindow(self._hwnd, _SW_SHOW)
+        _u.UpdateWindow(self._hwnd)
+        force_foreground(self._hwnd)
         if self._edit:
             _u.SetFocus(self._edit)
+        elif self._slider:
+            _u.SetFocus(self._slider)
 
     def _dpi_scale(self):
         dpi = 96
-        try:
-            if self._hwnd:
-                dpi = int(_u.GetDpiForWindow(self._hwnd)) or 96
-        except Exception:
-            pass
+        for probe in (lambda: _u.GetDpiForWindow(self._hwnd),
+                      lambda: _u.GetDpiForSystem()):
+            try:
+                value = int(probe())
+            except Exception:
+                continue
+            if value:
+                dpi = value
+                break
         return max(1.0, dpi / 96.0)
 
     def _dock(self):
-        hw = win32.find_video_hwnd() or self._video
+        # Our OWN video window first: a second preview in another process would
+        # otherwise make both bars stack under whichever window is found first.
+        hw = self._video
+        if not (hw and _u.IsWindow(hw)):
+            hw = win32.find_video_hwnd()
         rect = win32.window_rect(hw)
         if not rect or not self._hwnd:
             return
-        x, y, w, h = bar_geometry(rect, self._height)
+        x, y, w, h = bar_geometry(rect, self._outer_h)
         _u.MoveWindow(self._hwnd, x, y, w, h, True)
 
     def _loop(self):
         msg = _MSG()
         last_dock = 0.0
         applied = None
+        applied_pos = None
         while self._alive:
             if _u.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
                 _u.TranslateMessage(ctypes.byref(msg))
@@ -399,6 +545,9 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
             if self._caption != applied:
                 applied = self._caption
                 _u.SetWindowTextW(self._hwnd, applied)
+            if self._position is not None and self._position != applied_pos:
+                applied_pos = self._position
+                _u.SendMessageW(self._slider, _TBM_SETPOS, 1, applied_pos)
             time.sleep(0.01)
 
     # -- window messages ----------------------------------------------------
@@ -414,6 +563,11 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
             if cid == _ID_QUIT:
                 self._pressed(self._quit)
                 return 0
+        elif msg == _WM_HSCROLL and self._slider and self._seek:
+            # The user dragged / clicked the scrubber: seek straight there.
+            pos = int(_u.SendMessageW(self._slider, _TBM_GETPOS, 0, 0))
+            self._seek(pos)
+            return 0
         elif msg == _WM_CLOSE:
             self._alive = False
             _u.DestroyWindow(hwnd)
@@ -421,8 +575,8 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
         elif msg == _WM_DESTROY:
             self._alive = False
             return 0
-        elif msg == _WM_SETFOCUS and self._edit:
-            _u.SetFocus(self._edit)
+        elif msg == _WM_SETFOCUS and (self._edit or self._slider):
+            _u.SetFocus(self._edit or self._slider)
             return 0
         return None
 
@@ -451,10 +605,13 @@ class FramePreview:
     """A still window plus an input bar; every seek is a single O(1) draw."""
 
     def __init__(self, scene_cls, fps=60, out_dir="frames", use_bar=True,
-                 width=None, height=None, verbose=True):
+                 width=None, height=None, verbose=True, controls="input",
+                 position=None):
         self.fps = int(fps)
         self.out_dir = out_dir
         self.verbose = verbose
+        self.controls = normalize_controls(controls)
+        self.position = parse_position(position)
         self._queue = queue.Queue()
         self.use_bar = bool(use_bar) and sys.platform == "win32"
         self._log = (lambda *a: print("[rtm]", *a)) if verbose else (lambda *a: None)
@@ -499,9 +656,17 @@ class FramePreview:
             self._log("prepared in %.2fs (construct ran once, nothing rendered); "
                       "%d frames / %.2fs" % (self.prepare_seconds,
                                              self.n_frames, self.duration))
+            if self.position:
+                self._place(self.position)
+            # A terminal behind a maximized editor cannot hand us the
+            # foreground, so the window would open *under* it: claim it.
+            force_foreground(self.window.hwnd)
             submit, save, quit_ = self._input_callbacks()
             if self.use_bar:
-                self._bar = Win32Bar(submit, save, quit_)
+                self._bar = Win32Bar(
+                    submit, save, quit_,
+                    seek=lambda frame: self._queue.put_nowait(("seek", frame)),
+                    controls=self.controls, n_frames=self.n_frames)
                 if not self._bar.start(self.window.hwnd):
                     self._bar = None
             if self._bar is None:
@@ -513,6 +678,18 @@ class FramePreview:
         finally:
             self.close()
         return 0
+
+    def _place(self, position):
+        """Move the video window (the docked bar follows within 0.2 s)."""
+        from real_time_manim.window import win32
+
+        hwnd = self.window.hwnd
+        rect = win32.window_rect(hwnd)
+        if not rect:
+            return
+        left, top, right, bottom = rect
+        win32.user32.MoveWindow(hwnd, int(position[0]), int(position[1]),
+                                right - left, bottom - top, True)
 
     def _input_callbacks(self):
         """``(submit, save, quit)`` for the input widgets.
@@ -550,18 +727,38 @@ class FramePreview:
                 if not self.window.tick():
                     break
                 continue
-            if kind == "quit":
-                break
-            if kind == "save":
-                self._save()
-                continue
-            if kind == "text":
-                self._handle(parse_spec(payload, self.fps, self.current,
-                                        self.n_frames))
-                continue
-            if kind == "seek":
-                self._seek(payload)
-                self._status()
+            self._dispatch(kind, payload)
+
+    def _dispatch(self, kind, payload):
+        """Act on one queued item.
+
+        A scrubber drag queues one ``seek`` per pixel, so a burst of seeks is
+        collapsed to the newest before drawing -- and anything else that was
+        queued behind them (a save, a typed line, quit) is still run, in order.
+        """
+        if kind == "quit":
+            self.running = False
+        elif kind == "save":
+            self._save()
+        elif kind == "text":
+            self._handle(parse_spec(payload, self.fps, self.current,
+                                    self.n_frames))
+        elif kind == "seek":
+            deferred = []
+            frame = payload
+            while True:
+                try:
+                    k2, p2 = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if k2 == "seek":
+                    frame = p2
+                else:
+                    deferred.append((k2, p2))
+            self._seek(frame)
+            self._status()
+            for k2, p2 in deferred:
+                self._dispatch(k2, p2)
 
     def _handle(self, cmd):
         if cmd.kind == "quit":
@@ -609,13 +806,7 @@ class FramePreview:
                 pass
             else:
                 self._playing = False
-                if kind == "quit":
-                    self.running = False
-                elif kind == "save":
-                    self._save()
-                elif kind == "text":
-                    self._handle(parse_spec(payload, self.fps, self.current,
-                                            self.n_frames))
+                self._dispatch(kind, payload)
                 return
             if not self.server.timeline.render_at(self.time_of(frame)):
                 self._playing = False
@@ -642,6 +833,7 @@ class FramePreview:
             text = "%s   |   %s" % (message, text)
         if self._bar is not None:
             self._bar.set_caption(text)
+            self._bar.set_position(self.current)      # slider mode
         elif self.verbose:
             # No bar (macOS / --no-bar): the terminal is the only feedback.
             self._print("[rtm] " + text)
@@ -669,14 +861,25 @@ def main(argv=None):
     ap.add_argument("--fps", type=int, default=60, help="frame numbering rate")
     ap.add_argument("--at", type=int, default=0, help="first frame to show")
     ap.add_argument("--out", default="frames", help="where 's' writes PNGs")
+    ap.add_argument("--controls", default="input", metavar="{input,slider}",
+                    help="docked bar: 'input' = type a frame (default), "
+                         "'slider' = drag a progress bar to scrub")
+    ap.add_argument("--pos", default=None, metavar="X,Y",
+                    help="place the window (keeps several previews apart)")
     ap.add_argument("--no-bar", action="store_true",
                     help="type in the terminal instead of the docked bar")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     cls = _resolve_scene(args.scene)
+    try:
+        controls = normalize_controls(args.controls)
+        position = parse_position(args.pos)
+    except ValueError as exc:
+        raise SystemExit("error: %s" % exc)
     preview = FramePreview(cls, fps=args.fps, out_dir=args.out,
-                           use_bar=not args.no_bar, verbose=not args.quiet)
+                           use_bar=not args.no_bar, controls=controls,
+                           position=position, verbose=not args.quiet)
     return preview.run(start_frame=args.at)
 
 

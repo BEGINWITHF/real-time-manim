@@ -116,6 +116,53 @@ def test_bar_follows_a_negative_origin_display():
 
 
 # ---------------------------------------------------------------------------
+# which control the caller asked for
+# ---------------------------------------------------------------------------
+
+def test_controls_accepts_the_obvious_spellings():
+    from real_time_manim.preview import normalize_controls
+
+    for word in ("input", "box", "text", "edit", "INPUT", " text ", "Edit"):
+        assert normalize_controls(word) == "input", word
+    for word in ("slider", "bar", "progress", "progressbar", "scrub",
+                 "Slider", "progress-bar", "progress_bar"):
+        assert normalize_controls(word) == "slider", word
+    assert normalize_controls(None) == "input"
+    assert normalize_controls("") == "input"
+
+
+def test_controls_rejects_nonsense():
+    import pytest
+
+    from real_time_manim.preview import normalize_controls
+    with pytest.raises(ValueError):
+        normalize_controls("dial")
+
+
+def test_position_parsing():
+    from real_time_manim.preview import parse_position
+
+    assert parse_position("100,200") == (100, 200)
+    assert parse_position(" 100 , 200 ") == (100, 200)
+    assert parse_position("100;200") == (100, 200)
+    assert parse_position("-1920,0") == (-1920, 0)
+    assert parse_position("(100, 80)") == (100, 80)      # PowerShell arrays
+    assert parse_position("[100, 80]") == (100, 80)
+    assert parse_position((100, 80)) == (100, 80)
+    assert parse_position("") is None
+    assert parse_position(None) is None
+
+
+def test_position_rejects_nonsense():
+    import pytest
+
+    from real_time_manim.preview import parse_position
+    for bad in ("100", "a,b", "1,2,3"):
+        with pytest.raises(ValueError):
+            parse_position(bad)
+
+
+# ---------------------------------------------------------------------------
 # module surface
 # ---------------------------------------------------------------------------
 
@@ -194,3 +241,33 @@ def test_loop_speaks_the_queue_protocol_and_stops_on_quit():
 
     assert pv.current == 120
     assert pv.server.rendered == [2.0], "only the seek should draw"
+
+
+def test_a_scrubber_drag_draws_only_the_newest_frame():
+    """Dragging queues one seek per pixel; only the last one may be drawn."""
+    pv = _bare_preview()
+    pv.window = _StubWindow()
+    pv.server = _StubServer(pv.window)
+    for frame in (1, 2, 3, 4, 5):                 # a drag: 5 events
+        pv._queue.put_nowait(("seek", frame))
+    pv._queue.put_nowait(("quit", None))
+    pv._loop()
+
+    assert pv.server.rendered == [5 / 60.0], pv.server.rendered
+    assert pv.current == 5
+
+
+def test_a_save_queued_behind_a_drag_still_runs():
+    pv = _bare_preview()
+    pv.window = _StubWindow()
+    pv.server = _StubServer(pv.window)
+    saves = []
+    pv._save = lambda: saves.append(pv.current)
+    pv._queue.put_nowait(("seek", 2))
+    pv._queue.put_nowait(("seek", 3))
+    pv._queue.put_nowait(("save", None))
+    pv._queue.put_nowait(("quit", None))
+    pv._loop()
+
+    assert pv.current == 3
+    assert saves == [3], "the save must see the newest frame, and still run"
