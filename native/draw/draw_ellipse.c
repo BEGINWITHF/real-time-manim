@@ -2,10 +2,16 @@
 #include "../draw_common.h"
 
 void BuildVerticesFromEllipses(const EllipseObj *ellipses, int count) {
-    const int segs = 48;
-
     for (int i = 0; i < count; i++) {
         const EllipseObj *e = &ellipses[i];
+        // Segments for the on-screen size (see curve_segments_base).  The old
+        // fixed 48 is kept at the default zoom (55 px radius: the rule's
+        // calibration radius scaled by 48/36), and an elongated ellipse is
+        // sized by its MAJOR radius -- that is where its curvature is highest,
+        // so it is the part that would facet first.
+        const float major_r = fmaxf(fabsf(e->rx), fabsf(e->ry));
+        const int segs = curve_segments_base(major_r * ((float)CURVE_SEGS_BASE
+                                                        / 48.0f), 1.0f, 48);
 
         float nr = e->r / 255.0f, ng = e->g / 255.0f, nb = e->b / 255.0f;
         float bn = e->border_r / 255.0f, bg = e->border_g / 255.0f, bb = e->border_b / 255.0f;

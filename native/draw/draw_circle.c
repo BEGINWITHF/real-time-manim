@@ -2,11 +2,12 @@
 #include "../draw_common.h"
 
 void BuildVerticesFromCircles(const Circle *circles, int count) {
-    const int segs = 36;
-    float step = -2.0f * 3.14159265f / (float)segs;
-
     for (int i = 0; i < count; i++) {
         const Circle *c = &circles[i];
+        // One full turn, tessellated for its on-screen radius (see
+        // curve_segments): 36 at the default zoom, more as the camera zooms in.
+        const int segs = curve_segments(c->radius, 1.0f);
+        const float step = -2.0f * 3.14159265f / (float)segs;
 
         float nr = c->r / 255.0f, ng = c->g / 255.0f, nb = c->b / 255.0f;
         float bn = c->border_r / 255.0f, bg = c->border_g / 255.0f, bb = c->border_b / 255.0f;

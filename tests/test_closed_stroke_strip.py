@@ -4,7 +4,7 @@ Background
 ----------
 Native's line primitive extends every quad ``half_thick`` past BOTH endpoints
 (native/draw/draw_line.c:24-27, ``ex1 = x1 - ux*half_thick``), so when
-``_send_ellipse``/``_send_circle`` stroked their 48-gon one ``AddLine`` per
+``_send_ellipse``/``_send_circle`` stroked their outline one ``AddLine`` per
 segment, neighbouring segments overlapped in a ``2 * half_thick`` band at
 every joint.  Opaque ink hides the overlap; a fading stroke does not: at
 alpha < 1 each joint composites twice and paints a brighter seam every 1/48 of
@@ -139,20 +139,40 @@ def test_fading_closed_shape_emits_no_per_segment_addline(renderer, factory, met
     (lambda: Ellipse(width=4.0, height=5.0), "_send_ellipse"),
     (lambda: Circle(radius=1.5), "_send_circle"),
 ], ids=["Ellipse", "Circle"])
-def test_strip_carries_the_full_48_segment_outline(renderer, factory, method):
-    """One strip per width layer, 48 segments (49 points), closed loop."""
+def test_strip_carries_the_full_outline_at_the_adaptive_count(renderer, factory, method):
+    """One closed strip per width layer, tessellated for its on-screen size.
+
+    The count used to be a hard-coded 48 and this test pinned it.  That is what
+    made a zoomed-in circle faceted -- the fiddly-bit-of-geometry fix is the
+    opposite problem -- so what matters now is that the outline is closed, that
+    the count comes from the `curve_segments` rule for the outline's own
+    on-screen radius, and that the sagitta it implies stays sub-pixel.
+    """
+    import math
+
+    from real_time_manim.render.util import curve_segments
+
     mob, alpha = _fading(factory(), 0.4)
     _counts, calls = _capture(
         renderer, getattr(renderer, method), mob, alpha, 1920, 1080, 0.0, None)
     strips = _strips(calls)
     assert strips, "%s submitted no AddLineStrip" % method
     for s in strips:
-        assert s["n"] == 49, (
-            "%s: strip has %d points, expected 49 (48 segments + close)"
-            % (method, s["n"]))
-        assert s["pts"][0] == pytest.approx(s["pts"][-1], abs=1e-3), (
+        pts = s["pts"]
+        assert pts[0] == pytest.approx(pts[-1], abs=1e-3), (
             "%s: the outline strip is not closed (first %r != last %r)"
-            % (method, s["pts"][0], s["pts"][-1]))
+            % (method, pts[0], pts[-1]))
+        cx = sum(p[0] for p in pts[:-1]) / (len(pts) - 1)
+        cy = sum(p[1] for p in pts[:-1]) / (len(pts) - 1)
+        r_px = max(math.hypot(p[0] - cx, p[1] - cy) for p in pts[:-1])
+        segs = s["n"] - 1
+        assert segs == curve_segments(r_px), (
+            "%s: %d segments for a %.1f px outline, the rule asks for %d"
+            % (method, segs, r_px, curve_segments(r_px)))
+        sagitta = r_px * (1.0 - math.cos(math.pi / segs))
+        assert sagitta < 0.5, (
+            "%s: a %.1f px outline drawn with %d segments is faceted "
+            "(%.2f px sagitta)" % (method, r_px, segs, sagitta))
 
 
 # --------------------------------------------------------------------------- #
@@ -188,6 +208,30 @@ def test_strip_alpha_carries_the_fade(renderer, factory, method):
     assert all(s["rgb"] == expected_rgb for s in strips), (
         "%s: stroke colour must stay full-strength, got %r want %r"
         % (method, [s["rgb"] for s in strips], expected_rgb))
+
+
+def test_curve_segments_keeps_the_on_screen_sagitta_constant():
+    """The rule behind the fix: identity below the calibration radius, then ∝√r.
+
+    A fixed count is what made a zoomed-in circle faceted; the sagitta (how far
+    the polygon's edge falls inside the true arc) is what you actually see, so
+    that is what has to stay put as the radius grows.  Keeping the base radius
+    at 135 px also means an unzoomed outline draws exactly what it used to.
+    """
+    import math
+
+    from real_time_manim.render.util import curve_segments
+
+    assert curve_segments(135.0) == 48                 # the old fixed count
+    assert curve_segments(1.0) == 48
+    assert curve_segments(135.0, base=36) == 36        # native's calibration
+    assert curve_segments(540.0, turns=0.25) < curve_segments(540.0)
+
+    for r_px in (270.0, 540.0, 1080.0, 2160.0, 8000.0):
+        segs = curve_segments(r_px)
+        assert segs > 48, (r_px, segs)
+        sagitta = r_px * (1.0 - math.cos(math.pi / segs))
+        assert sagitta < 0.4, (r_px, segs, sagitta)
 
 
 def test_stroke_layers_composite_onto_the_requested_alpha(renderer):

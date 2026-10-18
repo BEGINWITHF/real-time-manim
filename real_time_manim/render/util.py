@@ -125,6 +125,26 @@ def point_path_bounds(mob):
     return 0.0, float(getattr(mob, "_vulkan_progress", 1.0))
 
 
+def curve_segments(radius_px, turns=1.0, base=48, base_radius=135.0):
+    """Segments to draw an on-screen arc of ``radius_px`` with, no faceting.
+
+    Mirrors native's ``curve_segments`` (shared_types.h): a fixed segment count
+    looks fine at the default zoom and collapses when the camera zooms in -- a
+    Circle's stroke was a hard-coded 48-gon, so at 8x (1080 px radius) the
+    outline was a polygon with a 4.6 px sagitta, and the sagitta is what you see
+    as "不够平滑".  Keeping the sagitta constant means ``segs ∝ sqrt(radius)``,
+    calibrated so that ``base`` segments come out at ``base_radius`` px (the
+    radius the default frame gives a unit circle) -- i.e. an unzoomed frame
+    draws exactly what it used to.
+    """
+    r = abs(float(radius_px))
+    zoom = math.sqrt(r / base_radius) if r > base_radius else 1.0
+    segs = int(math.ceil(base * zoom * max(0.0, float(turns))))
+    if segs < 3:
+        segs = 3
+    return segs if segs < 2048 else 2048
+
+
 def path_extent(mob):
     """``(lo, hi)`` bounds of manim's "defining boundary" points, or None.
 

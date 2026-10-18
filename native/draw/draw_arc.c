@@ -2,9 +2,12 @@
 #include "../draw_common.h"
 
 void BuildVerticesFromArcs(const ArcObj* arcs, int count) {
-    const int segs = 36;
     for (int i = 0; i < count; i++) {
         const ArcObj* a = &arcs[i];
+        // Segments for the swept fraction of a turn, sized for the on-screen
+        // radius (see curve_segments) so a zoomed arc stays smooth.
+        float turns = fabsf(a->angle) / (2.0f * 3.14159265f);
+        const int segs = curve_segments(a->radius, turns);
         float nr = a->r / 255.0f, ng = a->g / 255.0f, nb = a->b / 255.0f;
         float sw = a->stroke_width;
 
