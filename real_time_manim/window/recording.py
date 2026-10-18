@@ -464,8 +464,9 @@ class RecordingMixin:
             bmps = [f for f in os.listdir(self._fast_record_path) if f.endswith('.bmp')]
             print(f"[FastRecord] BMP: {len(bmps)} frames in {self._fast_record_path}")
         self._fast_record = False
-        # Back to display-paced presents (a caller may keep the window up).
-        self._set_unpaced(not getattr(self, 'hidden', True))
+        # Back to what the window's visibility wants: hidden stays unpaced,
+        # a window someone is watching goes back to vsync (see _set_unpaced).
+        self._set_unpaced(bool(getattr(self, 'hidden', True)))
 
     def start_record(self, path="output.mp4", fps=60):
         if self._recording:
