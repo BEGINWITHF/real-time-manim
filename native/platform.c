@@ -161,6 +161,17 @@ __declspec(dllexport) void Vulkan_SetWindowVisible(int visible) {
     }
 }
 
+// Turn present pacing off (1) or back to vsync (0).  An offline record must not
+// wait for the display -- see ChoosePresentMode -- while a live window wants the
+// vsync pacing.  The mode is a swapchain property, so a change rebuilds it on
+// the next tick (the same path a resize takes).
+__declspec(dllexport) void Vulkan_SetUnpaced(int unpaced) {
+    int want = unpaced ? 1 : 0;
+    if (g_unpaced_present == want) return;
+    g_unpaced_present = want;
+    if (g_is_ready && g_swapchain) g_framebuffer_resized = true;
+}
+
 __declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
     // A SECOND init in the same process used to run `Render_Init` straight over
     // the live one: `CreateInstance`/`CreateLogicalDevice`/`CreateSwapchain`
@@ -171,6 +182,9 @@ __declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
     if (Render_IsReady() || (g_hwnd && IsWindow(g_hwnd))) {
         Vulkan_Shutdown();
     }
+    // A hidden window is offline work (fast record, frame export): present
+    // unpaced so the display cannot cap the frame rate (see ChoosePresentMode).
+    g_unpaced_present = hidden ? 1 : 0;
     SetProcessDPIAware();
     g_hinst = GetModuleHandleW(NULL);
     g_aspect_ratio = (double)w / (double)h;

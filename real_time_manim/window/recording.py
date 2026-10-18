@@ -263,7 +263,23 @@ class RecordingMixin:
                 ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
             self._fast_tmp_bmp = os.path.join(tempfile.gettempdir(),
                 f"manim_fast_{os.getpid()}_{id(self)}.bmp")
+            # A record must not be paced by the display (see _set_unpaced).
+            self._set_unpaced(True)
             print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps ({pix_fmt}) → {path}")
+
+    def _set_unpaced(self, unpaced):
+        """Let (or stop) the window present without waiting for the display.
+
+        Called with True while a record is running and for any hidden window: a
+        record must never be capped by the refresh rate (measured: an *empty*
+        scene spent 6.9 ms of an 8.3 ms frame waiting on the display).  A visible
+        window goes back to vsync so live playback stays tear-free and paced.
+        """
+        unpaced_fn = getattr(self.dll, "Vulkan_SetUnpaced", None)
+        if unpaced_fn is not None:
+            unpaced_fn.restype = None
+            unpaced_fn.argtypes = [ctypes.c_int]
+            unpaced_fn(1 if unpaced else 0)
 
     def set_visible(self, visible=True):
         """Show or hide the window after it was created.
@@ -282,6 +298,8 @@ class RecordingMixin:
             if hwnd:
                 user32.ShowWindow(hwnd, 5 if visible else 0)  # SW_SHOW / SW_HIDE
         self.hidden = not visible
+        # A hidden window has nothing to pace for, a visible one does.
+        self._set_unpaced(not visible)
 
     def close(self):
         if getattr(self, '_defer_close', False):
@@ -446,6 +464,8 @@ class RecordingMixin:
             bmps = [f for f in os.listdir(self._fast_record_path) if f.endswith('.bmp')]
             print(f"[FastRecord] BMP: {len(bmps)} frames in {self._fast_record_path}")
         self._fast_record = False
+        # Back to display-paced presents (a caller may keep the window up).
+        self._set_unpaced(not getattr(self, 'hidden', True))
 
     def start_record(self, path="output.mp4", fps=60):
         if self._recording:

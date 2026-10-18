@@ -12,6 +12,9 @@ __declspec(dllexport) int Vulkan_Init(int w, int h);
 __declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden);
 // Show/hide the window after creation (SW_SHOW / SW_HIDE).
 __declspec(dllexport) void Vulkan_SetWindowVisible(int visible);
+// Present without waiting for the display (1) or with vsync (0).  Offline
+// records use 1: FIFO would cap them at the refresh rate.
+__declspec(dllexport) void Vulkan_SetUnpaced(int unpaced);
 __declspec(dllexport) int Vulkan_Tick(void);
 // Arm the next drawn frame to copy itself into the readback staging buffer
 // (before present, while the image is still ours).  Call before the tick that
