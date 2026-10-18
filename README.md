@@ -145,6 +145,10 @@ scheduling on* (nothing is drawn: `play` only records what each animation does),
 and after that every seek is O(1) -- a few milliseconds wherever it lands. See
 [`docs/2.0.0-time-addressable.md`](docs/2.0.0-time-addressable.md).
 
+A seek replays animation state; mobjects driven purely by custom updaters (or
+`TracedPath`) are exact when you step *forward* and approximate when you jump
+backwards -- making those time-replayable is that document's P3.
+
 ```bash
 python -m real_time_manim.preview 1                       # demo #1 from run.py
 python -m real_time_manim.preview examples.scenes:DemoCreate --at 120

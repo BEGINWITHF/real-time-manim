@@ -17,6 +17,11 @@ records what each animation does instead of drawing it (``FrameServer``), which
 is what makes every later seek O(1).  No frame is rendered ahead of time -- the
 first picture you see is only drawn when the window appears.
 
+Caveat: a seek replays **animation** state, not accumulated *updater* state, so
+a scene whose mobjects are only driven by custom updaters / ``TracedPath`` is
+exact when you step forward and approximate when you jump backwards.  Making
+those time-replayable is P3 in ``docs/2.0.0-time-addressable.md``.
+
 Input bar
 ---------
 On Windows the bar is a small native window docked right below the video
