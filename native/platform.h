@@ -16,7 +16,10 @@ __declspec(dllexport) int Vulkan_Tick(void);
 // Arm the next drawn frame to copy itself into the readback staging buffer
 // (before present, while the image is still ours).  Call before the tick that
 // draws the frame you want; then SaveScreenshot/SaveScreenshotRaw can read it.
-__declspec(dllexport) void Vulkan_RequestReadback(void);
+// Returns the ring slot the pixels will land in (>= 0), or -1 when there is no
+// frame to read -- pass it to SaveScreenshotSlotBGRA to read that exact frame
+// later, which is how a record loop hides the GPU wait.
+__declspec(dllexport) int Vulkan_RequestReadback(void);
 // Report the swapchain extent the next readback will produce (the authoritative
 // size for a SaveScreenshotRaw buffer).  Returns 0 when nothing is initialised.
 __declspec(dllexport) int Vulkan_GetReadbackSize(int *w, int *h);
@@ -52,6 +55,16 @@ __declspec(dllexport) int SaveScreenshot(const char *path);
 // sized for the OLD extent.  Returns 1 on success and sets *out_size to the
 // number of bytes written.
 __declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int out_cap, int *out_size);
+
+// Same readback, raw BGRA and no colour conversion (see platform.c).
+__declspec(dllexport) int SaveScreenshotRawBGRA(unsigned char *out, int out_cap, int *out_size);
+
+// Read the ring slot Vulkan_RequestReadback returned, waiting for THAT slot's
+// copy (see platform.c: SS_SLOTS).  Returns 0 when the slot holds no completed
+// copy.  Optional export: a build that lacks it keeps the immediate
+// SaveScreenshotRawBGRA path.
+__declspec(dllexport) int SaveScreenshotSlotBGRA(int slot, unsigned char *out,
+                                                 int out_cap, int *out_size);
 
 // Rendered polyline: up to MAX_STRIP_POINTS vertices, copied verbatim.  Exposed
 // for the text/line-strip senders; silently truncates above the cap (see

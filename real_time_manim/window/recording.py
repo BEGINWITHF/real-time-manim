@@ -93,10 +93,15 @@ class RecordingMixin:
         presented swapchain image is owned by the presentation engine, so
         copying it afterwards returns undefined pixels; the engine copies the
         frame while it still owns it instead.
+
+        The DLL answers with the ring slot the pixels will land in (newer
+        builds); it is remembered as ``_readback_slot`` so a deferred reader
+        (``_capture_screenshot_to_pipe``) can pick them up later without
+        waiting for the GPU.
         """
         fn = getattr(self.dll, 'Vulkan_RequestReadback', None)
         if fn is not None:
-            fn()
+            self._readback_slot = int(fn())
 
     def screenshot_printwindow(self, path):
         if sys.platform != "win32":
@@ -175,6 +180,11 @@ class RecordingMixin:
         self._fast_record_segment = segment
         self._fast_record_frame_idx = 0
         self._fast_record_count_only = count_only
+        # Deferred-readback state (see _fast_capture_via_slots): the ring slot
+        # whose pixels are still to be written out.
+        self._fast_slot_pending = None
+        self._fast_raw_buf = None
+        self._readback_slot = None
         w, h = self.win_w, self.win_h
 
         # Hide window for faster rendering (no compositing)
@@ -212,6 +222,16 @@ class RecordingMixin:
                     ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
                     ctypes.POINTER(ctypes.c_int)]
             self._fast_raw_bgra = raw_bgra
+            # And the ring-slot reader, which lets the record loop read frame k
+            # only after frame k+1 was submitted -- hiding the GPU fence wait
+            # (~2 ms of an ~8 ms frame).  Same bare-alias form as above.
+            slot_bgra = getattr(self.dll, "SaveScreenshotSlotBGRA", None)
+            if slot_bgra is not None:
+                slot_bgra.restype = ctypes.c_int
+                slot_bgra.argtypes = [
+                    ctypes.c_int, ctypes.POINTER(ctypes.c_ubyte),
+                    ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+            self._fast_slot_bgra = slot_bgra
             pix_fmt = "bgra" if self._fast_raw_bgra else "bgr24"
             ffmpeg_cmd = fast_pipe_ffmpeg_args(w, h, fps, pix_fmt,
                                                self._fast_record_path)
@@ -259,16 +279,61 @@ class RecordingMixin:
     def _capture_screenshot_to_pipe(self):
         """Copy the frame the recorder just drew into ffmpeg's stdin.
 
-        Two routes, both ending in tightly packed rows at ``self._fast_w``:
+        Three routes, all ending in tightly packed rows at ``self._fast_w``:
 
-        * ``SaveScreenshotRawBGRA`` (newer DLL): the raw framebuffer, one memcpy,
-          piped verbatim as ``bgra`` -- no per-pixel work at all.
+        * ``SaveScreenshotSlotBGRA`` (newest DLL): one frame behind, so the GPU
+          fence wait disappears -- see :meth:`_fast_capture_via_slots`.
+        * ``SaveScreenshotRawBGRA`` (newer DLL): the raw framebuffer, one memcpy
+          right after the draw, piped verbatim as ``bgra``.
         * ``SaveScreenshot`` (fallback): a BMP on disk, read back and de-padded
           into ``bgr24``.
         """
+        if getattr(self, '_fast_slot_bgra', None) is not None:
+            return self._fast_capture_via_slots()
         if self._fast_raw_bgra is not None:
             return self._capture_raw_bgra_to_pipe()
         return self._capture_bmp_to_pipe()
+
+    def _fast_capture_via_slots(self):
+        """Queue this frame and write out the previous one.
+
+        Reading a frame right after drawing it blocks the CPU on the GPU fence
+        (measured ~2 ms of an ~8 ms 1080p frame).  Doing the *next* frame's work
+        first -- evaluate, upload, submit -- leaves the GPU that long to finish,
+        so by the time the slot is read the wait is over.  The staging buffer
+        carries two slots precisely so the newer frame's copy cannot land on
+        pixels nobody has read yet (native/platform.c: SS_SLOTS).
+        """
+        prev = self._fast_slot_pending
+        if prev is not None:
+            self._fast_write_slot(prev)
+        slot = getattr(self, '_readback_slot', None)
+        self._fast_slot_pending = slot if (slot is not None and slot >= 0) else None
+
+    def _fast_write_slot(self, slot):
+        """Encode one buffered frame from the readback ring (see the DLL)."""
+        w, h = self._fast_w, self._fast_h
+        need = w * h * 4
+        buf = self._fast_raw_buf
+        if buf is None or len(buf) < need:
+            buf = (ctypes.c_ubyte * need)()
+            self._fast_raw_buf = buf
+        out_size = ctypes.c_int(need)
+        if not self._fast_slot_bgra(slot, buf, need, ctypes.byref(out_size)):
+            # That slot holds no completed copy: the frame that would have
+            # serviced it was skipped (resize / window gone).  Dropping it keeps
+            # the stream's rows consistent with -video_size.
+            return
+        if out_size.value != need:
+            return
+        self._ffmpeg.stdin.write(memoryview(buf)[:need])
+
+    def _fast_drain_slot(self):
+        """Write the last buffered frame (nothing follows it to hide behind)."""
+        prev = getattr(self, '_fast_slot_pending', None)
+        if prev is not None:
+            self._fast_write_slot(prev)
+            self._fast_slot_pending = None
 
     def _capture_raw_bgra_to_pipe(self):
         w, h = self._fast_w, self._fast_h
@@ -341,6 +406,7 @@ class RecordingMixin:
             print(f"[FastRecord] Count: {self._fast_record_frame_idx} frames")
         elif getattr(self, '_fast_record_pipe_mode', False):
             try:
+                self._fast_drain_slot()          # the frame nobody follows
                 self._ffmpeg.stdin.close()
                 self._ffmpeg.wait()
                 sz = os.path.getsize(self._fast_record_path) / 1024
