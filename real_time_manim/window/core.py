@@ -175,14 +175,6 @@ class CoreMixin:
             ctypes.c_float, ctypes.c_float,
             ctypes.c_float,
         ]
-        self.dll.AddArc.restype = None
-        self.dll.AddArc.argtypes = [
-            ctypes.c_float, ctypes.c_float, ctypes.c_float,
-            ctypes.c_float, ctypes.c_float,
-            ctypes.c_int, ctypes.c_int, ctypes.c_int,
-            ctypes.c_float,
-            ctypes.c_float,
-        ]
         self.dll.AddPoint.restype = None
         self.dll.AddPoint.argtypes = [
             ctypes.c_float, ctypes.c_float,
@@ -190,15 +182,6 @@ class CoreMixin:
             ctypes.c_float,
             ctypes.c_float,
         ]
-        self.dll.AddText.restype = None
-        self.dll.AddText.argtypes = [
-            ctypes.c_float, ctypes.c_float,
-            ctypes.c_int, ctypes.c_int, ctypes.c_int,
-            ctypes.c_float, ctypes.c_float,
-            ctypes.c_char_p, ctypes.c_float,
-        ]
-        self.dll.Text_LoadFont.restype = ctypes.c_int
-        self.dll.Text_LoadFont.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int]
         self.dll.AddBezierPath.restype = None
         self.dll.AddBezierPath.argtypes = [
             ctypes.POINTER(ctypes.c_float), ctypes.c_int,
@@ -248,28 +231,6 @@ class CoreMixin:
             if self.hidden:
                 # Older DLL without hidden creation: hide right after building.
                 self.set_visible(False)
-
-        if sys.platform == "darwin":
-            font_paths = [
-                "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
-                "/System/Library/Fonts/Supplemental/Arial.ttf",
-                "/System/Library/Fonts/Supplemental/Helvetica.ttc",
-            ]
-        else:
-            font_paths = [r"C:\Windows\Fonts\times.ttf", r"C:\Windows\Fonts\arial.ttf"]
-        font_loaded = False
-        for fp in font_paths:
-            try:
-                with open(fp, "rb") as f:
-                    data = f.read()
-                arr = (ctypes.c_ubyte * len(data))(*data)
-                if self.dll.Text_LoadFont(arr, len(data)):
-                    font_loaded = True
-                    break
-            except Exception:
-                pass
-        if not font_loaded:
-            raise RuntimeError("Failed to load any font")
 
     @property
     def hwnd(self):

@@ -77,8 +77,6 @@ real-time-manim/
 │   │   ├── draw_line.c         # Line vertex generation
 │   │   ├── draw_polygon.c      # Polygon vertex generation
 │   │   ├── draw_dashed.c       # Dashed line vertex generation
-│   │   ├── draw_arc.c          # Arc vertex generation
-│   │   └── draw_text.c         # Text rendering (DirectWrite → Vulkan texture)
 │   ├── shaders/
 │   │   ├── vertex.vert         # Vertex shader (position + color pass-through)
 │   │   └── fragment.frag       # Fragment shader (solid color with alpha)
@@ -139,8 +137,6 @@ User Code (Scene)
        │           ├─ AddPolygon()   — triangles, polygons, arrow heads
        │           ├─ AddBezierPath()— complex curves, text glyphs, VMObjects
        │           ├─ AddDashedLine()— dashed lines
-       │           ├─ AddArc()       — arcs
-       │           └─ AddText()      — bitmap text fallback
        │
        ├─ finish(): restore mobject state, clean up scene
        │
@@ -228,7 +224,7 @@ A custom reimplementation of Manim's animation classes that works with the Vulka
 A Windows DLL (`vulkan_render.dll`) that:
 
 1. **Initializes Vulkan**: instance, physical device, logical device, swapchain, render pass, pipeline, command buffers, semaphores
-2. **Receives draw calls** from Python via exported C functions (`AddRect`, `AddCircle`, `AddLine`, `AddPolygon`, `AddBezierPath`, `AddText`, etc.)
+2. **Receives draw calls** from Python via exported C functions (`AddRect`, `AddCircle`, `AddLine`, `AddPolygon`, `AddBezierPath`, etc.)
 3. **Stores shapes** in static arrays (`g_rects`, `g_circles`, etc.) with a command list (`g_draw_cmds`) tracking draw order
 4. **Renders each frame**: converts shape data → triangle/line vertices → vertex buffer → Vulkan draw calls
 5. **Captures screenshots**: reads back swapchain image to CPU memory, writes BMP header + pixel data
@@ -237,7 +233,7 @@ A Windows DLL (`vulkan_render.dll`) that:
 ```
 Render_Init, Render_IsReady, Render_DrawScene, Render_Cleanup
 Tick, Render_Present, SaveScreenshot
-AddRect, AddCircle, AddLine, AddEllipse, AddPolygon, AddDashedLine, AddArc, AddText, AddBezierPath, AddLineStrip
+AddRect, AddCircle, AddLine, AddEllipse, AddPolygon, AddDashedLine, AddBezierPath, AddLineStrip
 ```
 
 ### 4.6. Recording Modes

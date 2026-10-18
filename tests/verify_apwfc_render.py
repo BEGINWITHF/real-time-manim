@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 
-REPO = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if "--installed" not in sys.argv:
     sys.path.insert(0, REPO)
 

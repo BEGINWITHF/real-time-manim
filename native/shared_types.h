@@ -25,8 +25,8 @@
    what "放大后圆不够平滑" reports).  The count below keeps the sagitta at the
    value the old 36-gon had at the radius the DEFAULT frame gives a unit circle
    (135 px -> 0.51 px), so:
-     * zoomed frames get proportionally more segments (sagitta �?r/segs^2,
-       hence segs �?sqrt(r)),
+     * zoomed frames get proportionally more segments (sagitta �?r/segs^2,
+       hence segs �?sqrt(r)),
      * an unzoomed frame keeps exactly 36/48 segments, so existing renders are
        bit-identical.
    Radii are in screen pixels (the senders pass projected coordinates). */
@@ -103,14 +103,6 @@ typedef struct {
 } DashedLineObj;
 
 typedef struct {
-    float x, y, radius;
-    float start_angle, angle;
-    int r, g, b;
-    float stroke_width;
-    float alpha;
-} ArcObj;
-
-typedef struct {
     float x, y;
     int r, g, b;
     float alpha;
@@ -133,18 +125,5 @@ typedef struct {
     float xy[8];
     float opacity;
 } ImageQuad;
-
-#ifndef MAX_TEXT_LEN
-#define MAX_TEXT_LEN 512
-#endif
-
-typedef struct {
-    float x, y;
-    int r, g, b;
-    float font_size;
-    float opacity;
-    char text[MAX_TEXT_LEN];
-    float alpha;
-} TextObj;
 
 #endif

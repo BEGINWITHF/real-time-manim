@@ -335,5 +335,4 @@ real-time-manim/
 ## Acknowledgments
 
 - [ManimCE](https://www.manim.community/) — the mathematical animation engine
-- [stb_truetype](https://github.com/nothings/stb) — TrueType font rasterizer
 - [Vulkan](https://www.vulkan.org/) — the graphics API
