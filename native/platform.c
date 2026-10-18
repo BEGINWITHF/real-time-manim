@@ -439,6 +439,10 @@ static VkDeviceMemory g_ss_mem = VK_NULL_HANDLE;
 static VkDeviceSize g_ss_size = 0;
 static void *g_ss_map = NULL;
 
+// Whether the mapped staging memory can hold stale cache lines after the GPU
+// wrote it.  True for the cached type chosen below (see SyncScreenshotBuffer).
+static int g_ss_needs_invalidate = 0;
+
 static int EnsureScreenshotBuffer(VkDeviceSize size) {
     if (g_ss_buf != VK_NULL_HANDLE && g_ss_size >= size) return 1;
     if (g_ss_buf != VK_NULL_HANDLE) {
@@ -460,8 +464,16 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
     }
 
     // Allocate a pure host-readable staging buffer (HOST_VISIBLE, NOT
-    // DEVICE_LOCAL). FindMemoryType() picks the first matching type, which on
-    // many GPUs is device-local host-visible memory whose reads are ~20 MB/s.
+    // DEVICE_LOCAL).
+    //
+    // The memory type matters more than anything else in this file.  Reading
+    // the mapped buffer is the bulk of a fast record's per-frame cost, and the
+    // plain HOST_VISIBLE type most drivers hand out is *write-combined*: CPU
+    // reads of WC memory bypass the cache, and measured 260 MB/s here, i.e.
+    // ~32 ms for one 1920x1080 BGRA frame -- more than the frame's own draw.
+    // CACHED host memory reads at RAM speed; the price is that the CPU must
+    // invalidate the range after the GPU's copy lands (SyncScreenshotBuffer),
+    // or it would read cache lines from before that write.
     VkBufferCreateInfo bi = {0};
     bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bi.size = size;
@@ -473,24 +485,30 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
     vkGetBufferMemoryRequirements(g_dev, g_ss_buf, &mr);
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(g_phys_dev, &mp);
+    // Preference order, first match wins:
+    //   0 cached + device-local (integrated GPU: cached system RAM)
+    //   1 cached                (discrete GPU: the cached host heap)
+    //   2 coherent, not device-local (the previous first choice)
+    //   3 coherent              (previous fallback)
+    static const int want_cached[4] = {1, 1, 0, 0};
+    static const int want_local[4] = {1, 0, 0, 0};      // 1 = must be local
+    static const int want_remote[4] = {0, 0, 1, 0};     // 1 = must NOT be local
     uint32_t chosen = UINT32_MAX;
-    for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
-        VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
-        if ((mr.memoryTypeBits & (1u << i)) &&
-            (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
-            (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) &&
-            !(f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-            chosen = i; break;
-        }
-    }
-    if (chosen == UINT32_MAX) {
+    int is_cached = 0;
+    for (int pass = 0; pass < 4 && chosen == UINT32_MAX; pass++) {
         for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
             VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
-            if ((mr.memoryTypeBits & (1u << i)) &&
-                (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
-                (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
-                chosen = i; break;
-            }
+            if (!(mr.memoryTypeBits & (1u << i))) continue;
+            if (!(f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
+            int cached = (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0;
+            int coherent = (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+            int local = (f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+            if (cached != want_cached[pass] || !coherent) continue;
+            if (want_local[pass] && !local) continue;
+            if (want_remote[pass] && local) continue;
+            chosen = i;
+            is_cached = cached;
+            break;
         }
     }
     if (chosen == UINT32_MAX) {
@@ -524,7 +542,25 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
         return 0;
     }
     g_ss_size = size;
+    // Cached memory must be invalidated before the CPU reads the GPU's copy;
+    // write-combined memory reads straight through and needs nothing.
+    g_ss_needs_invalidate = is_cached;
     return 1;
+}
+
+// Make the GPU's copy visible to the CPU.  Only meaningful for the cached
+// memory type chosen above: the CPU's cache may still hold lines from before
+// the transfer, so the range is invalidated once the fence promised the copy
+// landed.  Cheap (a cache flush), and a no-op on the write-combined path.
+static void SyncScreenshotBuffer(void) {
+    if (!g_ss_needs_invalidate) return;
+    if (g_ss_mem == VK_NULL_HANDLE || g_ss_map == NULL) return;
+    VkMappedMemoryRange r = {0};
+    r.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    r.memory = g_ss_mem;
+    r.offset = 0;
+    r.size = VK_WHOLE_SIZE;
+    vkInvalidateMappedMemoryRanges(g_dev, 1, &r);
 }
 
 static void FreeScreenshotBuffer(void) {
@@ -738,10 +774,12 @@ static int ResolveScreenshotSource(int w, int h) {
     if (g_ss_copied) {
         vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
         g_ss_copied = 0;
+        SyncScreenshotBuffer();
         return 1;
     }
     if (g_ss_arm) return 0;
     CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
+    SyncScreenshotBuffer();
     return 1;
 }
 
@@ -821,12 +859,12 @@ __declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int out_cap, int
 // Same readback as SaveScreenshotRaw, but hands back the RAW BGRA image
 // (w*h*4 bytes, tightly packed) with no colour conversion at all.
 //
-// `ConvertBGRAtoBGR` walks the frame pixel by pixel (2.07 million iterations
-// for 1080p) and that loop dominated fast-record's per-frame capture cost --
-// measured at ~25 ms of a ~50 ms frame.  ffmpeg accepts `-pixel_format bgra`
-// directly and only drops the alpha when converting to yuv420p, so the whole
-// conversion can be skipped: this export is the fence wait plus one bulk memcpy
-// of the staging buffer.
+// `ConvertBGRAtoBGR` additionally walks the frame pixel by pixel (2.07 million
+// iterations for 1080p) and writes a padded BGR image, so skipping it saves one
+// pass over the frame -- worth ~9% (50.1 -> 45.6 ms/frame for a 1080p scene).
+// The remaining cost is NOT the conversion but the memcpy out of the mapped
+// staging buffer, which is why the memory type (see EnsureScreenshotBuffer) is
+// what actually decides capture speed.
 __declspec(dllexport) int SaveScreenshotRawBGRA(unsigned char *out, int out_cap,
                                                 int *out_size) {
     if (!g_is_ready || !g_swapchain || !out) return 0;
