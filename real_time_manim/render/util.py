@@ -32,6 +32,33 @@ def manim_to_screen(x, y, w=800, h=600, z=0.0):
     return float(cx + x * s), float(cy - y * s)
 
 
+def affine_frame_map(w, h):
+    """``(scale, cx, cy)`` for the frame, or None when a camera projects points.
+
+    Senders convert points through an affine map unless the scene published a
+    camera viewport, and in that case they can do it with numpy in one pass
+    instead of looping per point.  The arithmetic is `screen_projector`'s, in the
+    same order, so the results are identical bit for bit.
+    """
+    if _get_viewport is None:                        # pragma: no cover
+        return float(h) / 8.0, w / 2.0, h / 2.0
+    if _get_viewport() is not None:
+        return None
+    return _screen_scale(w, h), w / 2.0, h / 2.0
+
+
+def store_screen_points(out, xs, ys, scale, cx, cy):
+    """Write ``xs``/``ys`` (double precision, in pixels) into stride-3 ``out``.
+
+    ``out`` is the ctypes float array the native senders take; the numpy view
+    writes into the same memory, so nothing is copied twice.
+    """
+    view = np.frombuffer(out, dtype=np.float32).reshape(-1, 3)
+    view[:, 0] = cx + xs * scale
+    view[:, 1] = cy - ys * scale
+    view[:, 2] = 0.0
+
+
 def screen_projector(w, h):
     """A per-frame ``project(x, y, z=0) -> (sx, sy)`` (see `manim_to_screen`).
 

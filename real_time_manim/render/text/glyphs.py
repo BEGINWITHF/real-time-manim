@@ -4,7 +4,12 @@
 outline, with the write/type animation channels applied."""
 
 import ctypes
-from real_time_manim.render.util import manim_to_screen, screen_projector
+
+import numpy as np
+
+from real_time_manim.render.util import (affine_frame_map, manim_to_screen,
+                                         screen_projector,
+                                         store_screen_points)
 from real_time_manim.animations import get_anim_opacity
 
 
@@ -178,15 +183,29 @@ class GlyphMixin:
             else:
                 off_x = off_y = 0.0
             flat = (ctypes.c_float * (len(pts) * 3))()
-            for pi, p in enumerate(pts):
-                px, py = float(p[0]) + off_x, float(p[1]) + off_y
+            affine = affine_frame_map(w, h)
+            if affine is not None:
+                # Affine frame: one numpy pass, same operations and order as the
+                # per-point loop below (bit-identical coordinates).
+                pts_arr = np.asarray(pts, dtype=np.float64)
+                px = pts_arr[:, 0] + off_x
+                py = pts_arr[:, 1] + off_y
                 if grow_scale != 1.0 and grow_pt is not None:
                     px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                     py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                sx, sy = _project(px, py + b_dy, p[2])
-                flat[pi * 3] = sx
-                flat[pi * 3 + 1] = sy
-                flat[pi * 3 + 2] = 0.0
+                py = py + b_dy
+                store_screen_points(flat, px, py, affine[0], affine[1],
+                                    affine[2])
+            else:
+                for pi, p in enumerate(pts):
+                    px, py = float(p[0]) + off_x, float(p[1]) + off_y
+                    if grow_scale != 1.0 and grow_pt is not None:
+                        px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                        py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                    sx, sy = _project(px, py + b_dy, p[2])
+                    flat[pi * 3] = sx
+                    flat[pi * 3 + 1] = sy
+                    flat[pi * 3 + 2] = 0.0
 
             n = len(pts)
             n = (n // 4) * 4

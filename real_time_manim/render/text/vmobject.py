@@ -6,7 +6,14 @@ before the points reach native."""
 
 import ctypes
 import math
-from real_time_manim.render.util import get_opacity, point_path_bounds, shaded_fill_rgb, shaded_fill_gradient, screen_projector
+
+import numpy as np
+
+from real_time_manim.render.util import (affine_frame_map, get_opacity,
+                                         point_path_bounds, shaded_fill_rgb,
+                                         shaded_fill_gradient,
+                                         screen_projector,
+                                         store_screen_points)
 
 
 def _black_fill_is_real(mob):
@@ -458,12 +465,7 @@ class VMobjectMixin:
             cx, cy, _ = mob.get_center()
             cos_a = math.cos(rot)
             sin_a = math.sin(rot)
-            # One projection for every point of this path (see
-            # screen_projector): the per-point call re-resolved the viewport and
-            # the frame scale each time and was the single hottest thing in a
-            # text-heavy frame.
-            _project = screen_projector(w, h)
-            # Preallocated rather than a Python list: this loop runs once per
+            # Preallocated rather than a Python list: this loop ran once per
             # point and appended three floats each time (measured 1.05M appends
             # per 150 frames of a three-Text scene).  The consumers only index
             # it, so a ctypes array is both the destination and the result.
@@ -474,28 +476,53 @@ class VMobjectMixin:
             # a descender-heavy word is lowered onto its shared baseline without
             # ever mutating the mobject's points (no positional jitter).
             b_dy = float(getattr(mob, '_baseline_dy', 0.0) or 0.0)
-            for pi, p in enumerate(pts):
-                px, py = p[0], p[1]
-                pz = float(p[2]) if len(p) > 2 else 0.0
+            affine = affine_frame_map(w, h)
+            if affine is not None:
+                # No camera viewport: the whole conversion is affine, so one
+                # numpy pass replaces the per-point loop and its per-point
+                # projection call.  Same operations in the same order, all in
+                # double precision, so the coordinates are bit-identical.
+                pts_arr = np.asarray(pts, dtype=np.float64)
+                px = pts_arr[:, 0]
+                py = pts_arr[:, 1]
                 if grow_scale != 1.0 and grow_pt is not None:
                     px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                     py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                dx, dy = px - cx, py - cy
+                dx = px - cx
+                dy = py - cy
                 px = dx * cos_a - dy * sin_a + cx
                 py = dx * sin_a + dy * cos_a + cy
                 if parent_offset is not None:
-                    px += parent_offset[0]
-                    py += parent_offset[1]
-                py += b_dy
-                # z must reach the viewport: a ThreeDCamera rotates the point
-                # before the screen mapping, so dropping it flattens every 3D
-                # VMobject (a Surface collapsed into thin stray strips).  native
-                # AddBezierPath reads stride-3 points but only x,y, so the third
-                # slot stays 0 here.
-                sx, sy = _project(px, py, pz)
-                flat[pi * 3] = sx
-                flat[pi * 3 + 1] = sy
-                flat[pi * 3 + 2] = 0.0
+                    px = px + parent_offset[0]
+                    py = py + parent_offset[1]
+                py = py + b_dy
+                store_screen_points(flat, px, py, affine[0], affine[1],
+                                    affine[2])
+            else:
+                # A camera viewport (MovingCamera / 3D) maps each point itself.
+                _project = screen_projector(w, h)
+                for pi, p in enumerate(pts):
+                    px, py = p[0], p[1]
+                    pz = float(p[2]) if len(p) > 2 else 0.0
+                    if grow_scale != 1.0 and grow_pt is not None:
+                        px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                        py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                    dx, dy = px - cx, py - cy
+                    px = dx * cos_a - dy * sin_a + cx
+                    py = dx * sin_a + dy * cos_a + cy
+                    if parent_offset is not None:
+                        px += parent_offset[0]
+                        py += parent_offset[1]
+                    py += b_dy
+                    # z must reach the viewport: a ThreeDCamera rotates the
+                    # point before the screen mapping, so dropping it flattens
+                    # every 3D VMobject (a Surface collapsed into thin stray
+                    # strips).  native AddBezierPath reads stride-3 points but
+                    # only x,y, so the third slot stays 0 here.
+                    sx, sy = _project(px, py, pz)
+                    flat[pi * 3] = sx
+                    flat[pi * 3 + 1] = sy
+                    flat[pi * 3 + 2] = 0.0
 
         n = len(flat) // 3
         if n < 8:
