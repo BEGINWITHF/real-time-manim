@@ -259,11 +259,31 @@ class CoreMixin:
         to `config.background_color`); the native side used to hard-code black, so a
         scene with a light background rendered on black (measured on the gallery logo
         scene: CE luma 220 vs RTM 9.5, the largest mismatch in the suite).
+
+        `camera.background_opacity` rides along: CE paints the background with that
+        alpha over a black canvas, so the clear colour is the colour scaled by it
+        (wiki 01-场景与相机/配置/01-画质与输出 marked the property ❌ for having no
+        effect on the output).
         """
         setter = getattr(self, "_set_background", None)
         if setter is None:
             return
         camera = getattr(scene, "camera", None)
+        opacity = 1.0
+        try:
+            from manim import config as _cfg
+            fallback = _cfg["background_opacity"]
+        except Exception:
+            fallback = 1.0
+        raw = getattr(camera, "background_opacity", None)
+        try:
+            opacity = float(fallback if raw is None else raw)
+        except (TypeError, ValueError):
+            opacity = 1.0
+        if opacity < 0.0:
+            opacity = 0.0
+        elif opacity > 1.0:
+            opacity = 1.0
         colour = getattr(camera, "background_color", None)
         if colour is None:
             try:
@@ -280,7 +300,7 @@ class CoreMixin:
         except Exception:
             return
         if len(values) == 3:
-            setter(*values)
+            setter(*(v * opacity for v in values))
 
     @staticmethod
     def _camera_needs_raster(scene, cam):

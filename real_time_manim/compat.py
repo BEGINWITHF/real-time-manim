@@ -31,6 +31,43 @@ import os
 _APPLIED = False
 
 
+def _shim_scene_add_subcaption() -> bool:
+    """`Scene.add_subcaption` has to reach the window's cue store.
+
+    manim's version stamps the cue at ``Scene.time`` and appends it to
+    ``renderer.file_writer.subcaptions``.  RTM drives neither: its clock is the
+    window's recorded cursor (``Scene.time`` never advances here) and there is no
+    file writer -- so a direct ``self.add_subcaption(...)`` landed every cue at
+    t=0, which is why the wiki marks it ❌ while ``play(subcaption=...)`` is
+    fine (that path is handled in ``window/play.py``).  Record into the same
+    store, at the same cursor, and the ``.srt`` comes out in step with the video.
+    """
+    from manim import Scene
+
+    if getattr(Scene.add_subcaption, "_rtm_shimmed", False):
+        return True
+
+    def add_subcaption(self, content, duration=1, offset=0):
+        from real_time_manim import audio_track
+        from real_time_manim.window.play import record_subcaption
+
+        window = audio_track._scene_window(self)
+        if window is None:
+            raise RuntimeError(
+                "Scene.add_subcaption needs an MLWindow bound to the scene "
+                "(create one in construct() first, as every RTM scene does)")
+        start = float(getattr(window, "_cursor", 0.0) or 0.0) + float(offset or 0.0)
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            duration = 1.0
+        return record_subcaption(window, content, start, duration)
+
+    add_subcaption._rtm_shimmed = True
+    Scene.add_subcaption = add_subcaption
+    return True
+
+
 def _shim_apply_pointwise_function_to_center() -> bool:
     """1. Missing ``mobject`` argument in the super() call.
 
@@ -204,6 +241,7 @@ def apply_manim_shims(force: bool = False) -> dict:
         return {"already applied": True}
     results = {}
     for fn in (
+        _shim_scene_add_subcaption,
         _shim_apply_pointwise_function_to_center,
         _shim_movement_vmobject,
         _shim_transform_animations_target_copy,
