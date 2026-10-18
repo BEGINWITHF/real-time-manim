@@ -4,7 +4,24 @@
 
 #define MAX_BEZIER_PATHS 8192
 #define MAX_BEZIER_SEGMENTS 1024
-#define BEZIER_SAMPLES 64
+/* Samples per cubic.  This used to be a fixed 64, which is the same class of
+   bug the primitives had (draw_circle.c and friends): the count decides the
+   on-screen sagitta, so a fixed one gets coarser the bigger the curve is drawn
+   -- 64 is ~7x finer than the old 36-gon (a circle is 4 cubics = 256 chords),
+   which is why it held up much further, but it still has a ceiling (an
+   on-screen curvature radius of ~13000 px, i.e. roughly 100x zoom, reaches
+   1 px).  Worse, it also spent 64 samples on a nearly straight segment: a glyph
+   box or an axis-aligned run needs two.
+
+   The rule below picks the count from the segment's own flatness, the same
+   quantity `_small_path_chords` uses on the Python side: a cubic lies inside the
+   hull of its control points, so if they sit within `d` px of the chord the
+   n-sample polyline deviates from the curve by about 3d/(4n^2).  Solving that
+   for `BEZIER_FLATNESS_PX` gives the count, so the shape drawn is smooth to a
+   quarter of a pixel at ANY size, and a flat segment costs 8 samples. */
+#define BEZIER_SAMPLE_MIN 8
+#define BEZIER_SAMPLE_MAX 256
+#define BEZIER_FLATNESS_PX 0.25f
 /* Segments live in one shared pool and a path only stores its offset, so a
    path costs ~1 KB instead of 32 KB.  The old layout was one inline
    CubicSeg[1024] per path, which capped the path list at 512 -- and a
@@ -41,7 +58,7 @@ static BezierPathObj bezier_paths[MAX_BEZIER_PATHS];
 static CubicSeg g_seg_pool[MAX_BEZIER_SEG_POOL];
 static int bezier_path_count = 0;
 static int g_seg_pool_used = 0;
-static float g_fill_pts[MAX_BEZIER_SEGMENTS * BEZIER_SAMPLES + 1][2];
+static float g_fill_pts[MAX_BEZIER_SEGMENTS * BEZIER_SAMPLE_MAX + 1][2];
 
 #define BP_SEG(bp, i) (g_seg_pool[(bp)->seg_start + (i)])
 
@@ -112,8 +129,37 @@ __declspec(dllexport) void AddBezierPath(
     DrawCmd_Push(CMD_BEZIER, cmd_index);
 }
 
-static void sample_cubic(const CubicSeg *s, float t, float *ox, float *oy) {
-    float u = 1.0f - t;
+/* How far the control points sit from the chord p0->p3, in pixels: the
+   "flatness" that `bezier_samples` turns into a sample count. */
+static float bezier_flatness(const CubicSeg *s) {
+    float dx = s->px[3] - s->px[0], dy = s->py[3] - s->py[0];
+    float len = sqrtf(dx * dx + dy * dy);
+    float d1, d2;
+    if (len < 1e-6f) {
+        /* A segment with coincident endpoints: measure from p0 instead. */
+        float ox = s->px[1] - s->px[0], oy = s->py[1] - s->py[0];
+        d1 = sqrtf(ox * ox + oy * oy);
+        ox = s->px[2] - s->px[0];
+        oy = s->py[2] - s->py[0];
+        d2 = sqrtf(ox * ox + oy * oy);
+    } else {
+        d1 = fabsf(dx * (s->py[0] - s->py[1]) - (s->px[0] - s->px[1]) * dy) / len;
+        d2 = fabsf(dx * (s->py[0] - s->py[2]) - (s->px[0] - s->px[2]) * dy) / len;
+    }
+    return d1 > d2 ? d1 : d2;
+}
+
+/* Samples to draw one cubic with, so the polyline stays within
+   `BEZIER_FLATNESS_PX` of the curve (see the note at BEZIER_SAMPLE_MIN). */
+static int bezier_samples(const CubicSeg *s) {
+    float d = bezier_flatness(s);
+    int n = (int)ceilf(sqrtf(3.0f * d / (4.0f * BEZIER_FLATNESS_PX)));
+    if (n < BEZIER_SAMPLE_MIN) n = BEZIER_SAMPLE_MIN;
+    if (n > BEZIER_SAMPLE_MAX) n = BEZIER_SAMPLE_MAX;
+    return n;
+}
+
+static void sample_cubic(const CubicSeg *s, float t, float *ox, float *oy) {    float u = 1.0f - t;
     float u2 = u * u, u3 = u2 * u;
     float t2 = t * t, t3 = t2 * t;
     *ox = u3 * s->px[0] + 3.0f * u2 * t * s->px[1] + 3.0f * u * t2 * s->px[2] + t3 * s->px[3];
@@ -166,7 +212,7 @@ static void tessellate_stroke(BezierPathObj *bp) {
 
     for (int si = 0; si <= full_segs && si < total_segs; si++) {
         const CubicSeg *s = &BP_SEG(bp, si);
-        int n = BEZIER_SAMPLES;
+        int n = bezier_samples(s);
         int end_n = (si == full_segs && partial_t > 0.001f) ? (int)(partial_t * n + 0.5f) : n;
         if (end_n < 1) end_n = 1;
         int start_i = (si == 0) ? 1 : 0;
@@ -234,7 +280,7 @@ static void tessellate_stroke(BezierPathObj *bp) {
 static float g_cross_x[4096];
 static int g_cross_dir[4096];
 
-static int g_pt_sub[ MAX_BEZIER_SEGMENTS * BEZIER_SAMPLES + 1 ];
+static int g_pt_sub[ MAX_BEZIER_SEGMENTS * BEZIER_SAMPLE_MAX + 1 ];
 
 /* --- fill helpers -------------------------------------------------------
    The scanline below used to emit TWO TRIANGLES PER COVERED PIXEL (6
@@ -384,12 +430,13 @@ static void tessellate_fill(BezierPathObj *bp) {
 
         for (int si = start; si < end; si++) {
             const CubicSeg *seg = &BP_SEG(bp, si);
-            for (int i = 0; i < BEZIER_SAMPLES; i++) {
-                float t = (float)i / (float)BEZIER_SAMPLES;
+            int sn = bezier_samples(seg);
+            for (int i = 0; i < sn; i++) {
+                float t = (float)i / (float)sn;
                 sample_cubic(seg, t, &g_fill_pts[total_pts][0], &g_fill_pts[total_pts][1]);
                 g_pt_sub[total_pts] = s;
                 total_pts++;
-                if (total_pts >= MAX_BEZIER_SEGMENTS * BEZIER_SAMPLES) goto done_sample_all;
+                if (total_pts >= MAX_BEZIER_SEGMENTS * BEZIER_SAMPLE_MAX) goto done_sample_all;
             }
         }
     }
