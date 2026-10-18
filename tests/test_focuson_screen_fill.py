@@ -53,15 +53,42 @@ def _load():
     if not os.path.exists(DLL_PATH):
         pytest.skip("vulkan_core.dll not built")
     try:
-        d = ctypes.CDLL(DLL_PATH)
+        # Named `dll` on purpose: tools/check_bindings.py only recognises a
+        # binding written as `<...>dll.<Symbol>.argtypes = [...]`, and this
+        # module loads its own handle instead of going through MLWindow.
+        dll = ctypes.CDLL(DLL_PATH)
     except OSError as exc:          # pragma: no cover - non-Windows CI
         pytest.skip("vulkan_core.dll cannot be loaded: %s" % exc)
-    # default restype is c_int; these probes return unsigned/count values
-    if hasattr(d, "RtmTest_VertexCount"):
-        d.RtmTest_VertexCount.restype = ctypes.c_uint
-    if hasattr(d, "RtmTest_ReadVertex"):
-        d.RtmTest_ReadVertex.restype = ctypes.c_int
-    return d
+    # This module loads its OWN handle, so every function it touches needs its
+    # signature here: ctypes assumes `int` for a function with no `argtypes`
+    # (truncating pointer arguments on Win64) and a signed `int` for the return.
+    if hasattr(dll, "RtmTest_VertexCount"):
+        dll.RtmTest_VertexCount.restype = ctypes.c_uint
+        dll.RtmTest_VertexCount.argtypes = []
+    if hasattr(dll, "RtmTest_ReadVertex"):
+        dll.RtmTest_ReadVertex.restype = ctypes.c_int
+        dll.RtmTest_ReadVertex.argtypes = [ctypes.c_int,
+                                           ctypes.POINTER(ctypes.c_float)]
+    if hasattr(dll, "RtmTest_ResetFrame"):
+        dll.RtmTest_ResetFrame.restype = None
+        dll.RtmTest_ResetFrame.argtypes = []
+    if hasattr(dll, "RtmTest_SetSurfaceSize"):
+        dll.RtmTest_SetSurfaceSize.restype = None
+        dll.RtmTest_SetSurfaceSize.argtypes = [ctypes.c_uint, ctypes.c_uint]
+    dll.AddBezierPath.restype = None
+    dll.AddBezierPath.argtypes = [
+        ctypes.POINTER(ctypes.c_float), ctypes.c_int,          # points, count
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,              # stroke rgb
+        ctypes.c_float,                                        # stroke width
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,              # fill rgb
+        ctypes.c_float, ctypes.c_float,                        # fill opacity, progress
+        ctypes.c_int, ctypes.c_int, ctypes.c_float,            # stroke/fill on, alpha
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,              # gradient stop 2
+        ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,  # axis
+    ]
+    dll.BuildVerticesFromBezierPaths.restype = None
+    dll.BuildVerticesFromBezierPaths.argtypes = []
+    return dll
 
 
 def _call(dll, name, *args):
