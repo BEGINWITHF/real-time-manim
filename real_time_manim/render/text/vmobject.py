@@ -6,7 +6,7 @@ before the points reach native."""
 
 import ctypes
 import math
-from real_time_manim.render.util import manim_to_screen, get_opacity, point_path_bounds, shaded_fill_rgb, shaded_fill_gradient
+from real_time_manim.render.util import get_opacity, point_path_bounds, shaded_fill_rgb, shaded_fill_gradient, screen_projector
 
 
 def _black_fill_is_real(mob):
@@ -408,11 +408,12 @@ class VMobjectMixin:
                 so_arr = smooth_so
 
             coords = (ctypes.c_float * (len(raw_pts) * 2))()
+            _project = screen_projector(w, h)
             for i in range(len(raw_pts)):
                 x0, y0 = raw_pts[i]
                 if parent_offset is not None:
                     x0 += parent_offset[0]; y0 += parent_offset[1]
-                sx, sy = manim_to_screen(x0, y0, w, h)
+                sx, sy = _project(x0, y0)
                 coords[i * 2] = sx
                 coords[i * 2 + 1] = sy
 
@@ -443,27 +444,37 @@ class VMobjectMixin:
                 sri = int(sr * 255 * a)
                 sgi = int(sg * 255 * a)
                 sbi = int(sb * 255 * a)
+                _project = screen_projector(w, h)
                 for i in range(len(pts) - 1):
                     px0, py0 = float(pts[i][0]), float(pts[i][1])
                     px1, py1 = float(pts[i+1][0]), float(pts[i+1][1])
                     if parent_offset is not None:
                         px0 += parent_offset[0]; py0 += parent_offset[1]
                         px1 += parent_offset[0]; py1 += parent_offset[1]
-                    sx0, sy0 = manim_to_screen(px0, py0, w, h)
-                    sx1, sy1 = manim_to_screen(px1, py1, w, h)
+                    sx0, sy0 = _project(px0, py0)
+                    sx1, sy1 = _project(px1, py1)
                     self._emit_stroke(sx0, sy0, sx1, sy1, sw, sri, sgi, sbi, a)
                 return
             cx, cy, _ = mob.get_center()
             cos_a = math.cos(rot)
             sin_a = math.sin(rot)
-            flat = []
+            # One projection for every point of this path (see
+            # screen_projector): the per-point call re-resolved the viewport and
+            # the frame scale each time and was the single hottest thing in a
+            # text-heavy frame.
+            _project = screen_projector(w, h)
+            # Preallocated rather than a Python list: this loop runs once per
+            # point and appended three floats each time (measured 1.05M appends
+            # per 150 frames of a three-Text scene).  The consumers only index
+            # it, so a ctypes array is both the destination and the result.
+            flat = (ctypes.c_float * (len(pts) * 3))()
             grow_scale = getattr(mob, '_grow_scale', 1.0)
             grow_pt = getattr(mob, '_grow_point', None)
             # Approach-A baseline shift, set on text characters at draw time so
             # a descender-heavy word is lowered onto its shared baseline without
             # ever mutating the mobject's points (no positional jitter).
             b_dy = float(getattr(mob, '_baseline_dy', 0.0) or 0.0)
-            for p in pts:
+            for pi, p in enumerate(pts):
                 px, py = p[0], p[1]
                 pz = float(p[2]) if len(p) > 2 else 0.0
                 if grow_scale != 1.0 and grow_pt is not None:
@@ -481,10 +492,10 @@ class VMobjectMixin:
                 # VMobject (a Surface collapsed into thin stray strips).  native
                 # AddBezierPath reads stride-3 points but only x,y, so the third
                 # slot stays 0 here.
-                sx, sy = manim_to_screen(px, py, w, h, pz)
-                flat.append(sx)
-                flat.append(sy)
-                flat.append(0.0)
+                sx, sy = _project(px, py, pz)
+                flat[pi * 3] = sx
+                flat[pi * 3 + 1] = sy
+                flat[pi * 3 + 2] = 0.0
 
         n = len(flat) // 3
         if n < 8:

@@ -5,22 +5,54 @@ import math
 
 import numpy as np
 
+# Resolved once: `manim_to_screen` runs once per point (cProfile: 342k calls for
+# 150 frames of a three-Text scene) and used to run two `from ... import ...`
+# statements per call, i.e. the import machinery thousands of times a frame.
+try:
+    from real_time_manim.camera_state import get_viewport as _get_viewport
+    from real_time_manim.camera_state import screen_scale as _screen_scale
+except Exception:                                  # pragma: no cover
+    _get_viewport = None
+    _screen_scale = None
+
 
 def manim_to_screen(x, y, w=800, h=600, z=0.0):
     # Phase 5: when the scene's camera exposes a frame (MovingCamera /
     # MovingCameraScene) that viewport is published per frame and every sender
     # funnels through here, so the camera finally affects what is drawn.
-    try:
-        from real_time_manim.camera_state import get_viewport, screen_scale
-        _vp = get_viewport()
-        s = screen_scale(w, h)
-    except Exception:                            # pragma: no cover
+    if _get_viewport is None:
         _vp = None
         s = float(h) / 8.0
+    else:
+        _vp = _get_viewport()
+        s = _screen_scale(w, h)
     if _vp is not None:
         return _vp.project(x, y, w, h, z)
     cx, cy = w / 2.0, h / 2.0
     return float(cx + x * s), float(cy - y * s)
+
+
+def screen_projector(w, h):
+    """A per-frame ``project(x, y, z=0) -> (sx, sy)`` (see `manim_to_screen`).
+
+    ``manim_to_screen`` re-resolves the viewport and the frame scale on *every*
+    call, and a sender calls it once per POINT: cProfile on a three-Text scene
+    measured 342k calls per 150 frames, ~30 % of the frame's CPU, all of them
+    recomputing the same two frame-constant values.  Building one projector per
+    mobject (or per frame) removes that.  The arithmetic and its order are
+    exactly ``manim_to_screen``'s, so the mapped pixels are bit-identical.
+    """
+    if _get_viewport is None:                        # pragma: no cover
+        s = float(h) / 8.0
+        cx, cy = w / 2.0, h / 2.0
+        return lambda x, y, z=0.0: (float(cx + x * s), float(cy - y * s))
+    _vp = _get_viewport()
+    if _vp is not None:
+        # A camera viewport (MovingCamera / 3D) projects per point itself.
+        return lambda x, y, z=0.0: _vp.project(x, y, w, h, z)
+    s = _screen_scale(w, h)
+    cx, cy = w / 2.0, h / 2.0
+    return lambda x, y, z=0.0: (float(cx + x * s), float(cy - y * s))
 
 
 def rotate_point(x, y, cx, cy, angle):

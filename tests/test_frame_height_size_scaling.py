@@ -95,3 +95,41 @@ def test_positions_and_sizes_scale_together_under_override():
     finally:
         config.frame_width, config.frame_height = orig_w, orig_h
         camera_state.set_viewport(None)
+
+
+def test_screen_projector_is_bit_identical_to_manim_to_screen():
+    """The senders' fast path must not move a single pixel.
+
+    `_send_vmobject`/`_send_text_write` used to call `manim_to_screen` once per
+    POINT (cProfile: 342k calls per 150 frames of a three-Text scene, ~30 % of
+    the frame) and now build one `screen_projector` per mobject instead.  The
+    whole point of that trade is that it changes nothing: same viewport, same
+    scale, same expression order, so the mapped coordinates are identical bit
+    for bit -- in the affine case, and under a camera viewport too.
+    """
+    from real_time_manim.render.util import manim_to_screen, screen_projector
+
+    pts = [(0.0, 0.0, 0.0), (1.25, -0.5, 0.0), (-7.111111, 3.9, 0.0),
+           (0.1, 0.2, 0.0), (-0.0009765625, 7.999999, 0.0)]
+
+    def compare(w, h):
+        project = screen_projector(w, h)
+        for x, y, z in pts:
+            assert project(x, y, z) == manim_to_screen(x, y, w, h, z), (x, y, z)
+
+    orig_w, orig_h = config.frame_width, config.frame_height
+    try:
+        camera_state.set_viewport(None)
+        for w, h in ((1920, 1080), (1280, 720), (854, 480)):
+            compare(w, h)
+        # A frame override must reach the projector too (it is read once).
+        config.frame_height = 4.0
+        config.frame_width = 4.0 * 16 / 9
+        compare(1920, 1080)
+        # ... and so must a camera viewport, which projects per point.
+        config.frame_height, config.frame_width = orig_h, orig_w
+        camera_state.set_viewport(Viewport((0.3, -0.2), 5.0))
+        compare(1920, 1080)
+    finally:
+        config.frame_width, config.frame_height = orig_w, orig_h
+        camera_state.set_viewport(None)

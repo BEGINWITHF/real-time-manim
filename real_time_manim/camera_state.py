@@ -22,12 +22,32 @@ import math
 
 import numpy as np
 
+# manim's global config, imported once.  `screen_scale` runs once per POINT
+# (cProfile: 342k calls for 150 frames of a three-Text scene, ~40 ms/frame with
+# the import inside the function), so a per-call `from manim import config` was
+# paying the import machinery thousands of times a frame.  The values are still
+# read live below, so a scene that overrides config.frame_* still sees it.
+try:
+    from manim import config as _manim_config
+except Exception:                                  # pragma: no cover - no manim
+    _manim_config = None
+
 # The frame's default height in manim units -- what manim's own Camera uses and
 # what the pre-Phase-5 conversion hard-coded.
 DEFAULT_FRAME_HEIGHT = 8.0
 
 # Published for the current frame; None means "use the default fixed frame".
 _viewport = None
+
+
+def _frame_size():
+    """``(frame_width, frame_height)`` from manim, or ``(0.0, 0.0)`` without it."""
+    if _manim_config is None:
+        return 0.0, 0.0
+    try:
+        return float(_manim_config.frame_width), float(_manim_config.frame_height)
+    except Exception:                              # pragma: no cover - no manim
+        return 0.0, 0.0
 
 
 def screen_scale(w, h, frame_height=None):
@@ -58,17 +78,12 @@ def screen_scale(w, h, frame_height=None):
     means the default full frame.  A zoomed viewport therefore scales up by
     ``config.frame_height / frame_height``, matching manim's MovingCamera.
     """
-    try:
-        from manim import config
-        fw = float(config.frame_width)
-        fh = float(config.frame_height)
-        if fw > 0.0:
-            s = float(w) / fw
-            if frame_height is not None and fh > 0.0:
-                s *= fh / float(frame_height)
-            return s
-    except Exception:                              # pragma: no cover - no manim
-        pass
+    fw, fh = _frame_size()
+    if fw > 0.0:
+        s = float(w) / fw
+        if frame_height is not None and fh > 0.0:
+            s *= fh / float(frame_height)
+        return s
     # manim unavailable: keep the pre-existing pixel-aspect derivation.
     return float(h) / (float(frame_height) if frame_height else DEFAULT_FRAME_HEIGHT)
 

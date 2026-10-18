@@ -4,7 +4,7 @@
 outline, with the write/type animation channels applied."""
 
 import ctypes
-from real_time_manim.render.util import manim_to_screen
+from real_time_manim.render.util import manim_to_screen, screen_projector
 from real_time_manim.animations import get_anim_opacity
 
 
@@ -145,6 +145,10 @@ class GlyphMixin:
         default_alpha = letter_alphas.get(len(letter_alphas) - 1, 1.0)
         grow_scale = getattr(mob, '_grow_scale', 1.0)
         grow_pt = getattr(mob, '_grow_point', None)
+        # One projection per frame for every glyph (see screen_projector): this
+        # writer converts each glyph's points, so the per-point lookup was the
+        # same hot path as _send_vmobject's.
+        _project = screen_projector(w, h)
         for i, sub in enumerate(mob.submobjects):
             sub_alpha = letter_alphas.get(i, default_alpha)
             if sub_alpha <= 0.001:
@@ -173,20 +177,20 @@ class GlyphMixin:
                 off_y = float(parent_offset[1])
             else:
                 off_x = off_y = 0.0
-            flat = []
-            for p in pts:
+            flat = (ctypes.c_float * (len(pts) * 3))()
+            for pi, p in enumerate(pts):
                 px, py = float(p[0]) + off_x, float(p[1]) + off_y
                 if grow_scale != 1.0 and grow_pt is not None:
                     px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                     py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                sx, sy = manim_to_screen(px, py + b_dy, w, h, p[2])
-                flat.append(sx)
-                flat.append(sy)
-                flat.append(0.0)
+                sx, sy = _project(px, py + b_dy, p[2])
+                flat[pi * 3] = sx
+                flat[pi * 3 + 1] = sy
+                flat[pi * 3 + 2] = 0.0
 
-            n = len(flat) // 3
+            n = len(pts)
             n = (n // 4) * 4
-            arr = (ctypes.c_float * len(flat))(*flat)
+            arr = flat
 
             stroke_progress = min(1.0, sub_alpha * 2.5)
             stroke_fade = max(0.0, 1.0 - max(0.0, (sub_alpha - 0.4) * 2.5))
