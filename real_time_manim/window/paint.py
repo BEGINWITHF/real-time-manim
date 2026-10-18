@@ -24,7 +24,7 @@ from real_time_manim.camera_state import (
 )
 from manim.mobject.text.tex_mobject import MathTexPart
 
-from real_time_manim.render.util import fill_gradient_stops
+from real_time_manim.render.util import fill_gradient_stops, path_extent
 from real_time_manim.window.paint_order import (
     NATIVE_MAX_POLYGON_VERTS,
     container_subs,
@@ -270,11 +270,18 @@ class PaintMixin:
                 font_size = mob._font_size
             except Exception:
                 continue
-            try:
-                bottom = mob.get_bottom()[1]
-                top = mob.get_top()[1]
-            except Exception:
-                continue
+            # `get_bottom`/`get_top` each walk the whole boundary (and rebuild
+            # it per dimension); one `path_extent` gives the same min/max y
+            # exactly -- see render/util.py.
+            ext = path_extent(mob)
+            if ext is not None:
+                bottom, top = ext[0][1], ext[1][1]
+            else:
+                try:
+                    bottom = mob.get_bottom()[1]
+                    top = mob.get_top()[1]
+                except Exception:
+                    continue
             roots.append({'id': id(mob), 'font': font_size,
                           'b': bottom, 't': top})
         ids = set()

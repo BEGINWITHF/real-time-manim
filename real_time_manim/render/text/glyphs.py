@@ -8,6 +8,7 @@ import ctypes
 import numpy as np
 
 from real_time_manim.render.util import (affine_frame_map, manim_to_screen,
+                                         path_center, path_extent,
                                          screen_projector,
                                          store_screen_points)
 from real_time_manim.animations import get_anim_opacity
@@ -234,7 +235,7 @@ class GlyphMixin:
     def _send_text_bitmap(self, mob, w, h, alpha=1.0):
         base_r, base_g, base_b = 255, 255, 255
         fade_scale = getattr(mob, '_fade_scale', 1.0)
-        cx, cy = mob.get_center()[0], mob.get_center()[1]
+        cx, cy, _ = path_center(mob)      # one walk, not two (get_center() twice)
         try:
             c = mob.get_color()
             r, g, b = int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)
@@ -275,11 +276,14 @@ class GlyphMixin:
         text_str = mob.text if hasattr(mob, 'text') else str(mob)
         font_size = mob._font_size if hasattr(mob, '_font_size') else 48.0
         font_px = font_size * (h / 480.0)
-        try:
-            bottom_y = mob.get_bottom()[1]
-            cy = bottom_y
-        except Exception:
-            cy = mob.get_center()[1]
+        ext = path_extent(mob)            # get_bottom()[1] in one cheap walk
+        if ext is not None:
+            cy = ext[0][1]
+        else:
+            try:
+                cy = mob.get_bottom()[1]
+            except Exception:
+                cy = mob.get_center()[1]
         sx, sy = manim_to_screen(cx, cy, w, h)
         self.dll.AddText(sx, sy, base_r, base_g, base_b, font_px, 1.0, text_str.encode('utf-8'), alpha)
 

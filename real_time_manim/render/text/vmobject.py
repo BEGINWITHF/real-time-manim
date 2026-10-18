@@ -10,7 +10,8 @@ import math
 import numpy as np
 
 from real_time_manim.render.util import (affine_frame_map, get_opacity,
-                                         point_path_bounds, shaded_fill_rgb,
+                                         path_center, point_path_bounds,
+                                         shaded_fill_rgb,
                                          shaded_fill_gradient,
                                          screen_projector,
                                          store_screen_points)
@@ -335,7 +336,7 @@ class VMobjectMixin:
             if about is not None:
                 cx, cy = float(about[0]), float(about[1])
             else:
-                cx, cy, _ = mob.get_center()
+                cx, cy, _ = path_center(mob)
             sr, sg, sb, sa = 1, 1, 1, 1
             try:
                 srgbas = mob.get_stroke_rgbas()
@@ -462,7 +463,7 @@ class VMobjectMixin:
                     sx1, sy1 = _project(px1, py1)
                     self._emit_stroke(sx0, sy0, sx1, sy1, sw, sri, sgi, sbi, a)
                 return
-            cx, cy, _ = mob.get_center()
+            cx, cy, _ = path_center(mob)
             cos_a = math.cos(rot)
             sin_a = math.sin(rot)
             # Preallocated rather than a Python list: this loop ran once per
