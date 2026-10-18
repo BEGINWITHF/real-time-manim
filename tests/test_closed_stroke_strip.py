@@ -210,6 +210,31 @@ def test_strip_alpha_carries_the_fade(renderer, factory, method):
         % (method, [s["rgb"] for s in strips], expected_rgb))
 
 
+def test_a_long_polygon_is_split_into_native_sized_polygons(renderer):
+    """A ring with more than `MAX_POLYGON_VERTS` must still be filled.
+
+    Native's `AddPolygon` returns without emitting anything when handed more
+    than 64 vertices, so `RegularPolygon(n=100)` (or any many-point `Polygon`)
+    used to have NO fill at all -- silently.  A complete fill is fanned from the
+    centroid of the vertices it is given, so consecutive runs sharing their two
+    boundary vertices tile the ring; the split is what this pins.
+    """
+    from manim import RegularPolygon
+
+    mob = RegularPolygon(n=100, radius=2.0, fill_opacity=0.5)
+    mob._vulkan_progress = 1.0
+    verts = mob.get_vertices()
+    assert len(verts) > 64
+    _counts, calls = _capture(renderer, renderer._send_polygon, mob, verts, 1.0)
+    polys = [a for name, a in calls if name == "AddPolygon"]
+    assert len(polys) >= 2, (
+        "a %d-vertex ring emitted %d AddPolygon calls; native drops any single "
+        "call above 64 vertices" % (len(verts), len(polys)))
+    for a in polys:
+        n_verts = int(a[9])            # (x, y, r, g, b, ..., vert_count, verts, ...)
+        assert 3 <= n_verts <= 64, (n_verts, len(verts))
+
+
 def test_curve_segments_keeps_the_on_screen_sagitta_constant():
     """The rule behind the fix: identity below the calibration radius, then ∝√r.
 
