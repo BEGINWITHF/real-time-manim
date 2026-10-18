@@ -1,9 +1,8 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
 from real_time_manim.animations.base import (
-    Animation, set_anim_opacity, get_anim_opacity, place_cursor_after,
+    Animation, set_anim_opacity, place_cursor_after,
 )
-from manim import Text, VGroup
-from real_time_manim.rate_functions import _smooth
+from manim import Text
 
 
 class TextDecimalNumber(Text):
@@ -42,16 +41,6 @@ class TextDecimalNumber(Text):
         self.submobjects = clone.submobjects
         self.move_to(center)
         return self
-
-    def update_submobject_list(self, index):
-        pass
-
-    @classmethod
-    def _build_cache(cls, font_size):
-        cache = {}
-        for ch in "0123456789.-+":
-            cache[ch] = Text(ch, font_size=font_size)
-        cls._digit_cache[font_size] = cache
 
     def update_submobject_list(self, index):
         for mobj in self.all_submobs[:index]:

@@ -8,7 +8,6 @@ import ctypes
 import numpy as np
 
 from real_time_manim.render.util import (affine_frame_map, manim_to_screen,
-                                         path_center, path_extent,
                                          screen_projector,
                                          store_screen_points)
 from real_time_manim.animations import get_anim_opacity
@@ -232,60 +231,6 @@ class GlyphMixin:
                 sr, sg, sb, 0.0, 0.0, 0.0, 0.0,
             )
 
-    def _send_text_bitmap(self, mob, w, h, alpha=1.0):
-        base_r, base_g, base_b = 255, 255, 255
-        fade_scale = getattr(mob, '_fade_scale', 1.0)
-        cx, cy, _ = path_center(mob)      # one walk, not two (get_center() twice)
-        try:
-            c = mob.get_color()
-            r, g, b = int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)
-            if r > 0 or g > 0 or b > 0:
-                base_r, base_g, base_b = r, g, b
-        except Exception:
-            pass
-        if base_r == 255 and base_g == 255 and base_b == 255:
-            try:
-                for fm in mob.family_members_with_points():
-                    srgba = fm.stroke_rgbas
-                    if len(srgba) > 0:
-                        sr, sg, sb = float(srgba[0][0]), float(srgba[0][1]), float(srgba[0][2])
-                        if sr > 0 or sg > 0 or sb > 0:
-                            base_r, base_g, base_b = int(sr * 255), int(sg * 255), int(sb * 255)
-                            break
-            except Exception:
-                pass
-        if base_r == 0 and base_g == 0 and base_b == 0:
-            try:
-                srgbas = mob.get_stroke_rgbas()
-                if len(srgbas) > 0:
-                    sr, sg, sb = float(srgbas[0][0]), float(srgbas[0][1]), float(srgbas[0][2])
-                    base_r, base_g, base_b = int(sr * 255), int(sg * 255), int(sb * 255)
-            except Exception:
-                pass
-        if base_r == 0 and base_g == 0 and base_b == 0:
-            try:
-                frgbas = mob.get_fill_rgbas()
-                if len(frgbas) > 0:
-                    fr, fg, fb = float(frgbas[0][0]), float(frgbas[0][1]), float(frgbas[0][2])
-                    base_r, base_g, base_b = int(fr * 255), int(fg * 255), int(fb * 255)
-            except Exception:
-                pass
-        if base_r == 0 and base_g == 0 and base_b == 0:
-            base_r, base_g, base_b = 255, 255, 255
-
-        text_str = mob.text if hasattr(mob, 'text') else str(mob)
-        font_size = mob._font_size if hasattr(mob, '_font_size') else 48.0
-        font_px = font_size * (h / 480.0)
-        ext = path_extent(mob)            # get_bottom()[1] in one cheap walk
-        if ext is not None:
-            cy = ext[0][1]
-        else:
-            try:
-                cy = mob.get_bottom()[1]
-            except Exception:
-                cy = mob.get_center()[1]
-        sx, sy = manim_to_screen(cx, cy, w, h)
-        self.dll.AddText(sx, sy, base_r, base_g, base_b, font_px, 1.0, text_str.encode('utf-8'), alpha)
 
 
     def _send_text_stroke(self, mob, a, w, h, parent_offset=None):

@@ -1,4 +1,4 @@
-from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity, get_anim_rotation, set_anim_rotation
+from real_time_manim.animations.base import Animation, get_anim_rotation, set_anim_rotation
 import numpy as np
 import math
 from manim import OUT
@@ -41,11 +41,6 @@ class Rotating(Animation):
         self._about_point = about_point
         self._about_edge = about_edge
         super().__init__(mobject, run_time=run_time, rate_func=rate_func or _linear, **kwargs)
-
-    def _is_3d_axis(self):
-        if self._axis is None:
-            return False
-        return not np.allclose(np.array(self._axis, dtype=float), OUT)
 
     def _should_bake(self):
         """Bake the rotation into the point arrays, per frame.

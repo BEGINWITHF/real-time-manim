@@ -108,21 +108,6 @@ def window_rect(hwnd):
     return int(rc.left), int(rc.top), int(rc.right), int(rc.bottom)
 
 
-def client_rect_on_screen(hwnd):
-    """``(x, y, w, h)`` of the client area in screen pixels, or ``None``."""
-    if user32 is None or not hwnd:
-        return None
-    import ctypes
-    import ctypes.wintypes as wt
-
-    rc = wt.RECT()
-    if not user32.GetClientRect(hwnd, ctypes.byref(rc)):
-        return None
-    pt = wt.POINT(0, 0)
-    user32.ClientToScreen(hwnd, ctypes.byref(pt))
-    return int(pt.x), int(pt.y), int(rc.right - rc.left), int(rc.bottom - rc.top)
-
-
 def force_foreground(hwnd):
     """Bring ``hwnd`` to the front even when another app owns the foreground.
 

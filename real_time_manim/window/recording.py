@@ -1,6 +1,8 @@
 """Screenshots and video capture.
 
-Also carries the BMP headers written by `screenshot_printwindow`."""
+Pixels come from the Vulkan swapchain readback (`screenshot`, the fast-record
+pipe and the live `start_record` worker); the BMP headers below are what the
+fallback path parses when a DLL has no raw readback export."""
 
 import ctypes
 import os
@@ -127,61 +129,6 @@ class RecordingMixin:
         if fn is not None:
             self._readback_slot = int(fn())
 
-    def screenshot_printwindow(self, path):
-        if sys.platform != "win32":
-            # macOS: no GDI — the swapchain framebuffer readback is the
-            # reliable capture path (TCC-free, immune to occlusion).
-            return bool(self.screenshot(path))
-        import ctypes.wintypes as wt
-        user32 = ctypes.windll.user32
-        gdi32 = ctypes.windll.gdi32
-        hwnd = user32.FindWindowW(None, "Real Time Manim")
-        if not hwnd:
-            hwnd = self.hwnd
-            if not hwnd:
-                return False
-
-        # Client area dimensions
-        rc = wt.RECT()
-        user32.GetClientRect(hwnd, ctypes.byref(rc))
-        w, h = rc.right - rc.left, rc.bottom - rc.top
-
-        # Client area screen position
-        pt = wt.POINT(0, 0)
-        user32.ClientToScreen(hwnd, ctypes.byref(pt))
-        x, y = pt.x, pt.y
-
-        # Capture from screen at client area position
-        hdc_screen = user32.GetDC(None)
-        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
-        hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
-        gdi32.SelectObject(hdc_mem, hbitmap)
-        gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, 0x00CC0020)  # SRCCOPY
-
-        bi = BITMAPINFOHEADER()
-        bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bi.biWidth = w
-        bi.biHeight = -h
-        bi.biPlanes = 1
-        bi.biBitCount = 24
-        bi.biCompression = 0
-        row_bytes = ((w * 3 + 3) & ~3)
-        buf = (ctypes.c_ubyte * (row_bytes * h))()
-        gdi32.GetDIBits(hdc_mem, hbitmap, 0, h, buf, ctypes.byref(bi), 0)
-        bfh = BITMAPFILEHEADER()
-        bfh.bfType = 0x4D42
-        bfh.bfOffBits = ctypes.sizeof(BITMAPFILEHEADER) + ctypes.sizeof(BITMAPINFOHEADER)
-        bfh.bfSize = bfh.bfOffBits + row_bytes * h
-        path_b = path.encode('utf-8') if isinstance(path, str) else path
-        hdr_buf = ctypes.string_at(ctypes.addressof(bfh), ctypes.sizeof(bfh)) + \
-                  ctypes.string_at(ctypes.addressof(bi), ctypes.sizeof(bi))
-        with open(path_b, 'wb') as f:
-            f.write(hdr_buf)
-            f.write(ctypes.string_at(ctypes.addressof(buf), len(buf)))
-        gdi32.DeleteObject(hbitmap)
-        gdi32.DeleteDC(hdc_mem)
-        user32.ReleaseDC(None, hdc_screen)
-        return True
 
     def enable_fast_record(self, path, fps=60, segment=None, hidden=True, count_only=False):
         """Enable fast offline recording.
@@ -564,19 +511,6 @@ class RecordingMixin:
         if os.path.isdir(frame_dir):
             shutil.rmtree(frame_dir, ignore_errors=True)
 
-    def _get_screen_bbox(self):
-        if sys.platform != "win32":
-            return None
-        import ctypes.wintypes as wt
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW(None, "Real Time Manim")
-        if not hwnd:
-            return None
-        rc = wt.RECT()
-        user32.GetClientRect(hwnd, ctypes.byref(rc))
-        pt = wt.POINT(0, 0)
-        user32.ClientToScreen(hwnd, ctypes.byref(pt))
-        return (pt.x, pt.y, pt.x + rc.right, pt.y + rc.bottom)
 
     def _capture_frame(self):
         pass
