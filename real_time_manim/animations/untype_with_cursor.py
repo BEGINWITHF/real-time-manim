@@ -124,6 +124,15 @@ class UntypeWithCursor(Animation):
         if index > 0:
             last_visible = self.all_submobs[index - 1]
             place_cursor_after(self.cursor, last_visible, self.buff)
+        elif self.all_submobs:
+            # All glyphs are gone: manim's `UntypeWithCursor` (inheriting
+            # `TypeWithCursor.update_submobject_list`) still moves the cursor
+            # back onto the FIRST glyph -- `else: self.cursor.move_to(
+            # self.all_submobs[0])`.  RTM skipped that branch, so after the
+            # last letter ("Deleting" -> "") the cursor stayed parked to the
+            # right of where 'D' had been (wiki 03-动画/文字与数字/
+            # 01b-带光标打字: "光标 delete 在最后一个 D 消失后没有移动").
+            self.cursor.move_to(self.all_submobs[0].get_center())
 
         if self.keep_cursor_y:
             self.cursor.move_to([

@@ -72,10 +72,16 @@ def _sub(anim, cls):
 # --------------------------------------------------------------------------- #
 
 def test_wrapped_fade_transform_parks_source_parts_down_and_restores():
-    """The source parts (reached via their real parent) must dim and restore.
+    """The key-mapped source part (reached via its real parent) must dim.
 
-    Before the fix the opacity landed only on the detached wrapper, so the
-    source stayed fully opaque for the whole crossfade.
+    CE pairs the key_map parts with ``FadeTransformPieces`` -- a per-piece
+    crossfade: each source part fades out where it stands while a COPY of its
+    partner fades in at the partner's place.  RTM used one whole-group
+    ``FadeTransform``, whose single ghost is stretched to the source's
+    bounding box: during the transition the source stayed at full strength
+    and that (wrongly sized) ghost was painted over it, so the wiki clip
+    ``03-动画/匹配变换/01-匹配变换-shapes_keymap`` showed "c" and "h" at
+    once instead of a clean crossfade into "hat".
     """
     scene = Scene()
     src = Text("cat", font_size=52)
@@ -87,15 +93,21 @@ def test_wrapped_fade_transform_parks_source_parts_down_and_restores():
     }
     anim = TransformMatchingShapes(src, tar, key_map=key_map, run_time=2.0)
     anim.begin(0.0)
-    ft = _sub(anim, FadeTransform)
 
-    # mid-crossfade: the source "c" sits at ~0.5 * (1 - alpha)
+    # per-piece crossfade, not a whole-group FadeTransform
+    assert not any(isinstance(a, FadeTransform) for a in anim._anims)
+    copies = anim._key_mapped_copies
+    assert len(copies.submobjects) == 1
+
+    # mid-crossfade: the source "c" sits at ~0.5 and its partner's copy too
     anim.interpolate(1.0)
     assert get_anim_opacity(src[0]) == pytest.approx(0.5, abs=0.05)
+    assert get_anim_opacity(copies.submobjects[0]) == pytest.approx(0.5, abs=0.05)
 
-    # near the end it must be gone
+    # near the end the source must be gone and the target copy fully in
     anim.interpolate(1.99)
     assert get_anim_opacity(src[0]) < 0.02
+    assert get_anim_opacity(copies.submobjects[0]) > 0.98
 
     # and the reset pass must restore it (CE resets before the source leaves)
     anim.interpolate(0.0)
@@ -169,6 +181,41 @@ def test_tma_cleanup_removes_the_presented_ghost(window):
 # --------------------------------------------------------------------------- #
 # 3. TMA default branch: fade-in target copy presentation
 # --------------------------------------------------------------------------- #
+
+def test_key_map_crossfade_copies_are_presented_and_removed(window):
+    """The key-mapped partner copies must be presented DURING the play.
+
+    The per-piece crossfade parks its incoming copies in a detached VGroup,
+    which the scene tree cannot reach -- without presenting them the source
+    faded out into nothing and the target popped in at clean_up.
+    """
+    scene = Scene()
+    src = Text("cat", font_size=52)
+    tar = Text("hat", font_size=52).move_to(src)
+    scene.add(src)
+    key_map = {
+        TransformMatchingShapes.get_mobject_key(src[0]):
+        TransformMatchingShapes.get_mobject_key(tar[0]),
+    }
+    anim = TransformMatchingShapes(src, tar, key_map=key_map, run_time=1.0)
+    anim.begin(0.0)
+    window.scene = scene
+    try:
+        copies = anim._key_mapped_copies
+        window._present_detached_animated([anim])
+        assert id(copies) in _family_ids(scene), (
+            "the key-mapped crossfade copies must be presented")
+        anim.interpolate(0.5)
+        assert get_anim_opacity(copies.submobjects[0]) == pytest.approx(
+            0.5, abs=0.06)
+        anim.finish()
+        anim.clean_up_from_scene(scene)
+        assert all(m is not copies for m in scene.mobjects), (
+            "clean_up must remove the presented copies again")
+        assert anim.target_mobject in scene.mobjects
+    finally:
+        window.scene = None
+
 
 def test_tma_fade_in_target_copy_is_presented_and_removed(window):
     """The unmatched target parts must fade in DURING the play.

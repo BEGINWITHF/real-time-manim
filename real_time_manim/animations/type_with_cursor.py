@@ -105,6 +105,11 @@ class TypeWithCursor(ShowIncreasingSubsets):
         if index > 0:
             last_visible = self.all_submobs[index - 1]
             place_cursor_after(self.cursor, last_visible, self.buff)
+        elif self.all_submobs:
+            # manim's `TypeWithCursor.update_submobject_list` has an else
+            # branch: with nothing typed yet the cursor sits ON the first
+            # glyph.  Without it the cursor stayed at its construction spot.
+            self.cursor.move_to(self.all_submobs[0].get_center())
 
         if self.keep_cursor_y:
             self.cursor.move_to([

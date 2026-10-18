@@ -11,23 +11,36 @@ class GrowArrow(Animation):
         self._orig_stroke_width = None
         super().__init__(arrow, run_time=run_time, **kwargs)
 
+    @staticmethod
+    def _members(mob):
+        try:
+            return list(mob.get_family())
+        except Exception:
+            return [mob]
+
     def begin(self, t):
         super().begin(t)
         mob = self.mobject
         self._grow_point = mob.get_start()
-
-        if hasattr(mob, 'get_fill_rgbas'):
+        self._orig_fill = {}
+        self._orig_stroke = {}
+        # The arrowHEAD is a submobject (`Arrow.tip`).  Only `mob`'s own rgbas
+        # were stored/lerped, and `set_color` on a Line does not reach the tip,
+        # so `GrowArrow(arrow, point_color=RED)` left the head GOLD while the
+        # shaft went red -> gold (wiki 03-动画/生长出现/01b-箭头与旋入: the
+        # last frame still had a red tip where CE has the whole arrow gold).
+        # Keep every family member's colours and lerp them all.
+        for sub in self._members(mob):
             try:
-                frgbas = mob.get_fill_rgbas()
+                frgbas = sub.get_fill_rgbas()
                 if len(frgbas) > 0:
-                    self._orig_fill = [float(frgbas[0][i]) for i in range(4)]
+                    self._orig_fill[id(sub)] = np.array(frgbas, dtype=float)
             except Exception:
                 pass
-        if hasattr(mob, 'get_stroke_rgbas'):
             try:
-                srgbas = mob.get_stroke_rgbas()
+                srgbas = sub.get_stroke_rgbas()
                 if len(srgbas) > 0:
-                    self._orig_stroke = [float(srgbas[0][i]) for i in range(4)]
+                    self._orig_stroke[id(sub)] = np.array(srgbas, dtype=float)
             except Exception:
                 pass
         if hasattr(mob, 'stroke_width'):
@@ -37,7 +50,25 @@ class GrowArrow(Animation):
         mob._grow_point = self._grow_point
         if self.point_color:
             self._pc = color_to_rgb(self.point_color)
-            mob.set_color(self.point_color)
+            for sub in self._members(mob):
+                self._set_rgb(sub, self._pc)
+
+    @staticmethod
+    def _set_rgb(sub, pc):
+        try:
+            if hasattr(sub, 'fill_rgbas') and len(sub.fill_rgbas) > 0:
+                sub.fill_rgbas[:, 0] = pc[0]
+                sub.fill_rgbas[:, 1] = pc[1]
+                sub.fill_rgbas[:, 2] = pc[2]
+        except Exception:
+            pass
+        try:
+            if hasattr(sub, 'stroke_rgbas') and len(sub.stroke_rgbas) > 0:
+                sub.stroke_rgbas[:, 0] = pc[0]
+                sub.stroke_rgbas[:, 1] = pc[1]
+                sub.stroke_rgbas[:, 2] = pc[2]
+        except Exception:
+            pass
 
     def interpolate(self, t):
         alpha = (t - self.start_time) / self.run_time if self.run_time > 0 else 1.0
@@ -48,24 +79,20 @@ class GrowArrow(Animation):
 
         mob = self.mobject
         mob._grow_scale = alpha
-        if self.point_color and self._orig_fill:
-            fr, fg, fb = self._orig_fill[0], self._orig_fill[1], self._orig_fill[2]
-            cr = self._pc[0] + (fr - self._pc[0]) * alpha
-            cg = self._pc[1] + (fg - self._pc[1]) * alpha
-            cb = self._pc[2] + (fb - self._pc[2]) * alpha
-            if hasattr(mob, 'fill_rgbas') and len(mob.fill_rgbas) > 0:
-                mob.fill_rgbas[:, 0] = cr
-                mob.fill_rgbas[:, 1] = cg
-                mob.fill_rgbas[:, 2] = cb
-        if self.point_color and self._orig_stroke:
-            fr, fg, fb = self._orig_stroke[0], self._orig_stroke[1], self._orig_stroke[2]
-            cr = self._pc[0] + (fr - self._pc[0]) * alpha
-            cg = self._pc[1] + (fg - self._pc[1]) * alpha
-            cb = self._pc[2] + (fb - self._pc[2]) * alpha
-            if hasattr(mob, 'stroke_rgbas') and len(mob.stroke_rgbas) > 0:
-                mob.stroke_rgbas[:, 0] = cr
-                mob.stroke_rgbas[:, 1] = cg
-                mob.stroke_rgbas[:, 2] = cb
+        if not self.point_color:
+            return
+        for sub in self._members(mob):
+            self._lerp_to_orig(sub, self._orig_fill.get(id(sub)),
+                               self._orig_stroke.get(id(sub)), alpha)
+
+    def _lerp_to_orig(self, sub, orig_fill, orig_stroke, alpha):
+        pc = self._pc
+        if orig_fill is not None and hasattr(sub, 'fill_rgbas') and len(sub.fill_rgbas) > 0:
+            for k in range(3):
+                sub.fill_rgbas[:, k] = pc[k] + (orig_fill[:, k] - pc[k]) * alpha
+        if orig_stroke is not None and hasattr(sub, 'stroke_rgbas') and len(sub.stroke_rgbas) > 0:
+            for k in range(3):
+                sub.stroke_rgbas[:, k] = pc[k] + (orig_stroke[:, k] - pc[k]) * alpha
 
     def finish(self):
         super().finish()
@@ -74,14 +101,23 @@ class GrowArrow(Animation):
             del mob._grow_scale
         if hasattr(mob, '_grow_point'):
             del mob._grow_point
-        if self._orig_fill and hasattr(mob, 'fill_rgbas') and len(mob.fill_rgbas) > 0:
-            mob.fill_rgbas[:, 0] = self._orig_fill[0]
-            mob.fill_rgbas[:, 1] = self._orig_fill[1]
-            mob.fill_rgbas[:, 2] = self._orig_fill[2]
-        if self._orig_stroke and hasattr(mob, 'stroke_rgbas') and len(mob.stroke_rgbas) > 0:
-            mob.stroke_rgbas[:, 0] = self._orig_stroke[0]
-            mob.stroke_rgbas[:, 1] = self._orig_stroke[1]
-            mob.stroke_rgbas[:, 2] = self._orig_stroke[2]
+        for sub in self._members(mob):
+            of = self._orig_fill.get(id(sub)) if self._orig_fill else None
+            os_ = self._orig_stroke.get(id(sub)) if self._orig_stroke else None
+            try:
+                if of is not None and hasattr(sub, 'fill_rgbas') and len(sub.fill_rgbas) > 0:
+                    sub.fill_rgbas[:, 0] = of[:, 0]
+                    sub.fill_rgbas[:, 1] = of[:, 1]
+                    sub.fill_rgbas[:, 2] = of[:, 2]
+            except Exception:
+                pass
+            try:
+                if os_ is not None and hasattr(sub, 'stroke_rgbas') and len(sub.stroke_rgbas) > 0:
+                    sub.stroke_rgbas[:, 0] = os_[:, 0]
+                    sub.stroke_rgbas[:, 1] = os_[:, 1]
+                    sub.stroke_rgbas[:, 2] = os_[:, 2]
+            except Exception:
+                pass
         if self._orig_stroke_width is not None:
             try:
                 mob.stroke_width = self._orig_stroke_width

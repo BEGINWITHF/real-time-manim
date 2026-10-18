@@ -150,14 +150,44 @@ def _letter_alphas(anim, alpha):
 
 
 def _write_passing_flash(anim, mob, alpha):
+    # The window has to be the one manim itself used, and it must be applied to
+    # the WHOLE contour: `ShowPartial.interpolate_submobject` has already
+    # replaced the points with the sliver (`pointwise_become_partial(start,
+    # *_get_bounds(alpha))`), exactly like Create.  Parking a second
+    # `[alpha, alpha + width]` window on those cut points cut the sliver again
+    # and shifted its phase -- measured on
+    # `ShowPassingFlash(Line([-3,0,0],[3,0,0]), time_width=0.5, run_time=1)`:
+    # at t=0.5 RTM painted manim-units [-0.03, 1.53] where CE paints
+    # [-1.50, 1.50] (the middle half), and at t=0.25 [-2.87, -2.50] instead of
+    # [-3.00, -0.75].  Put the pristine contour back first, so the window is a
+    # fraction of the full path again, and read the bounds off manim
+    # (`_get_bounds` = `[alpha*(1+tw) - tw, alpha*(1+tw)]`, upper clamped to 1)
+    # instead of re-deriving them.
     width = 0.2
     for attr in ("time_width", "width"):
         value = getattr(anim, attr, None)
         if isinstance(value, (int, float)):
             width = float(value)
             break
-    lower = alpha
-    upper = min(1.0, alpha + width)
+    bounds = getattr(anim, "_get_bounds", None)
+    if callable(bounds):
+        try:
+            lower, upper = bounds(alpha)
+        except Exception:
+            lower, upper = alpha, min(1.0, alpha + width)
+    else:
+        lower, upper = alpha, min(1.0, alpha + width)
+    start = getattr(anim, "starting_mobject", None)
+    if start is not None:
+        try:
+            for live, pristine in zip(mob.get_family(), start.get_family()):
+                pts = getattr(pristine, "points", None)
+                if pts is None or not len(pts):
+                    continue
+                if len(getattr(live, "points", ())):
+                    live.points = pts.copy()
+        except Exception:
+            pass
     mob._vulkan_progress_lower = lower
     mob._vulkan_progress_upper = upper
     mob._vulkan_progress = upper
