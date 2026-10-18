@@ -20,6 +20,7 @@ build/bdist.*/
 downloaded_videos/
 media/
 tex_cache/
+frames/
 
 # ---- MSVC build byproducts (build_msvc.bat) ----
 *.obj

@@ -271,6 +271,26 @@ class CoreMixin:
         if not font_loaded:
             raise RuntimeError("Failed to load any font")
 
+    @property
+    def hwnd(self):
+        """This window's Win32 handle (``None`` off Windows / before init).
+
+        The DLL never exports the handle, so it is looked up by class+title
+        (``window/win32.py``) and cached -- ``recording.py`` and the frame
+        preview both need it to talk to the OS window.
+        """
+        from real_time_manim.window import win32
+
+        cached = getattr(self, "_hwnd_cache", None)
+        if cached and win32.user32 is not None:
+            import ctypes
+            if win32.user32.IsWindow(cached):
+                return cached
+            self._hwnd_cache = None
+        found = win32.find_video_hwnd()
+        self._hwnd_cache = found
+        return found
+
     def _publish_background_color(self, scene):
         """Hand native the frame's clear colour.
 

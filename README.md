@@ -136,6 +136,36 @@ fast_record_scene(MyScene, fps=60, hidden=False) # show the window while capturi
 record_scene(MyScene, "live.mp4", fps=30)        # record against a live window
 ```
 
+### Frame preview: any frame, instantly (`real_time_manim.preview`)
+
+A window opens with **nothing playing**, plus an input bar docked right
+underneath: type a frame, press Enter, and that frame is on screen -- no
+pre-render, no replay. Preparing the scene runs `construct()` once *with
+scheduling on* (nothing is drawn: `play` only records what each animation does),
+and after that every seek is O(1) -- a few milliseconds wherever it lands. See
+[`docs/2.0.0-time-addressable.md`](docs/2.0.0-time-addressable.md).
+
+```bash
+python -m real_time_manim.preview 1                       # demo #1 from run.py
+python -m real_time_manim.preview examples.scenes:DemoCreate --at 120
+python -m real_time_manim.preview 1 --no-bar              # type in the terminal
+```
+
+The bar has a text field, `Jump` / `Save PNG` / `Quit`, and shows the current
+frame in its title. In the field:
+
+| Input | Meaning |
+|-------|---------|
+| `120` / `120f` | frame 120 (frame numbers are the default unit) |
+| `1.5` / `1.5s` | time 1.5 s |
+| `+10` / `-1` | step that many frames from the current one |
+| `s` | save the current frame as PNG (into `--out`, default `frames/`) |
+| `p` | play forward from here (any input stops it) |
+| `q` | quit |
+
+The same grammar is read from the terminal when the bar is unavailable (macOS,
+or `--no-bar`), so the mode never needs a GUI toolkit.
+
 ### LaTeX cache helpers (`real_time_manim.util`)
 
 Rendering `MathTex`/`Tex` compiles each formula to an SVG. Cache the results so

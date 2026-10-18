@@ -178,6 +178,8 @@ rate_functions = _rtm_rate_functions          # real_time_manim.rate_functions
 _LAZY_EXPORTS = {
     "MLWindow": ("real_time_manim.vulkan_bind", "MLWindow"),
     "Timeline": ("real_time_manim.timeline", "Timeline"),
+    "FrameServer": ("real_time_manim.frames", "FrameServer"),
+    "FramePreview": ("real_time_manim.preview", "FramePreview"),
     "fast_record_scene": ("real_time_manim.record", "fast_record_scene"),
     "record_scene": ("real_time_manim.record", "record_scene"),
     "restore_tex_cache": ("real_time_manim.util", "restore_tex_cache"),
