@@ -204,6 +204,64 @@ def test_passing_flash_window_is_manims_own():
 # 5/6. dispatch: partial Dot and rounded Polygon
 # --------------------------------------------------------------------------- #
 
+def test_polygram_stroke_width_survives_the_end_of_a_create():
+    """A closed strip's seam cap must not taper the first quad.
+
+    ``JointCutCorners`` falls back to a plain cap when a joint turns past
+    ~151 deg.  At a CLOSED strip's seam the incoming direction is the LAST
+    segment's, so using it for the first segment's start cap skewed that quad
+    into a taper: the bow-tie ``Polygram`` of wiki
+    04-图形与文本/03-多边形与星形-polygons drew its first edge 5 px wide in
+    the steady state while CE draws 7 -- and it snapped from the Create's
+    correct 7 px the moment the animation ended ("线条粗细瞬间变窄").
+    """
+    import numpy as np
+    from manim import Polygram, TEAL, Create, Scene
+    from real_time_manim.frames import FrameServer
+    from real_time_manim.vulkan_bind import MLWindow
+
+    verts = [[-5.6, 2.0, 0], [-2.6, 0.8, 0], [-3.6, 2.0, 0], [-4.6, 0.8, 0]]
+
+    def scene(animated):
+        class _S(Scene):
+            def construct(self):
+                win = MLWindow(1920, 1080)
+                win.scene = self
+                poly = Polygram(verts, color=TEAL, stroke_width=5)
+                if animated:
+                    win.play(Create(poly), run_time=1.0)
+                else:
+                    self.add(poly)
+                win.close()
+        return _S
+
+    def first_edge_width(cls, t):
+        fs = FrameServer(cls)
+        try:
+            px = fs.grab_pixels(t)
+            w, h = fs.frame_size
+            img = np.frombuffer(bytes(px), dtype=np.uint8).reshape(h, w, 4)
+            luma = img[:, :, :3].mean(axis=2)
+            col = luma[240:470, 300]
+            lit = np.nonzero(col > 60)[0]
+            runs = []
+            for i in lit:
+                if runs and runs[-1][1] + 1 == i:
+                    runs[-1][1] = i
+                else:
+                    runs.append([i, i])
+            return runs[0][1] - runs[0][0] + 1 if runs else 0
+        finally:
+            fs.close()
+
+    steady = first_edge_width(scene(False), 0.1)
+    after_create = first_edge_width(scene(True), 1.3)
+    assert steady == after_create, (
+        "the stroke must not change width when the Create ends: %d px steady "
+        "vs %d px right after the play" % (steady, after_create))
+    assert steady >= 6, "CE draws this edge 7 px wide, got %d" % steady
+
+
 def test_create_dot_does_not_pop_the_disc_in(window):
     dot = Dot(radius=0.16, color=YELLOW)
     partial = _record(window, dot, _vulkan_progress=0.3)

@@ -145,6 +145,7 @@ static void JointCutCorners(
     int have_in, float inx, float iny,
     int have_out, float outx, float outy,
     float half_w,
+    int is_start,
     float *ax, float *ay, float *bx, float *by)
 {
     if (!have_in && !have_out) {
@@ -162,9 +163,21 @@ static void JointCutCorners(
     if (cl < 0.5f) {
         /* Turn past ~151 deg: the mitre would reach beyond 4 half widths
            (and at exactly 180 deg the normals cancel).  Share a plain cap
-           line instead; only such near-fold-back joints keep a notch. */
-        cx = -iny;
-        cy = inx;
+           line instead; only such near-fold-back joints keep a notch.
+
+           The cap has to be perpendicular to the SEGMENT being capped: for
+           the START of a segment that is its OUTGOING direction, for the END
+           its INCOMING one.  `in` and `out` differ only at a CLOSED strip's
+           seam (in = last segment, out = first), which is exactly where the
+           corner turns past the guard -- taking `in` for a start cap there
+           skews the whole first quad into a taper: measured on the wiki
+           04-图形与文本/03-多边形与星形-polygons Polygram (seam turn 152 deg),
+           the first edge drew 5 px where CE draws 7, and it snapped from the
+           Create's 7 px the moment the animation ended. */
+        float dx = is_start ? outx : inx;
+        float dy = is_start ? outy : iny;
+        cx = -dy;
+        cy = dx;
         cl = 1.0f;
     }
     cx /= cl;
@@ -248,7 +261,7 @@ void BuildVerticesFromLineStripAt(int si) {
         }
         float sxa, sya, sxb, syb;
         JointCutCorners(jx, jy, have_in, inx, iny, have_out, outx, outy,
-                        half_w, &sxa, &sya, &sxb, &syb);
+                        half_w, 1, &sxa, &sya, &sxb, &syb);
 
         /* End cap. */
         jx = x1; jy = y1;
@@ -264,7 +277,7 @@ void BuildVerticesFromLineStripAt(int si) {
         }
         float exa, eya, exb, eyb;
         JointCutCorners(jx, jy, have_in, inx, iny, have_out, outx, outy,
-                        half_w, &exa, &eya, &exb, &eyb);
+                        half_w, 0, &exa, &eya, &exb, &eyb);
 
         /* A segment shorter than its two mitre cuts would bow-tie (the cut
            corners cross past each other); keep the plain caps there rather
