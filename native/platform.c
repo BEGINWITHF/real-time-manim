@@ -817,3 +817,32 @@ __declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int out_cap, int
     if (out_size) *out_size = rowBytes * h;
     return 1;
 }
+
+// Same readback as SaveScreenshotRaw, but hands back the RAW BGRA image
+// (w*h*4 bytes, tightly packed) with no colour conversion at all.
+//
+// `ConvertBGRAtoBGR` walks the frame pixel by pixel (2.07 million iterations
+// for 1080p) and that loop dominated fast-record's per-frame capture cost --
+// measured at ~25 ms of a ~50 ms frame.  ffmpeg accepts `-pixel_format bgra`
+// directly and only drops the alpha when converting to yuv420p, so the whole
+// conversion can be skipped: this export is the fence wait plus one bulk memcpy
+// of the staging buffer.
+__declspec(dllexport) int SaveScreenshotRawBGRA(unsigned char *out, int out_cap,
+                                                int *out_size) {
+    if (!g_is_ready || !g_swapchain || !out) return 0;
+    int w = (int)g_swapchain_ext.width;
+    int h = (int)g_swapchain_ext.height;
+    if (w <= 0 || h <= 0) return 0;
+
+    VkDeviceSize need = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+    if (out_size) *out_size = (int)need;      // also the "retry with this" hint
+    if (out_cap <= 0 || (VkDeviceSize)out_cap < need) return 0;
+
+    if (!EnsureScreenshotBuffer(need)) return 0;
+    if (!ResolveScreenshotSource(w, h)) return 0;
+    if (g_ss_map == NULL) return 0;
+
+    memcpy(out, g_ss_map, (size_t)need);
+    if (out_size) *out_size = (int)need;
+    return 1;
+}

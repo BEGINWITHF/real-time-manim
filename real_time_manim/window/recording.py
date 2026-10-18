@@ -38,6 +38,34 @@ class BITMAPFILEHEADER(ctypes.Structure):
     ]
 
 
+def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path):
+    """The ffmpeg argv that encodes a raw frame pipe (fast record, single piped).
+
+    Shared by the live ``enable_fast_record`` pipe and the frame-parallel
+    workers (``real_time_manim._record_worker``) so both halves of a split
+    record produce frames with identical encoder settings -- otherwise the
+    concatenated segments would not match the single-pass output.
+
+    ``-vf scale=out_range=pc`` / ``-color_range pc`` keep the frames full-range:
+    the default limited-range conversion scales Y by 219/255 and swscale
+    truncates where manim's own encoder rounds, which decoded flat #808080 one
+    level low and, through the chroma round trip, shifted flat scenes by
+    (-4,-2,-5) RGB -- just outside tolerance.
+    """
+    return [
+        "ffmpeg", "-y",
+        "-f", "rawvideo", "-pixel_format", pix_fmt,
+        "-video_size", "%dx%d" % (width, height),
+        "-framerate", str(fps),
+        "-i", "-",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-vf", "scale=out_range=pc",
+        "-color_range", "pc",
+        "-crf", "18", "-preset", "fast",
+        out_path,
+    ]
+
+
 class RecordingMixin:
 
     def screenshot(self, path):
@@ -171,30 +199,20 @@ class RecordingMixin:
             self._fast_h = h
             self._fast_row_size = w * 3
             self._fast_row_padded = ((w * 3 + 3) // 4) * 4
-            ffmpeg_cmd = [
-                "ffmpeg", "-y",
-                "-f", "rawvideo", "-pixel_format", "bgr24",
-                "-video_size", f"{w}x{h}",
-                "-framerate", str(fps),
-                "-i", "-",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                # Keep the frames full-range: the default limited-range
-                # conversion scales Y by 219/255 and the CLI's swscale truncates
-                # where manim's own encoder rounds, so a flat #808080 rendered
-                # correctly (verified from the DLL's own readback) decoded one
-                # level low -- and the chroma round trip amplified that into a
-                # (-4,-2,-5) RGB offset that pushed the flat scenes just outside
-                # tolerance.
-                "-vf", "scale=out_range=pc",
-                "-color_range", "pc",
-                "-crf", "18", "-preset", "fast",
-                self._fast_record_path,
-            ]
+            # Newer DLLs hand back the raw BGRA framebuffer with no per-pixel
+            # conversion (`SaveScreenshotRawBGRA`); ffmpeg eats bgra directly and
+            # drops the alpha, so the 2-million-iteration BGRA->BGR loop -- which
+            # measured ~25 ms of a ~50 ms frame -- disappears.  The BMP route
+            # stays as the fallback for a DLL without that export (and for macOS).
+            self._fast_raw_bgra = getattr(self.dll, "SaveScreenshotRawBGRA", None)
+            pix_fmt = "bgra" if self._fast_raw_bgra else "bgr24"
+            ffmpeg_cmd = fast_pipe_ffmpeg_args(w, h, fps, pix_fmt,
+                                               self._fast_record_path)
             self._ffmpeg = subprocess.Popen(
                 ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
             self._fast_tmp_bmp = os.path.join(tempfile.gettempdir(),
                 f"manim_fast_{os.getpid()}_{id(self)}.bmp")
-            print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps → {path}")
+            print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps ({pix_fmt}) → {path}")
 
     def set_visible(self, visible=True):
         """Show or hide the window after it was created.
@@ -232,6 +250,36 @@ class RecordingMixin:
             reg.remove(self)
 
     def _capture_screenshot_to_pipe(self):
+        """Copy the frame the recorder just drew into ffmpeg's stdin.
+
+        Two routes, both ending in tightly packed rows at ``self._fast_w``:
+
+        * ``SaveScreenshotRawBGRA`` (newer DLL): the raw framebuffer, one memcpy,
+          piped verbatim as ``bgra`` -- no per-pixel work at all.
+        * ``SaveScreenshot`` (fallback): a BMP on disk, read back and de-padded
+          into ``bgr24``.
+        """
+        if self._fast_raw_bgra is not None:
+            return self._capture_raw_bgra_to_pipe()
+        return self._capture_bmp_to_pipe()
+
+    def _capture_raw_bgra_to_pipe(self):
+        w, h = self._fast_w, self._fast_h
+        need = w * h * 4
+        buf = getattr(self, '_fast_raw_buf', None)
+        if buf is None or len(buf) < need:
+            buf = (ctypes.c_ubyte * need)()
+            self._fast_raw_buf = buf
+        out_size = ctypes.c_int(need)
+        if not self._fast_raw_bgra(buf, need, ctypes.byref(out_size)):
+            return                      # no frame present yet (or size changed)
+        # A window resized mid-record would change the row layout under ffmpeg's
+        # fixed -video_size: drop the frame instead of shearing the rest.
+        if out_size.value != need:
+            return
+        self._ffmpeg.stdin.write(memoryview(buf)[:need])
+
+    def _capture_bmp_to_pipe(self):
         """SaveScreenshot → parse BMP → pipe tightly packed BGR to ffmpeg.
 
         BMP rows are padded to a 4-byte boundary ((w*3 + 3) & ~3 == 2564 bytes
