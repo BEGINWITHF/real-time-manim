@@ -160,10 +160,12 @@ def _planned_jobs(jobs) -> int:
 
 # ``jobs="auto"`` splits only from this many frames on.  Every worker pays its
 # own interpreter + Vulkan device + construct() startup (~0.5-1 s each,
-# measured) while the frame cost only divides by the worker count, so the two
-# cross at roughly 245 frames of 1080p60 on a 16-core machine (4 s of video):
-# below that a single pass is *faster* as well as sooner, above it splitting
-# wins (a 15 s scene records in 8.6 s with 4 workers against 15.4 s in one).
+# measured) while the frame cost only divides by the worker count, so a naive
+# model crosses over at roughly 245 frames of 1080p60 (4 s of video) on this
+# 16-core machine.  Measured end to end the crossing moves around a lot with
+# machine state -- splitting a 15 s scene has been as good as 2x and as bad as
+# nothing -- so the threshold is deliberately conservative: below it one pass is
+# faster *and* starts sooner, and above it splitting at least cannot lose.
 _AUTO_MIN_FRAMES = 240
 
 

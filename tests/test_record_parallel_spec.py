@@ -23,7 +23,10 @@ from real_time_manim.record import (  # noqa: E402
     _planned_jobs,
     _scene_token,
 )
-from real_time_manim.window.recording import fast_pipe_ffmpeg_args  # noqa: E402
+from real_time_manim.window.recording import (  # noqa: E402
+    encoder_threads,
+    fast_pipe_ffmpeg_args,
+)
 
 
 class ModuleLevelScene(Scene):        # importable by name: `module:qualname`
@@ -202,3 +205,28 @@ def test_worker_encoder_matches_the_live_pipe_settings():
                  "-color_range pc", "scale=out_range=pc", "-crf 18",
                  "-preset fast", "-framerate 60"):
         assert flag in joined
+
+
+def test_only_a_split_record_caps_the_encoder_threads():
+    # x264's auto pool (~1.5x cores) times several workers oversubscribes the
+    # machine, so workers share the cores out; a single pass is left alone so its
+    # bitstream does not change.
+    assert encoder_threads(1) is None
+    assert encoder_threads(1, 16) is None
+    for jobs in (2, 4, 8):
+        n = encoder_threads(jobs, 16)
+        assert 1 <= n <= 8
+        assert jobs * n < 16                     # never all the cores
+    # Fewer cores -> fewer threads, never zero.
+    assert encoder_threads(8, 8) == 1
+    assert encoder_threads(4, 2) == 1
+
+
+def test_a_worker_argv_keeps_every_setting_and_only_adds_threads():
+    from real_time_manim._record_worker import segment_ffmpeg
+
+    live = fast_pipe_ffmpeg_args(1920, 1080, 60, "bgra", "a.mp4")
+    capped = segment_ffmpeg(1920, 1080, 60, "bgra", "a.mp4", threads=3)
+    # exactly the live argv, with "-threads 3" added before the output path
+    assert capped == live[:-1] + ["-threads", "3", live[-1]]
+    assert capped[-1] == "a.mp4"

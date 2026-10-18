@@ -38,7 +38,7 @@ class BITMAPFILEHEADER(ctypes.Structure):
     ]
 
 
-def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path):
+def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path, threads=None):
     """The ffmpeg argv that encodes a raw frame pipe (fast record, single piped).
 
     Shared by the live ``enable_fast_record`` pipe and the frame-parallel
@@ -46,13 +46,19 @@ def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path):
     record produce frames with identical encoder settings -- otherwise the
     concatenated segments would not match the single-pass output.
 
+    ``threads`` caps the *encoder's* thread pool.  x264 defaults to ~1.5x the
+    core count, and several workers each doing that oversubscribes the machine:
+    4 concurrent workers measured 17.3 ms/frame with their encoders against
+    8.0 ms/frame with exactly the same loops and no encoder.  A single-process
+    record leaves it None, so its command -- and its bitstream -- is unchanged.
+
     ``-vf scale=out_range=pc`` / ``-color_range pc`` keep the frames full-range:
     the default limited-range conversion scales Y by 219/255 and swscale
     truncates where manim's own encoder rounds, which decoded flat #808080 one
     level low and, through the chroma round trip, shifted flat scenes by
     (-4,-2,-5) RGB -- just outside tolerance.
     """
-    return [
+    args = [
         "ffmpeg", "-y",
         "-f", "rawvideo", "-pixel_format", pix_fmt,
         "-video_size", "%dx%d" % (width, height),
@@ -62,8 +68,26 @@ def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path):
         "-vf", "scale=out_range=pc",
         "-color_range", "pc",
         "-crf", "18", "-preset", "fast",
-        out_path,
     ]
+    if threads is not None:
+        args += ["-threads", str(int(threads))]
+    args.append(out_path)
+    return args
+
+
+def encoder_threads(jobs, cpus=None):
+    """Threads to give EACH worker's encoder when ``jobs`` of them run at once.
+
+    The workers are CPU-bound while rendering, so the encoders must not take the
+    whole machine: one core per worker is left for the frame loop and the rest
+    are shared out.  A single worker (the default path) gets None -- x264's own
+    auto setting -- so its output is untouched.
+    """
+    jobs = max(1, int(jobs))
+    if jobs < 2:
+        return None
+    cpus = int(cpus if cpus is not None else (os.cpu_count() or 4))
+    return max(1, min(8, (cpus - jobs) // jobs))
 
 
 class RecordingMixin:

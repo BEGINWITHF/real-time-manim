@@ -63,11 +63,12 @@ def resolve_scene(kind, target, qual):
     return obj
 
 
-def segment_ffmpeg(width, height, fps, pix_fmt, out_path):
+def segment_ffmpeg(width, height, fps, pix_fmt, out_path, threads=None):
     """Encode one worker's raw frame pipe with the shared settings."""
     from real_time_manim.window.recording import fast_pipe_ffmpeg_args
 
-    return fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path)
+    return fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path,
+                                 threads=threads)
 
 
 def _private_media_dir(out_path):
@@ -134,8 +135,10 @@ def main(argv=None):
                 return 0
             width, height = server.frame_size
             fmt = server.readback_format
+            from real_time_manim.window.recording import encoder_threads
             proc = subprocess.Popen(
-                segment_ffmpeg(width, height, fps, fmt, out_path),
+                segment_ffmpeg(width, height, fps, fmt, out_path,
+                               threads=encoder_threads(jobs)),
                 stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
             dt = 1.0 / fps
             with proc.stdin as pipe:
