@@ -513,18 +513,34 @@ def _write_indicate(anim, mob, alpha):
     mean|d| 6.16).  When *every* child resolves to the updater bucket the
     container has no visual life of its own: relay the children and drop the
     grow channels instead of writing them.
+
+    The same holds for ``Flash`` and ``Circumscribe``: their children are
+    ``ShowPassingFlash``/``Create``/``Fade*`` animations that draw their own
+    reveal, and CE never resizes these shapes -- the flash lines are FIXED
+    length and only the light sweeps along them.  Keeping the grow channel
+    scaled the whole line group about the flash point by the raw alpha, so the
+    star's tips grew from the centre: measured on the wiki
+    03-动画/强调与提示/01-强调与闪烁 Flash (line_length=0.3, flash_radius=0.18
+    -> 65 px lines) the lit star's mean radius ran 10, 18, 26, 34, 45, 57, 69,
+    81, ... px against CE's 68, 85, 88, 94, 104, 111, 116, 116, 119, 126 --
+    a 12.5x ramp where CE grows 1.9x, and its furthest tip sat at 35 px where
+    CE's was at 111.  Any child that owns its geometry in a channel of its own
+    therefore drops the grow.
     """
     if isinstance(anim, _TRANSFORM_MORPH):
         _write_transform(anim, mob, alpha)
         return
     kids = _children(anim)
-    if kids and all(_kind_of(k) == "updates" for k in kids):
+    if kids and all(_kind_of(k) in ("updates", "passing_flash", "progress",
+                                    "fade", "indicate") for k in kids):
         for attr in ("_grow_scale", "_grow_point", "_grow_rot"):
             if hasattr(mob, attr):
                 try:
                     delattr(mob, attr)
                 except Exception:
                     pass
+        if not _is_container(mob):
+            _refresh_opacity(mob)
         return
     if not _is_container(mob):
         _refresh_opacity(mob)

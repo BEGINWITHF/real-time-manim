@@ -1,5 +1,6 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
 from real_time_manim.animations.create import Create
+from real_time_manim.animations.base import release_hidden_channels, resolve_mobject
 
 
 class Uncreate(Create):
@@ -30,10 +31,20 @@ class Uncreate(Create):
     switched off with ``reverse_rate_function=False``.
     """
 
-    def __init__(self, mobject, run_time=1.0, lag_ratio=1.0, remover=True,
+    def __init__(self, mobject=None, run_time=1.0, lag_ratio=1.0, remover=True,
                  rate_func=None, reverse_rate_function=True, **kwargs):
+        mobject = resolve_mobject(mobject, kwargs, "Uncreate")
         # ``rate_func=None`` falls through to Animation's default ``_smooth`` --
         # the same curve CE's Uncreate ends up with.
         super().__init__(mobject, run_time=run_time, lag_ratio=lag_ratio,
                          remover=remover, rate_func=rate_func,
                          reverse_rate_function=reverse_rate_function, **kwargs)
+
+    def finish(self):
+        # A remover must not leave the mobject in "erased" render state: CE
+        # restores the whole path in `ShowPartial.clean_up_from_scene`, so a
+        # mobject shown again later comes back whole.  RTM's channel stayed at
+        # `_vulkan_progress = 0.0`, and every later draw of the same mobject
+        # submitted nothing (see base.release_hidden_channels).
+        super().finish()
+        release_hidden_channels(self.mobject)
