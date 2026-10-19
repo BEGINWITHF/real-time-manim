@@ -70,24 +70,22 @@ def sections(text):
 
 
 def demo_samples(path):
-    """Sample names the RTM script publishes (SCENES / PAIRS tables)."""
+    """Published sample names from the RTM script's PAIRS (or SCENES).
+
+    ``PAIRS`` is the publish table: its keys are the clips that land in
+    ``RTM output/`` while its lists are the concat fragments.  Falling back to
+    ``SCENES`` (fragment names) would report every fragment as a missing clip.
+    """
     if not os.path.exists(path):
         return []
     src = io.open(path, encoding="utf-8", errors="replace").read()
-    out = []
     m = re.search(r"^PAIRS\s*=\s*\[(.*?)\n\]", src, re.S | re.M)
     if m:
-        out += re.findall(r'\(\s*"([^"]+)"\s*,\s*\[', m.group(1))
+        return re.findall(r'\(\s*"([^"]+)"\s*,\s*\[', m.group(1))
     m = re.search(r"^SCENES\s*=\s*\[(.*?)\n\]", src, re.S | re.M)
     if m:
-        out += re.findall(r'\(\s*"([^"]+)"\s*,\s*[A-Za-z_]\w*\s*\)', m.group(1))
-    # dedupe, keep order
-    seen, uniq = set(), []
-    for n in out:
-        if n not in seen:
-            seen.add(n)
-            uniq.append(n)
-    return uniq
+        return re.findall(r'\(\s*"([^"]+)"\s*,\s*[A-Za-z_]\w*\s*\)', m.group(1))
+    return []
 
 
 def demo_classes(path):
