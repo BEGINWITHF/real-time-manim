@@ -149,6 +149,25 @@ def _letter_alphas(anim, alpha):
         return None
 
 
+def _eased_alpha(anim, alpha):
+    """manim's ``get_sub_alpha`` for a single submobject: ease the raw alpha.
+
+    Hooks are handed the RAW progress, while manim cuts/positions with
+    ``get_sub_alpha`` = ``rate_func(clip(value - lower))`` (with
+    ``reverse_rate_function`` flipping the input first).  Deriving a window
+    from the raw value renders LINEARLY where CE eases -- see
+    ``_write_passing_flash``.
+    """
+    value = max(0.0, min(1.0, float(alpha)))
+    if getattr(anim, "reverse_rate_function", False):
+        value = 1.0 - value
+    rate = getattr(anim, "rate_func", None)
+    try:
+        return max(0.0, min(1.0, float(rate(value)) if callable(rate) else value))
+    except Exception:
+        return value
+
+
 def _write_passing_flash(anim, mob, alpha):
     # The window has to be the one manim itself used, and it must be applied to
     # the WHOLE contour: `ShowPartial.interpolate_submobject` has already
@@ -169,6 +188,15 @@ def _write_passing_flash(anim, mob, alpha):
         if isinstance(value, (int, float)):
             width = float(value)
             break
+    # Ease the raw progress exactly as manim does before it asks for the
+    # bounds: CE cuts the path with `get_sub_alpha(...)` =
+    # `rate_func(clip(alpha))`, so its comet sweeps smoothly while a window
+    # built from the raw alpha sweeps LINEARLY.  Measured on the wiki
+    # 03-动画/强调与提示/01b-扫光与波纹 ring (the 12-piece thinning flash):
+    # CE's arc head ran 0, 2, 3, 6, 10, 16, 23, 33, 48, 67, 91, 120 deg
+    # against RTM's 3, 19, 33, 49, 63, 78, 94, 110 deg -- 3.8 deg/frame from
+    # frame one, i.e. "第二个动画还是不太对".
+    alpha = _eased_alpha(anim, alpha)
     bounds = getattr(anim, "_get_bounds", None)
     if callable(bounds):
         try:

@@ -200,6 +200,31 @@ def test_passing_flash_window_is_manims_own():
         "the sender, not baked into the points")
 
 
+def test_passing_flash_window_is_eased_like_manim():
+    """manim cuts with ``get_sub_alpha`` = ``rate_func(clip(alpha))``.
+
+    The hook is handed the RAW progress, so windowing it directly swept the
+    comet LINEARLY: measured on the wiki 01b-扫光与波纹 ring, CE's arc head
+    ran 0, 2, 3, 6, 10, 16, 23, 33, 48, 67, 91, 120 deg while RTM's ran
+    3, 19, 33, 49, 63, 78, 94, 110 (a constant 3.8 deg/frame).
+    """
+    from manim import ShowPassingFlash
+    line = Line([-3, 0, 0], [3, 0, 0], stroke_width=6)
+    # default rate_func is smooth, so 0.25 eases to 0.156 -- a plain
+    # difference between the eased and the raw window
+    anim = ShowPassingFlash(line, time_width=0.5, run_time=1.0)
+    anim.begin()
+    install_hooks(anim)
+    raw = 0.25
+    eased = float(anim.rate_func(raw))
+    assert abs(eased - raw) > 1e-3, "test needs a non-linear rate function"
+
+    anim.interpolate(raw)
+    lower, upper = anim._get_bounds(eased)
+    assert getattr(line, "_vulkan_progress_lower") == pytest.approx(lower, abs=1e-9)
+    assert getattr(line, "_vulkan_progress_upper") == pytest.approx(upper, abs=1e-9)
+
+
 # --------------------------------------------------------------------------- #
 # 5/6. dispatch: partial Dot and rounded Polygon
 # --------------------------------------------------------------------------- #
