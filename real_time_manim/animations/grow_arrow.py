@@ -21,7 +21,16 @@ class GrowArrow(Animation):
     def begin(self, t):
         super().begin(t)
         mob = self.mobject
-        self._grow_point = mob.get_start()
+        # A VGroup (or any container without its own points) has no
+        # ``get_start``: manim raises "Cannot call Mobject.get_start for a
+        # Mobject with no points".  CE's GrowFromCenter/VGroup works because
+        # manim's GrowFromPoint only measures the mobject's centre; grow from
+        # the centre for those, which is what GrowFromCenter overrides to
+        # anyway (and GrowFromEdge/GrowFromPoint override explicitly).
+        try:
+            self._grow_point = mob.get_start()
+        except Exception:
+            self._grow_point = mob.get_center()
         self._orig_fill = {}
         self._orig_stroke = {}
         # The arrowHEAD is a submobject (`Arrow.tip`).  Only `mob`'s own rgbas
