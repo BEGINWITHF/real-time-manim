@@ -42,6 +42,10 @@ LEGACY = ("sample.mp4",)
 # pages that legitimately talk about ManimCE itself
 CE_PAGE_OK = ("04-ManimCE命令行速查",)
 SKIP_DIRS = ("assets", ".git", "out_manimce")
+# chapters that are guides, not API references (no function tables to sample):
+# every page under them is exempt from the per-function-video rule and listed
+# separately in the report instead of being counted as "bad".
+EXEMPT_DIRS = ("00-快速开始",)
 
 
 def is_page(path):
@@ -164,18 +168,23 @@ def main():
             classes=classes, clips=clip_samples, demo_wo_clip=demo_wo_clip,
             clip_wo_demo=clip_wo_demo,
             flagged=len(re.findall(r"❌|⚠️", text)),
+            exempt=rel.split(os.sep)[0] in EXEMPT_DIRS,
         ))
+
+    exempt = [r for r in rows if r["exempt"]]
+    graded = [r for r in rows if not r["exempt"]]
 
     with io.open(args.report, "w", encoding="utf-8") as fh:
         fh.write("# 整库逐页体检（对 99-写作规范.md + 2026-10-19 澄清规则）\n\n")
         fh.write("模型页：01-场景与相机/场景/01-Scene基础.md\n")
         fh.write("每页应有：`# 标题` + 导语；每个函数/参数组一节（`### `）；"
                  "每节至少一条 <video>；demo 里的每个类都要有成片。\n\n")
-        bad = [r for r in rows
+        bad = [r for r in graded
                if r["no_video"] or r["broken"] or r["ce_vid"] or r["status"]
                or not r["rtm_src"] or not r["ce_src"] or not r["shim"]
                or r["demo_wo_clip"]]
-        fh.write("## 不合格页（%d / %d）\n\n" % (len(bad), len(rows)))
+        fh.write("## 不合格页（%d / %d，另 %d 页豁免）\n\n"
+                 % (len(bad), len(graded), len(exempt)))
         for r in bad:
             fh.write("### %s\n" % r["rel"])
             fh.write("- 源码：RTM=%s CE=%s shim=%s README=%s\n"
@@ -194,21 +203,25 @@ def main():
             if r["status"]:
                 fh.write("- 有 `> 状态：` 行\n")
             fh.write("\n")
-        fh.write("\n## 合格页（%d）\n\n" % (len(rows) - len(bad)))
-        for r in rows:
+        fh.write("\n## 合格页（%d）\n\n" % (len(graded) - len(bad)))
+        for r in graded:
             if r not in bad:
                 fh.write("- %s（小节 %d / 视频 %d）\n" % (r["rel"], r["secs"], r["vids"]))
+        fh.write("\n## 豁免页（%d，导览页无函数表，按 2026-10-19 决定豁免）\n\n"
+                 % len(exempt))
+        for r in exempt:
+            fh.write("- %s（小节 %d / 视频 %d）\n" % (r["rel"], r["secs"], r["vids"]))
 
     # ASCII matrix per chapter
     ch = {}
-    for r in rows:
+    for r in graded:
         key = r["rel"].split(os.sep)[0] + ("\\" + r["rel"].split(os.sep)[1]
                                            if len(r["rel"].split(os.sep)) > 2 else "")
         d = ch.setdefault(key, [0, 0])
         d[0] += 1
         if r in bad:
             d[1] += 1
-    print("pages=%d bad=%d" % (len(rows), len(bad)))
+    print("pages=%d bad=%d exempt=%d" % (len(graded), len(bad), len(exempt)))
     for k, (n, b) in sorted(ch.items()):
         print("  %-34s %3d pages, %3d bad" % (k, n, b))
     print("report ->", args.report)

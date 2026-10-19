@@ -255,35 +255,26 @@ class CoreMixin:
     def _publish_background_color(self, scene):
         """Hand native the frame's clear colour.
 
-        manim lets a scene override it (`self.camera.background_color`, falling back
-        to `config.background_color`); the native side used to hard-code black, so a
-        scene with a light background rendered on black (measured on the gallery logo
-        scene: CE luma 220 vs RTM 9.5, the largest mismatch in the suite).
+        manim lets a scene override it (`self.camera.background_color`, falling
+        back to `config.background_color`); the native side used to hard-code
+        black, so a scene with a light background rendered on black (measured on
+        the gallery logo scene: CE luma 220 vs RTM 9.5, the largest mismatch in
+        the suite).
 
-        `camera.background_opacity` rides along: CE paints the background with that
-        alpha over a black canvas, so the clear colour is the colour scaled by it
-        (wiki 01-场景与相机/配置/01-画质与输出 marked the property ❌ for having no
-        effect on the output).
+        `camera.background_opacity` is deliberately *not* applied here.  In CE it
+        only rides in the frame's alpha channel: the background pixels keep the
+        colour at full strength and the alpha is dropped by the opaque
+        (yuv420p) video writer, so the video shows the full colour whatever the
+        opacity.  Scaling the clear colour by it (the earlier behaviour) made
+        RTM disagree with CE: on `01-场景与相机/相机/01-Camera-background` the
+        background read RTM `(16,34,55)` vs CE `(29,57,93)` for 48 frames after
+        `background_opacity = 0.6` was set.  RTM only writes opaque video, so it
+        publishes the colour unscaled and stays frame-exact with CE.
         """
         setter = getattr(self, "_set_background", None)
         if setter is None:
             return
         camera = getattr(scene, "camera", None)
-        opacity = 1.0
-        try:
-            from manim import config as _cfg
-            fallback = _cfg["background_opacity"]
-        except Exception:
-            fallback = 1.0
-        raw = getattr(camera, "background_opacity", None)
-        try:
-            opacity = float(fallback if raw is None else raw)
-        except (TypeError, ValueError):
-            opacity = 1.0
-        if opacity < 0.0:
-            opacity = 0.0
-        elif opacity > 1.0:
-            opacity = 1.0
         colour = getattr(camera, "background_color", None)
         if colour is None:
             try:
@@ -300,7 +291,7 @@ class CoreMixin:
         except Exception:
             return
         if len(values) == 3:
-            setter(*(v * opacity for v in values))
+            setter(*values)
 
     @staticmethod
     def _camera_needs_raster(scene, cam):

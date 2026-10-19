@@ -54,10 +54,25 @@ def build(page, assets):
     if trailer_start < 0:
         raise SystemExit("no SCENES table in " + rtm_path)
     body = src[head_end:trailer_start].rstrip() + "\n"
+    # Drop module-level imports of RTM-only modules: they only exist so the
+    # RTM-only samples below can run, and the CE file must not fail to import.
+    body = "".join(
+        ln + "\n" for ln in body.splitlines()
+        if not re.match(r"^from real_time_manim\.(?!vulkan_bind|record)\S+ import", ln)
+    )
     scenes = re.findall(r'\(\s*"([^"]+)"\s*,\s*([A-Za-z_]\w*)\s*\)',
                         src[trailer_start:])
     pairs = re.findall(r'\(\s*"([^"]+)"\s*,\s*\[([^\]]*)\]',
                        src[src.find("PAIRS = "):])
+    # Samples whose SCENES row is marked `# RTM-only` use an API ManimCE does
+    # not have (e.g. TextDecimalNumber): they get no CE twin at all, so their
+    # class stays in the file as dead code but is never rendered.
+    rtm_only = set(re.findall(
+        r'\(\s*"([^"]+)"\s*,\s*[A-Za-z_]\w*\s*\)[^\n]*#\s*RTM-only',
+        src[trailer_start:]))
+    scenes = [(f, c) for f, c in scenes if f not in rtm_only]
+    pairs = [(n, f) for n, f in pairs
+             if not rtm_only & {x.strip().strip('"') for x in f.split(",")}]
 
     out = [
         "# -*- coding: utf-8 -*-\n",
@@ -95,8 +110,10 @@ def build(page, assets):
     out.append("            names.append((out_name, cls_name, os.path.abspath(__file__)))\n")
     out.append("    render(names)\n\n")
     out.append("    if not sys.argv[1:]:\n")
+    out.append('        ce_out = os.path.join(ASSETS, "ManimCE output")\n')
+    out.append("        os.makedirs(ce_out, exist_ok=True)\n")
     out.append("        for key, out_name, parts in CONCATS:\n")
-    out.append("            concat(parts, os.path.join(ASSETS, out_name + \".mp4\"))\n")
+    out.append("            concat(parts, os.path.join(ce_out, out_name + \".mp4\"))\n")
     return "".join(out)
 
 

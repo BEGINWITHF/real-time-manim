@@ -49,10 +49,15 @@ def build_section(page, assets, notes):
         sample = base[len(page) + 1:-4]
         ce = os.path.join(assets, "ManimCE output", base[:-4] + "-manimce.mp4")
         n, d = probe(rtm)
-        m, e = probe(ce) if os.path.exists(ce) else (-1, 0.0)
-        rows.append("| `%s` | %s | `%s`（%d 帧 / %.2fs） | %s（%d 帧 / %.2fs） | %s |"
-                    % (sample, sample, base, n, d, os.path.basename(ce), m, e,
-                       "✅" if n == m and n > 0 else "⚠️"))
+        if os.path.exists(ce):
+            m, e = probe(ce)
+            rows.append("| `%s` | %s | `%s`（%d 帧 / %.2fs） | %s（%d 帧 / %.2fs） | %s |"
+                        % (sample, sample, base, n, d, os.path.basename(ce), m, e,
+                           "✅" if n == m else "⚠️"))
+        else:
+            # RTM-only sample (an API ManimCE does not have): no twin at all.
+            rows.append("| `%s` | %s | `%s`（%d 帧 / %.2fs） | —（RTM 单边，无 CE 孪生片） | — |"
+                        % (sample, sample, base, n, d))
     lines = ["## %s" % page, "",
              "| 样例 | 片段 | RTM | ManimCE | 帧数对齐 |",
              "| --- | --- | --- | --- | --- |"] + rows

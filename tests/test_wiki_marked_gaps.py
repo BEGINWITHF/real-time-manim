@@ -7,9 +7,11 @@
    up with the video.  ``compat`` shims it onto the same store
    ``play(..., subcaption=...)`` uses, stamped at the recorded cursor.
 
-2. ``camera.background_opacity`` -- CE paints the background with that alpha
-   over black; RTM handed native the colour alone, so the property changed
-   nothing (measured: white at opacity 0.5 still rendered 255 instead of 128).
+2. ``camera.background_opacity`` -- CE carries it in the frame's alpha channel
+   only, and the opaque video writer drops that alpha, so the video shows the
+   background at full strength.  RTM published the colour scaled by it, which
+   made 48 frames of the wiki's ``01-Camera-background`` sample disagree with
+   CE (RTM 16,34,55 vs CE 29,57,93).  RTM now publishes the colour unscaled.
 
 Pure Python: no DLL, no GPU.
 """
@@ -114,16 +116,31 @@ def _published(colour, opacity, monkeypatch):
     return win.published[-1]
 
 
-def test_background_opacity_scales_the_clear_colour(monkeypatch):
+def test_background_opacity_does_not_change_the_clear_colour(monkeypatch):
+    """CE keeps the RGB channels at full strength at any opacity.
+
+    The alpha rides in the frame's alpha channel and the opaque video writer
+    drops it, so `background_opacity = 0.5` must *not* dim RTM's clear colour
+    (that dimming was what made the wiki's 01-Camera-background clip disagree
+    with CE).
+    """
     from manim import WHITE
 
     assert _published(WHITE, 1.0, monkeypatch) == pytest.approx((1.0, 1.0, 1.0))
-    assert _published(WHITE, 0.5, monkeypatch) == pytest.approx((0.5, 0.5, 0.5))
-    assert _published(WHITE, 0.0, monkeypatch) == pytest.approx((0.0, 0.0, 0.0))
+    assert _published(WHITE, 0.5, monkeypatch) == pytest.approx((1.0, 1.0, 1.0))
+    assert _published(WHITE, 0.0, monkeypatch) == pytest.approx((1.0, 1.0, 1.0))
 
 
-def test_background_opacity_is_clamped(monkeypatch):
-    from manim import WHITE
+def test_background_colour_reaches_native(monkeypatch):
+    from manim import BLUE
 
-    assert _published(WHITE, 2.0, monkeypatch) == pytest.approx((1.0, 1.0, 1.0))
-    assert _published(WHITE, -1.0, monkeypatch) == pytest.approx((0.0, 0.0, 0.0))
+    assert _published(BLUE, 1.0, monkeypatch) == pytest.approx(tuple(BLUE.to_rgb()))
+    assert _published("#1E3A5F", 1.0, monkeypatch) == pytest.approx(
+        (0x1E / 255, 0x3A / 255, 0x5F / 255), abs=1e-6)
+
+
+def test_background_publish_is_a_noop_without_the_native_setter():
+    class _Bare(CoreMixin):
+        pass
+
+    _Bare()._publish_background_color(_Scene(_Camera("#1E3A5F", 0.6)))   # must not raise

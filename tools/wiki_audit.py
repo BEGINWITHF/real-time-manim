@@ -150,8 +150,16 @@ def main():
         clips = sorted(glob.glob(os.path.join(out_dir, "*.mp4")))
         page_mds = [p for p in glob.glob(os.path.join(chapter, "*.md"))
                     if is_page(p)]
+        # A clip may legitimately live only in a chapter README (the
+        # `03-动画/移动与旋转` 合集 videos are embedded by the chapter index, not
+        # by a page): every markdown file in the chapter -- READMEs included --
+        # counts as a reference, otherwise a cleanup deletes a clip the wiki
+        # still links to.
+        ref_mds = page_mds + sorted(
+            p for p in glob.glob(os.path.join(chapter, "**", "*.md"), recursive=True)
+            if not is_page(p))
         text = ""
-        for p in page_mds:
+        for p in ref_mds:
             try:
                 text += io.open(p, encoding="utf-8").read()
             except Exception:
