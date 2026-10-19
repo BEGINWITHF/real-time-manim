@@ -28,6 +28,7 @@ VIDEO_RE = re.compile(r'<video\s+src="([^"]+)"')
 STATUS_RE = re.compile(r'^\s*>\s*状态[：:]', re.M)
 CE_CODE_RE = re.compile(r'```(?:python|py)\b[^`]*?from\s+manim\s+import', re.S)
 CE_MENTION_RE = re.compile(r'ManimCE')
+CODE_BLOCK_RE = re.compile(r'```(?:python|py)\n(.*?)```', re.S)
 LEGACY = ("sample.mp4",)
 
 # pages that legitimately talk about ManimCE itself
@@ -120,6 +121,26 @@ def main():
                 if "ManimCE" in line:
                     notes.append("%s:%d | ManimCE mention in body: %s"
                                  % (rel, line_no, line.strip()[:90]))
+
+        # 一.3: the sample code blocks must be verbatim from the demo script
+        # (the page dedents the block, so compare stripped lines)
+        if os.path.exists(rtm_src):
+            demo_lines = {l.strip() for l in
+                          io.open(rtm_src, encoding="utf-8").read().splitlines()}
+            for block in CODE_BLOCK_RE.findall(text):
+                for line in block.strip().splitlines():
+                    s = line.strip()
+                    if not s or s in demo_lines:
+                        continue
+                    if s.startswith(("def ", "from ", "import ", "class ")):
+                        continue
+                    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*(\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*,?$", s):
+                        continue                                # import continuation
+                    if re.match(r"^[A-Z]\w*\(", s):            # signature block
+                        continue
+                    notes.append("%s | code block line not found in the demo "
+                                 "(may be an API/config listing, not a sample "
+                                 "excerpt): %s" % (rel, s[:60]))
 
     # clips
     for chapter in chapters:
