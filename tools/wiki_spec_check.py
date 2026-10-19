@@ -70,18 +70,20 @@ def sections(text):
 
 
 def demo_samples(path):
-    """Published sample names from the RTM script's PAIRS (or SCENES).
+    """Published sample names from the RTM script's PAIRS / OUTPUTS / SCENES.
 
-    ``PAIRS`` is the publish table: its keys are the clips that land in
-    ``RTM output/`` while its lists are the concat fragments.  Falling back to
-    ``SCENES`` (fragment names) would report every fragment as a missing clip.
+    ``PAIRS``/``OUTPUTS`` are the publish tables: their keys are the clips that
+    land in ``RTM output/`` while their lists are the concat fragments.  Only
+    falling back to ``SCENES`` (fragment names) would report every fragment as
+    a missing clip.
     """
     if not os.path.exists(path):
         return []
     src = io.open(path, encoding="utf-8", errors="replace").read()
-    m = re.search(r"^PAIRS\s*=\s*\[(.*?)\n\]", src, re.S | re.M)
-    if m:
-        return re.findall(r'\(\s*"([^"]+)"\s*,\s*\[', m.group(1))
+    for table in ("PAIRS", "OUTPUTS"):
+        m = re.search(r"^%s\s*=\s*\[(.*?)\n\]" % table, src, re.S | re.M)
+        if m:
+            return re.findall(r'\(\s*"([^"]+)"\s*,\s*\[', m.group(1))
     m = re.search(r"^SCENES\s*=\s*\[(.*?)\n\]", src, re.S | re.M)
     if m:
         return re.findall(r'\(\s*"([^"]+)"\s*,\s*[A-Za-z_]\w*\s*\)', m.group(1))
