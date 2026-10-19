@@ -72,10 +72,9 @@ def sections(text):
 def demo_samples(path):
     """Published sample names from the RTM script's PAIRS / OUTPUTS / SCENES.
 
-    ``PAIRS``/``OUTPUTS`` are the publish tables: their keys are the clips that
-    land in ``RTM output/`` while their lists are the concat fragments.  Only
-    falling back to ``SCENES`` (fragment names) would report every fragment as
-    a missing clip.
+    ``PAIRS`` / ``OUTPUTS`` are the publish tables: their keys are the clips
+    that land in ``RTM output/`` while their lists are the concat fragments.
+    A script with only a ``SCENES`` table publishes one clip per scene name.
     """
     if not os.path.exists(path):
         return []
