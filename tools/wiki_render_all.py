@@ -16,6 +16,7 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIKI = r"C:\Users\begin\Desktop\RTM-Wiki"
 SKIP = ("demo_rtm.py", "_test_swap_vtk.py")
+SKIP_PREFIX = ("_",)          # throwaway probes in RTM code/ (e.g. _probe_scales.py)
 
 
 def page_scripts():
@@ -26,7 +27,8 @@ def page_scripts():
     seen = {}
     for pat in pats:
         for p in glob.glob(pat):
-            if os.path.basename(p) in SKIP:
+            base = os.path.basename(p)
+            if base in SKIP or base.startswith(SKIP_PREFIX):
                 continue
             seen[os.path.relpath(p, WIKI)] = p
     return [seen[k] for k in sorted(seen)]
