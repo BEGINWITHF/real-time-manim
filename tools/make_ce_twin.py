@@ -45,7 +45,7 @@ def build(page, assets):
     prefix = src[:src.find("HERE = ")]
     extra = [ln for ln in prefix.splitlines()
              if re.match(r"^(import|from)\s+(numpy|math|random|itertools|"
-                         r"functools|re|collections)\b", ln.strip())]
+                         r"functools|re|collections|PIL|svgelements)\b", ln.strip())]
     extra_block = "".join(ln + "\n" for ln in extra)
     if extra_block:
         extra_block += "\n"
