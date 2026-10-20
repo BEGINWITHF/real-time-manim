@@ -61,12 +61,16 @@ def sections(text):
     container headings (参数/语法/相关/…) are not sections.
     """
     CONTAINER = re.compile(r"^(参数|语法|相关|说明|示例|前言|安装|复现|"
-                           r"快速开始|目录|概览|小结)\b")
+                           r"快速开始|目录|概览|小结|config)\b")
     heads = [(m.start(), m.group(2).strip()) for m in
              re.finditer(r"^(#{2,3})\s+(.*)$", text, re.M)]
     out = []
     for i, (pos, title) in enumerate(heads):
         if CONTAINER.match(title):
+            continue
+        # A class's constructor-parameter table, or an abstract base class, is
+        # covered by the class's own sample -- it needs no separate video.
+        if re.search(r"构造参数|抽象基类", title):
             continue
         end = heads[i + 1][0] if i + 1 < len(heads) else len(text)
         out.append((title, text[pos:end]))
@@ -104,6 +108,27 @@ def demo_classes(path):
     return re.findall(r'\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*\)', m.group(1))
 
 
+def load_unsupported(wiki):
+    """Names listed in `99-不支持清单.md` (backticked items + table cells)."""
+    path = os.path.join(wiki, "99-不支持清单.md")
+    if not os.path.exists(path):
+        return set()
+    text = io.open(path, encoding="utf-8", errors="replace").read()
+    names = set()
+    for tok in re.findall(r"`([^`]+)`", text):
+        tok = tok.strip()
+        if not (2 <= len(tok) <= 60):
+            continue
+        names.add(tok)
+        head = tok.split("(")[0].strip()
+        if len(head) >= 2:
+            names.add(head)
+        tail = head.split(".")[-1].strip()
+        if len(tail) >= 3:
+            names.add(tail)
+    return names
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--wiki", default=WIKI)
@@ -121,6 +146,7 @@ def main():
             if is_page(p):
                 pages.append(p)
     pages.sort()
+    unsupported = load_unsupported(wiki)
 
     rows = []
     for page in pages:
@@ -131,12 +157,26 @@ def main():
         text = io.open(page, encoding="utf-8", errors="replace").read()
 
         secs = sections(text)
-        # A section may legitimately have no video when it marks the function
-        # ❌/⚠️ (RTM 未接线 / 上游 bug / 纯配置项): the spec forbids an empty
-        # video slot but requires the explanation instead.
-        no_video = [t for t, body in secs
-                    if "<video" not in body and "❌" not in t and "⚠️" not in t
-                    and not re.match(r"^(参数|相关|说明)", t)]
+        # A section may legitimately have no video when it documents something
+        # RTM does not support (or something with no visual difference): the
+        # spec asks for an explanation there, not a clip.  The marks themselves
+        # are gone from the wiki -- unsupported items live in
+        # `99-不支持清单.md` -- so decide by the wording instead.
+        EXEMPT_TITLE = re.compile(r"^(参数|相关|说明)")
+        NO_VIDEO_OK = ("未接线", "不支持", "不建议", "无视频", "无法演示",
+                       "无法出片", "无画面", "不出片", "无对照", "上游",
+                       "抽象基类", "构造", "速查", "无 CLI")
+        no_video = []
+        for t, body in secs:
+            if "<video" in body or EXEMPT_TITLE.match(t):
+                continue
+            if t.startswith("class ") or t.startswith("`class "):
+                continue
+            if any(k in (t + " " + body[:400]) for k in NO_VIDEO_OK):
+                continue
+            if any(name in t for name in unsupported):
+                continue
+            no_video.append(t)
         vids = VIDEO.findall(text)
         broken = [v for v in vids
                   if not os.path.exists(os.path.normpath(os.path.join(folder, v)))]
