@@ -283,6 +283,9 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
             ("RegisterClassExW", wt.ATOM, [ctypes.POINTER(_WNDCLASSEXW)]),
             ("UnregisterClassW", wt.BOOL, [wt.LPCWSTR, wt.HINSTANCE]),
             ("LoadCursorW", wt.HANDLE, [wt.HINSTANCE, wt.LPCWSTR]),
+            ("LoadImageW", wt.HANDLE,
+             [wt.HINSTANCE, wt.LPCWSTR, ctypes.c_uint,
+              ctypes.c_int, ctypes.c_int, ctypes.c_uint]),
             ("GetDpiForWindow", ctypes.c_uint, [wt.HWND]),
             ("AdjustWindowRectEx", wt.BOOL,
              [ctypes.POINTER(wt.RECT), ctypes.c_uint, wt.BOOL, ctypes.c_uint]),
@@ -425,6 +428,20 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
             wc.hCursor = _u.LoadCursorW(None, wt.LPCWSTR(_IDC_ARROW))
             wc.hbrBackground = _g.GetStockObject(_LTGRAY_BRUSH)
             wc.lpszClassName = self.CLASS_NAME
+            # Same icon as the main window: the control bar is a separate
+            # window class, so without this it shows the default Python icon.
+            _icon = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "logo.ico")
+            if getattr(_u, "LoadImageW", None) is not None and os.path.exists(_icon):
+                _LR_LOADFROMFILE, _LR_DEFAULTSIZE = 0x10, 0x40
+                _IMAGE_ICON = 1
+                try:
+                    wc.hIcon = _u.LoadImageW(
+                        None, wt.LPCWSTR(_icon), _IMAGE_ICON, 0, 0,
+                        _LR_LOADFROMFILE | _LR_DEFAULTSIZE)
+                    wc.hIconSm = wc.hIcon
+                except Exception:
+                    pass
             _u.RegisterClassExW(ctypes.byref(wc))
             _CLASS_REGISTERED = True
 
