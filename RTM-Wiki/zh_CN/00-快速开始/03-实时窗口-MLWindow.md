@@ -1,0 +1,68 @@
+# 实时窗口 MLWindow
+
+`MLWindow(w, h)` 打开一个实时 Vulkan 渲染窗口；绑定场景后用 `win.play(...)` 驱动整段动画，最后 `win.close()` 收尾。
+
+限制：每个进程同一时刻只支持一个窗口（限制来自原生 DLL；Python 侧靠 `_registry` 顺序开关）
+
+## 参数
+
+### `MLWindow.__init__`
+
+```python
+def __init__(self, w=1920, h=1080, hidden=None):
+```
+
+| 参数       | 类型             | 默认值                           | 说明                              |
+| -------- | -------------- | ----------------------------- | ------------------------------- |
+| `w`      | `int`          | `1920`（强制）                    | 窗口宽度（像素）；非 1920×1080 会被强制纠正（见下） |
+| `h`      | `int`          | `1080` （强制）                   | 窗口高度（像素）；同上                     |
+| `hidden` | `bool \| None` | `None`（取类级 `_hidden_default`） | 为 `True` 时窗口构建后从不显示（离线录制用）      |
+
+> **强制规格**：`MLWindow` 目前**只支持 `1920×1080`**（类属性 `SUPPORTED_WIDTH` / `SUPPORTED_HEIGHT`），录制帧率只**支持 `60`**（`SUPPORTED_FPS`）。传别的值不会报错，而是被**强制纠正**并打印一行 `[rtm] forcing 1920x1080: ...`——所以上面写 `MLWindow(960, 540)` 与 `MLWindow()` 实际渲染出的都是 1080p；**任何非 1920×1080 的尺寸都会被强制成 1080p60 并打印 `[rtm] forcing`，属正常**。*其他尺寸未来可能会提供支持。*
+
+### `win.scene`（属性）
+
+| 参数      | 类型      | 默认值    | 说明                                                     |
+| ------- | ------- | ------ | ------------------------------------------------------ |
+| `scene` | `Scene` | `None` | 绑定的 Manim 场景；必须先赋值 `win.scene = self`，否则 `play()` 直接返回 |
+
+### `MLWindow.play`
+
+```python
+def play(self, *animations, **kwargs):
+```
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `*animations` | `Animation \| Mobject \| _AnimationBuilder` | — | 要播放的动画（可多个），`.animate...` 构造器会被自动解析 |
+| `**kwargs` | `Any` | — | **生效的是 `run_time` / `rate_func`**（分别覆盖每个动画的时长/速率曲线）**加上 `path_arc` / `path_arc_axis` / `path_arc_centers` / `path_func`**（2026-10-17 起转发到动画实例，`Transform.path_arc` 的 setter 会重建 `path_func`）；`subcaption` / `subcaption_duration` / `subcaption_offset` 另有专门形参；**其余关键字打印具名警告**（`[RTM] play(): unsupported keyword(s) ... ignored`），不再静默（`window/play.py`、`window/play.py::SUPPORTED_PLAY_KWARGS`） |
+
+### `MLWindow.close`
+
+```python
+def close(self):
+```
+
+无参数。关闭窗口、结束渲染（`_unregister()` + `Vulkan_Shutdown()`）。**录制的编码收尾不在 `MLWindow.close` 里**——它由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 在调用 `close()` 前先执行 `_finish_fast_record()` / `stop_record()`（`record.py:181-186`、`window/recording.py:217-221`）；直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾，必须自己调 `win._finish_fast_record()`。
+
+## 示例
+
+RTM 最小程序模板：
+
+```python
+from real_time_manim import Scene, Square, BLUE
+from real_time_manim.vulkan_bind import MLWindow, Create, Wait
+
+class Hello(Scene):
+    def construct(self):
+        win = MLWindow(960, 540)   #创建一个 RTM 窗口
+        win.scene = self   #将名为 “self” 的 manim 窗口，绑定给名为 “win” 的 RTM 窗口
+        sq = Square(side_length=1.5, color=BLUE).set_fill(BLUE, 0.6)   #创建一个 “Square” Mobject，名为 “sq”
+        win.play(Create(sq), run_time=1.0)   #对 “sq” 使用 “Creat” 动画，动画用 1s 完成
+        win.play(Wait(0.5))   #进行 0.5s 的等待
+        win.close()   #关闭 RTM 窗口
+```
+
+## 视频样例（RTM 渲染结果）
+TODO：第一个场景的产物直接拿过来
+相关：[第一个场景](02-第一个场景.md) · [录制视频](04-录制视频.md) · [Scene 基础](../01-场景与相机/场景/01-Scene基础.md)
