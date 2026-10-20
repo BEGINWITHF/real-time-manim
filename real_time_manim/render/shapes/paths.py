@@ -6,6 +6,12 @@ import numpy as np
 from real_time_manim.render.util import manim_to_screen, get_opacity, point_path_bounds
 from real_time_manim.animations import get_anim_rotation
 
+# native `MAX_POLYGON_VERTS` (native/shared_types.h): `AddPolygon` refuses a ring
+# with more vertices than this, so longer ones have to be split (see the fill
+# loop).  Kept in step by hand -- it is the one number this file needs from the
+# C side, and `tools/check_bindings.py` does not read macros.
+_MAX_POLYGON_VERTS = 64
+
 
 class PathMixin:
 
@@ -553,11 +559,39 @@ class PathMixin:
             fill_windows = self._group_windows(
                 fill_flats, 0.0, 1.0 if cut_path else progress)
             for i, flat in enumerate(fill_flats):
-                arr = (ctypes.c_float * len(flat))(*flat)
+                n_verts = len(flat) // 2
                 emitted = 0 if has_bounds else fill_windows[i][1]
+                if n_verts > _MAX_POLYGON_VERTS and not has_bounds and emitted >= 0.999:
+                    # Native's `AddPolygon` REFUSES a ring with more than
+                    # `MAX_POLYGON_VERTS` vertices (`platform.c`: it returns
+                    # without emitting anything), so a `RegularPolygon(n=100)`
+                    # or a many-point `Polygon` had no fill at all -- silently.
+                    # Consecutive runs sharing their two boundary vertices fix
+                    # that: a COMPLETE fill is fanned from the centroid of the
+                    # vertices it is handed, and each run's closing triangle
+                    # covers the wedge between it and its neighbour, so the runs
+                    # tile a convex ring.
+                    #
+                    # Only a complete fill may be split.  A partial one is
+                    # fanned from the stroke's start and measures its own
+                    # perimeter against `stroke_progress`, so every chunk would
+                    # finish its own sweep early; those keep the old behaviour
+                    # (the outline still draws, through the strip path).
+                    for a in range(0, n_verts - 1, _MAX_POLYGON_VERTS - 2):
+                        b = min(n_verts, a + _MAX_POLYGON_VERTS)
+                        if b - a < 3:
+                            break
+                        chunk = flat[a * 2:b * 2]
+                        self.dll.AddPolygon(
+                            sx, sy, fr, fg, fb, 0, 0, 0, 0.0,
+                            len(chunk) // 2,
+                            (ctypes.c_float * len(chunk))(*chunk),
+                            emitted, alpha * fo, 1)
+                    continue
+                arr = (ctypes.c_float * len(flat))(*flat)
                 self.dll.AddPolygon(
                     sx, sy, fr, fg, fb, 0, 0, 0, 0.0,
-                    len(flat) // 2, arr, emitted, alpha * fo, 1
+                    n_verts, arr, emitted, alpha * fo, 1
                 )
                 _xs, _ys = flat[0::2], flat[1::2]
                 self._dbg_emit(

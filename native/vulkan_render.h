@@ -26,9 +26,7 @@ int Render_IsReady(void);
 #define CMD_ELLIPSE 3
 #define CMD_POLYGON 4
 #define CMD_DASHED_LINE 5
-#define CMD_ARC 6
 #define CMD_POINT 7
-#define CMD_TEXT 8
 #define CMD_IMAGE 9
 
 typedef struct {
@@ -42,9 +40,7 @@ void Render_DrawScene(const Rect* rects, int rect_count,
                       const EllipseObj* ellipses, int ellipse_count,
                       const PolygonObj* polygons, int polygon_count,
                       const DashedLineObj* dashed_lines, int dashed_line_count,
-                      const ArcObj* arcs, int arc_count,
                       const PointObj* points, int point_count,
-                      const TextObj* texts, int text_count,
                       const DrawCmd* cmds, int cmd_count);
 
 void Render_Cleanup(void);

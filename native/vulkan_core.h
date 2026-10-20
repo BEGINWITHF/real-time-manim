@@ -48,6 +48,10 @@ extern uint32_t g_current_frame;
 extern uint32_t g_last_img_idx;
 extern bool g_framebuffer_resized;
 
+/* Present pacing: 0 = FIFO/vsync (interactive default), 1 = unpaced (offline
+   records, which FIFO would cap at the display's refresh rate). */
+extern int g_unpaced_present;
+
 extern float g_clear_rgb[3];
 void Render_SetBackgroundColor(float r, float g, float b);
 

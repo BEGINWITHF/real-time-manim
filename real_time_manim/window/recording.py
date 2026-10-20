@@ -1,6 +1,8 @@
 """Screenshots and video capture.
 
-Also carries the BMP headers written by `screenshot_printwindow`."""
+Pixels come from the Vulkan swapchain readback (`screenshot`, the fast-record
+pipe and the live `start_record` worker); the BMP headers below are what the
+fallback path parses when a DLL has no raw readback export."""
 
 import ctypes
 import os
@@ -38,6 +40,58 @@ class BITMAPFILEHEADER(ctypes.Structure):
     ]
 
 
+def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path, threads=None):
+    """The ffmpeg argv that encodes a raw frame pipe (fast record, single piped).
+
+    Shared by the live ``enable_fast_record`` pipe and the frame-parallel
+    workers (``real_time_manim._record_worker``) so both halves of a split
+    record produce frames with identical encoder settings -- otherwise the
+    concatenated segments would not match the single-pass output.
+
+    ``threads`` caps the *encoder's* thread pool.  x264 defaults to ~1.5x the
+    core count, and several workers each doing that oversubscribes the machine:
+    4 concurrent workers measured 17.3 ms/frame with their encoders against
+    8.0 ms/frame with exactly the same loops and no encoder.  A single-process
+    record leaves it None, so its command -- and its bitstream -- is unchanged.
+
+    ``-vf scale=out_range=pc`` / ``-color_range pc`` keep the frames full-range:
+    the default limited-range conversion scales Y by 219/255 and swscale
+    truncates where manim's own encoder rounds, which decoded flat #808080 one
+    level low and, through the chroma round trip, shifted flat scenes by
+    (-4,-2,-5) RGB -- just outside tolerance.
+    """
+    args = [
+        "ffmpeg", "-y",
+        "-f", "rawvideo", "-pixel_format", pix_fmt,
+        "-video_size", "%dx%d" % (width, height),
+        "-framerate", str(fps),
+        "-i", "-",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-vf", "scale=out_range=pc",
+        "-color_range", "pc",
+        "-crf", "18", "-preset", "fast",
+    ]
+    if threads is not None:
+        args += ["-threads", str(int(threads))]
+    args.append(out_path)
+    return args
+
+
+def encoder_threads(jobs, cpus=None):
+    """Threads to give EACH worker's encoder when ``jobs`` of them run at once.
+
+    The workers are CPU-bound while rendering, so the encoders must not take the
+    whole machine: one core per worker is left for the frame loop and the rest
+    are shared out.  A single worker (the default path) gets None -- x264's own
+    auto setting -- so its output is untouched.
+    """
+    jobs = max(1, int(jobs))
+    if jobs < 2:
+        return None
+    cpus = int(cpus if cpus is not None else (os.cpu_count() or 4))
+    return max(1, min(8, (cpus - jobs) // jobs))
+
+
 class RecordingMixin:
 
     def screenshot(self, path):
@@ -65,66 +119,16 @@ class RecordingMixin:
         presented swapchain image is owned by the presentation engine, so
         copying it afterwards returns undefined pixels; the engine copies the
         frame while it still owns it instead.
+
+        The DLL answers with the ring slot the pixels will land in (newer
+        builds); it is remembered as ``_readback_slot`` so a deferred reader
+        (``_capture_screenshot_to_pipe``) can pick them up later without
+        waiting for the GPU.
         """
         fn = getattr(self.dll, 'Vulkan_RequestReadback', None)
         if fn is not None:
-            fn()
+            self._readback_slot = int(fn())
 
-    def screenshot_printwindow(self, path):
-        if sys.platform != "win32":
-            # macOS: no GDI — the swapchain framebuffer readback is the
-            # reliable capture path (TCC-free, immune to occlusion).
-            return bool(self.screenshot(path))
-        import ctypes.wintypes as wt
-        user32 = ctypes.windll.user32
-        gdi32 = ctypes.windll.gdi32
-        hwnd = user32.FindWindowW(None, "Real Time Manim")
-        if not hwnd:
-            hwnd = self.hwnd
-            if not hwnd:
-                return False
-
-        # Client area dimensions
-        rc = wt.RECT()
-        user32.GetClientRect(hwnd, ctypes.byref(rc))
-        w, h = rc.right - rc.left, rc.bottom - rc.top
-
-        # Client area screen position
-        pt = wt.POINT(0, 0)
-        user32.ClientToScreen(hwnd, ctypes.byref(pt))
-        x, y = pt.x, pt.y
-
-        # Capture from screen at client area position
-        hdc_screen = user32.GetDC(None)
-        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
-        hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
-        gdi32.SelectObject(hdc_mem, hbitmap)
-        gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, 0x00CC0020)  # SRCCOPY
-
-        bi = BITMAPINFOHEADER()
-        bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bi.biWidth = w
-        bi.biHeight = -h
-        bi.biPlanes = 1
-        bi.biBitCount = 24
-        bi.biCompression = 0
-        row_bytes = ((w * 3 + 3) & ~3)
-        buf = (ctypes.c_ubyte * (row_bytes * h))()
-        gdi32.GetDIBits(hdc_mem, hbitmap, 0, h, buf, ctypes.byref(bi), 0)
-        bfh = BITMAPFILEHEADER()
-        bfh.bfType = 0x4D42
-        bfh.bfOffBits = ctypes.sizeof(BITMAPFILEHEADER) + ctypes.sizeof(BITMAPINFOHEADER)
-        bfh.bfSize = bfh.bfOffBits + row_bytes * h
-        path_b = path.encode('utf-8') if isinstance(path, str) else path
-        hdr_buf = ctypes.string_at(ctypes.addressof(bfh), ctypes.sizeof(bfh)) + \
-                  ctypes.string_at(ctypes.addressof(bi), ctypes.sizeof(bi))
-        with open(path_b, 'wb') as f:
-            f.write(hdr_buf)
-            f.write(ctypes.string_at(ctypes.addressof(buf), len(buf)))
-        gdi32.DeleteObject(hbitmap)
-        gdi32.DeleteDC(hdc_mem)
-        user32.ReleaseDC(None, hdc_screen)
-        return True
 
     def enable_fast_record(self, path, fps=60, segment=None, hidden=True, count_only=False):
         """Enable fast offline recording.
@@ -147,6 +151,11 @@ class RecordingMixin:
         self._fast_record_segment = segment
         self._fast_record_frame_idx = 0
         self._fast_record_count_only = count_only
+        # Deferred-readback state (see _fast_capture_via_slots): the ring slot
+        # whose pixels are still to be written out.
+        self._fast_slot_pending = None
+        self._fast_raw_buf = None
+        self._readback_slot = None
         w, h = self.win_w, self.win_h
 
         # Hide window for faster rendering (no compositing)
@@ -171,30 +180,53 @@ class RecordingMixin:
             self._fast_h = h
             self._fast_row_size = w * 3
             self._fast_row_padded = ((w * 3 + 3) // 4) * 4
-            ffmpeg_cmd = [
-                "ffmpeg", "-y",
-                "-f", "rawvideo", "-pixel_format", "bgr24",
-                "-video_size", f"{w}x{h}",
-                "-framerate", str(fps),
-                "-i", "-",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                # Keep the frames full-range: the default limited-range
-                # conversion scales Y by 219/255 and the CLI's swscale truncates
-                # where manim's own encoder rounds, so a flat #808080 rendered
-                # correctly (verified from the DLL's own readback) decoded one
-                # level low -- and the chroma round trip amplified that into a
-                # (-4,-2,-5) RGB offset that pushed the flat scenes just outside
-                # tolerance.
-                "-vf", "scale=out_range=pc",
-                "-color_range", "pc",
-                "-crf", "18", "-preset", "fast",
-                self._fast_record_path,
-            ]
+            # Newer DLLs hand back the raw BGRA framebuffer with no per-pixel
+            # conversion (`SaveScreenshotRawBGRA`); ffmpeg eats bgra directly and
+            # drops the alpha, so the per-pixel BGRA->BGR loop disappears.  The
+            # BMP route stays as the fallback for a DLL without that export (and
+            # for macOS).  The bare `raw_bgra` alias is what
+            # tools/check_bindings.py can see, hence the explicit argtypes.
+            raw_bgra = getattr(self.dll, "SaveScreenshotRawBGRA", None)
+            if raw_bgra is not None:
+                raw_bgra.restype = ctypes.c_int
+                raw_bgra.argtypes = [
+                    ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_int)]
+            self._fast_raw_bgra = raw_bgra
+            # And the ring-slot reader, which lets the record loop read frame k
+            # only after frame k+1 was submitted -- hiding the GPU fence wait
+            # (~2 ms of an ~8 ms frame).  Same bare-alias form as above.
+            slot_bgra = getattr(self.dll, "SaveScreenshotSlotBGRA", None)
+            if slot_bgra is not None:
+                slot_bgra.restype = ctypes.c_int
+                slot_bgra.argtypes = [
+                    ctypes.c_int, ctypes.POINTER(ctypes.c_ubyte),
+                    ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+            self._fast_slot_bgra = slot_bgra
+            pix_fmt = "bgra" if self._fast_raw_bgra else "bgr24"
+            ffmpeg_cmd = fast_pipe_ffmpeg_args(w, h, fps, pix_fmt,
+                                               self._fast_record_path)
             self._ffmpeg = subprocess.Popen(
                 ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
             self._fast_tmp_bmp = os.path.join(tempfile.gettempdir(),
                 f"manim_fast_{os.getpid()}_{id(self)}.bmp")
-            print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps → {path}")
+            # A record must not be paced by the display (see _set_unpaced).
+            self._set_unpaced(True)
+            print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps ({pix_fmt}) → {path}")
+
+    def _set_unpaced(self, unpaced):
+        """Let (or stop) the window present without waiting for the display.
+
+        Called with True while a record is running and for any hidden window: a
+        record must never be capped by the refresh rate (measured: an *empty*
+        scene spent 6.9 ms of an 8.3 ms frame waiting on the display).  A visible
+        window goes back to vsync so live playback stays tear-free and paced.
+        """
+        unpaced_fn = getattr(self.dll, "Vulkan_SetUnpaced", None)
+        if unpaced_fn is not None:
+            unpaced_fn.restype = None
+            unpaced_fn.argtypes = [ctypes.c_int]
+            unpaced_fn(1 if unpaced else 0)
 
     def set_visible(self, visible=True):
         """Show or hide the window after it was created.
@@ -213,6 +245,8 @@ class RecordingMixin:
             if hwnd:
                 user32.ShowWindow(hwnd, 5 if visible else 0)  # SW_SHOW / SW_HIDE
         self.hidden = not visible
+        # A hidden window has nothing to pace for, a visible one does.
+        self._set_unpaced(not visible)
 
     def close(self):
         if getattr(self, '_defer_close', False):
@@ -232,6 +266,81 @@ class RecordingMixin:
             reg.remove(self)
 
     def _capture_screenshot_to_pipe(self):
+        """Copy the frame the recorder just drew into ffmpeg's stdin.
+
+        Three routes, all ending in tightly packed rows at ``self._fast_w``:
+
+        * ``SaveScreenshotSlotBGRA`` (newest DLL): one frame behind, so the GPU
+          fence wait disappears -- see :meth:`_fast_capture_via_slots`.
+        * ``SaveScreenshotRawBGRA`` (newer DLL): the raw framebuffer, one memcpy
+          right after the draw, piped verbatim as ``bgra``.
+        * ``SaveScreenshot`` (fallback): a BMP on disk, read back and de-padded
+          into ``bgr24``.
+        """
+        if getattr(self, '_fast_slot_bgra', None) is not None:
+            return self._fast_capture_via_slots()
+        if self._fast_raw_bgra is not None:
+            return self._capture_raw_bgra_to_pipe()
+        return self._capture_bmp_to_pipe()
+
+    def _fast_capture_via_slots(self):
+        """Queue this frame and write out the previous one.
+
+        Reading a frame right after drawing it blocks the CPU on the GPU fence
+        (measured ~2 ms of an ~8 ms 1080p frame).  Doing the *next* frame's work
+        first -- evaluate, upload, submit -- leaves the GPU that long to finish,
+        so by the time the slot is read the wait is over.  The staging buffer
+        carries two slots precisely so the newer frame's copy cannot land on
+        pixels nobody has read yet (native/platform.c: SS_SLOTS).
+        """
+        prev = self._fast_slot_pending
+        if prev is not None:
+            self._fast_write_slot(prev)
+        slot = getattr(self, '_readback_slot', None)
+        self._fast_slot_pending = slot if (slot is not None and slot >= 0) else None
+
+    def _fast_write_slot(self, slot):
+        """Encode one buffered frame from the readback ring (see the DLL)."""
+        w, h = self._fast_w, self._fast_h
+        need = w * h * 4
+        buf = self._fast_raw_buf
+        if buf is None or len(buf) < need:
+            buf = (ctypes.c_ubyte * need)()
+            self._fast_raw_buf = buf
+        out_size = ctypes.c_int(need)
+        if not self._fast_slot_bgra(slot, buf, need, ctypes.byref(out_size)):
+            # That slot holds no completed copy: the frame that would have
+            # serviced it was skipped (resize / window gone).  Dropping it keeps
+            # the stream's rows consistent with -video_size.
+            return
+        if out_size.value != need:
+            return
+        self._ffmpeg.stdin.write(memoryview(buf)[:need])
+
+    def _fast_drain_slot(self):
+        """Write the last buffered frame (nothing follows it to hide behind)."""
+        prev = getattr(self, '_fast_slot_pending', None)
+        if prev is not None:
+            self._fast_write_slot(prev)
+            self._fast_slot_pending = None
+
+    def _capture_raw_bgra_to_pipe(self):
+        w, h = self._fast_w, self._fast_h
+        need = w * h * 4
+        buf = getattr(self, '_fast_raw_buf', None)
+        if buf is None or len(buf) < need:
+            buf = (ctypes.c_ubyte * need)()
+            self._fast_raw_buf = buf
+        out_size = ctypes.c_int(need)
+        if not self._fast_raw_bgra(buf, need, ctypes.byref(out_size)):
+            return                      # no frame present yet (or size changed)
+        # A window resized mid-record would change the row layout under ffmpeg's
+        # fixed -video_size: drop the frame instead of shearing the rest.
+        if out_size.value != need:
+            return
+        self._ffmpeg.stdin.write(memoryview(buf)[:need])
+
+    def _capture_bmp_to_pipe(self):
         """SaveScreenshot → parse BMP → pipe tightly packed BGR to ffmpeg.
 
         BMP rows are padded to a 4-byte boundary ((w*3 + 3) & ~3 == 2564 bytes
@@ -286,6 +395,7 @@ class RecordingMixin:
             print(f"[FastRecord] Count: {self._fast_record_frame_idx} frames")
         elif getattr(self, '_fast_record_pipe_mode', False):
             try:
+                self._fast_drain_slot()          # the frame nobody follows
                 self._ffmpeg.stdin.close()
                 self._ffmpeg.wait()
                 sz = os.path.getsize(self._fast_record_path) / 1024
@@ -301,6 +411,9 @@ class RecordingMixin:
             bmps = [f for f in os.listdir(self._fast_record_path) if f.endswith('.bmp')]
             print(f"[FastRecord] BMP: {len(bmps)} frames in {self._fast_record_path}")
         self._fast_record = False
+        # Back to what the window's visibility wants: hidden stays unpaced,
+        # a window someone is watching goes back to vsync (see _set_unpaced).
+        self._set_unpaced(bool(getattr(self, 'hidden', True)))
 
     def start_record(self, path="output.mp4", fps=60):
         if self._recording:
@@ -398,19 +511,6 @@ class RecordingMixin:
         if os.path.isdir(frame_dir):
             shutil.rmtree(frame_dir, ignore_errors=True)
 
-    def _get_screen_bbox(self):
-        if sys.platform != "win32":
-            return None
-        import ctypes.wintypes as wt
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW(None, "Real Time Manim")
-        if not hwnd:
-            return None
-        rc = wt.RECT()
-        user32.GetClientRect(hwnd, ctypes.byref(rc))
-        pt = wt.POINT(0, 0)
-        user32.ClientToScreen(hwnd, ctypes.byref(pt))
-        return (pt.x, pt.y, pt.x + rc.right, pt.y + rc.bottom)
 
     def _capture_frame(self):
         pass

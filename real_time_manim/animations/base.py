@@ -6,6 +6,47 @@ from manim import VGroup, Group, Rectangle, Circle, YELLOW, Text, ManimColor
 TAU = 2.0 * math.pi
 
 
+def release_hidden_channels(mob):
+    """Put every partial-draw channel on ``mob`` back to "fully drawn".
+
+    RTM's draw state (``_vulkan_progress``, the ``_vulkan_progress_lower/upper``
+    window, ``_vulkan_points_partial``, ``_letter_alphas`` and the animated
+    opacity registry) is a renderer-only concept -- a CE mobject carries none of
+    it.  manim restores exactly this in ``ShowPartial.clean_up_from_scene``
+    (``pointwise_become_partial(start, 0, 1)``), so a mobject that is shown
+    again later (re-added, reused in a new animation) is WHOLE again.
+
+    RTM's removers finished with the channel parked at "hidden" and never
+    released it, so every later draw of the SAME mobject submitted nothing at
+    all: measured on ``Uncreate(Square)`` followed by
+    ``FadeIn(Square).begin()`` -- the sender emitted zero shape calls, while
+    ``Unwrite(Text)`` left ``_letter_alphas = {0: 0.0, ...}`` and
+    ``FadeOut`` left the opacity registry at 0.0.
+    """
+    nodes = [mob]
+    getter = getattr(mob, "get_family", None)
+    if callable(getter):
+        try:
+            nodes = list(getter())
+        except Exception:
+            pass
+    for sub in nodes:
+        d = getattr(sub, "__dict__", None)
+        if d is None:
+            continue
+        for name in ("_vulkan_progress_lower", "_vulkan_progress_upper",
+                     "_letter_alphas"):
+            d.pop(name, None)
+        if hasattr(sub, "_vulkan_progress"):
+            sub._vulkan_progress = 1.0
+        if d.get("_vulkan_points_partial"):
+            sub._vulkan_points_partial = False
+    try:
+        set_anim_opacity(mob, 1.0)
+    except Exception:
+        pass
+
+
 def color_to_rgb(color):
     """Normalize any Manim color spec to an ``(r, g, b)`` tuple of 0..1 floats.
 
@@ -15,6 +56,28 @@ def color_to_rgb(color):
     crashed on ``float('#')``.
     """
     return tuple(float(c) for c in ManimColor(color).to_rgb())
+
+
+def resolve_mobject(mobject, kwargs, class_name, alias="vmobject"):
+    """CE-compatible mobject argument resolution.
+
+    CE spells the first argument ``vmobject`` for ``Create`` / ``Write`` /
+    ``DrawBorderThenFill`` / ``Uncreate`` / ``Unwrite`` and ``mobject`` for the
+    rest; RTM used ``mobject`` everywhere, so a mechanically ported
+    ``Create(vmobject=sq)`` raised ``TypeError: missing required positional
+    argument: 'mobject'``.  Accept both spellings and fail with a clear
+    message when neither is present.
+    """
+    if mobject is None and alias in kwargs:
+        mobject = kwargs.pop(alias)
+    if mobject is None:
+        raise TypeError(
+            "%s() missing required argument: 'mobject'%s" % (
+                class_name,
+                " (or CE spelling '%s')" % alias if alias else "",
+            )
+        )
+    return mobject
 
 
 from real_time_manim.rate_functions import (
@@ -196,7 +259,28 @@ class Animation:
         return _copy.deepcopy(self)
 
     def clean_up_from_scene(self, scene):
-        pass
+        """Remove the animated mobject from the scene when this is a remover.
+
+        manim's ``Animation.clean_up_from_scene`` does exactly this::
+
+            if self.remover:
+                self.scene.remove(self.mobject)
+
+        RTM's base was a no-op, so ``FadeOut`` / ``Uncreate(remover=True)``
+        only parked the mobject at opacity 0 and left it as a (transparent)
+        scene ROOT forever: long scenes accumulated dead roots, and a later
+        ``FadeOut(VGroup(...))`` or ``mobjects`` assertion saw them.  Only
+        top-level roots may be removed -- animating a submobject must leave its
+        parent in place, which is manim's behaviour too.
+        """
+        if not getattr(self, "remover", False) or self.mobject is None:
+            return
+        try:
+            roots = getattr(scene, "mobjects", None)
+            if roots is not None and self.mobject in roots:
+                scene.remove(self.mobject)
+        except Exception:
+            pass
 
     def get_all_mobjects(self):
         if self.mobject is not None:

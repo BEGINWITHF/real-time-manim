@@ -520,6 +520,21 @@ Recording and automatic cleanup of transient `media/` output are handled by the
 Both accept a Scene subclass/instance/callable, and clean up transient media by
 default. See the wiki's Recording page for the full option set.
 
+`fast_record_scene` takes `jobs=`: the frame range is split across that many
+worker processes, each rendering a contiguous block into its own MP4 with the
+same encoder settings, then concatenated with `-c copy`.  Frames of a
+time-addressable scene are independent, so this divides the per-frame cost by
+the worker count; it needs an importable Scene class and enough frames to
+amortise each worker's interpreter + GPU startup, so the default `jobs=None`
+records in one pass, an int asks for that many workers, and `jobs="auto"` probes
+the scene once and splits only when it wins (240+ frames, single window).
+`jobs=1` is the classic single pass and is bit-for-bit identical to it.
+
+Because a split record renders from the timeline instead of replaying `play()`
+calls, per-animation finishing hooks (`finish()`, `clean_up_from_scene()` -- the
+`FadeTransform` ghost copy) do not run on that path; keep `jobs=None` for scenes
+that depend on them.
+
 ---
 
 ## Render verification (2026-10-11)

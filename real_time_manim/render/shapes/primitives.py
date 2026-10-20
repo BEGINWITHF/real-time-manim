@@ -2,7 +2,7 @@
 
 import math
 import numpy as np
-from real_time_manim.render.util import manim_to_screen, get_stroke_w, get_opacity, point_path_bounds
+from real_time_manim.render.util import manim_to_screen, get_stroke_w, get_opacity, point_path_bounds, curve_segments
 
 
 class PrimitiveMixin:
@@ -199,8 +199,10 @@ class PrimitiveMixin:
             # stayed black while it faded in (same trap _send_polygon documents).
             a = a * so
             sw = self._stroke_width(mob)
-            # Match legacy behavior: fixed segment tessellation (segs=48)
-            segs = 48
+            # Same rule as the circle's stroke (see curve_segments); an
+            # elongated ellipse is sized by its major radius, where its
+            # curvature is highest and it would facet first.
+            segs = curve_segments(max(rx, ry))
             circumference = math.pi * (3 * (rx + ry) - math.sqrt((3 * rx + ry) * (rx + 3 * ry)))
             drawn = circumference * progress
             accumulated = 0.0
@@ -353,8 +355,11 @@ class PrimitiveMixin:
             # stayed black while it faded in (same trap _send_polygon documents).
             a = a * so
             sw = self._stroke_width(mob)
-            # Match legacy behavior: fixed segment tessellation (segs=48)
-            segs = 48
+            # Segments for the on-screen radius (see render/util.curve_segments):
+            # a fixed 48 collapsed as the camera zoomed in -- at 8x the outline
+            # was a 48-gon with a 4.6 px sagitta.  48 at the default zoom, so an
+            # unzoomed frame is unchanged.
+            segs = curve_segments(sr)
             circumference = 2.0 * math.pi * sr
             drawn = circumference * progress
             accumulated = 0.0

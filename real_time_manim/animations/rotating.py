@@ -1,4 +1,4 @@
-from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity, get_anim_rotation, set_anim_rotation
+from real_time_manim.animations.base import Animation, get_anim_rotation, set_anim_rotation
 import numpy as np
 import math
 from manim import OUT
@@ -42,11 +42,6 @@ class Rotating(Animation):
         self._about_edge = about_edge
         super().__init__(mobject, run_time=run_time, rate_func=rate_func or _linear, **kwargs)
 
-    def _is_3d_axis(self):
-        if self._axis is None:
-            return False
-        return not np.allclose(np.array(self._axis, dtype=float), OUT)
-
     def _should_bake(self):
         """Bake the rotation into the point arrays, per frame.
 
@@ -80,6 +75,13 @@ class Rotating(Animation):
             self.mobject._rotation_about_point = self._rotation_about_point.copy()
         else:
             self._rotation_about_point = None
+            # manim's own Rotating has no default pivot: `interpolate_mobject`
+            # calls `mobject.rotate(...)` with about_point=None, and
+            # `Mobject.rotate` then uses `get_center()`.  The bake path used
+            # ORIGIN instead, so `Rotating(arrow, 180*DEGREES, axis=IN)` swung
+            # the arrow around the frame centre (off-screen) where CE spins it
+            # in place -- wiki 03-动画/移动与旋转/01-旋转-rotating_axis.
+            self._bake_about = np.array(self.mobject.get_center(), dtype=float)
         if self._should_bake():
             self.mobject._rotation_3d = True
             # The bake rewrites the point arrays every frame, and the primitive
@@ -145,6 +147,8 @@ class Rotating(Animation):
                 return
             axis = axis / axis_norm
             about = self._rotation_about_point
+            if about is None:
+                about = getattr(self, '_bake_about', None)
             if about is None:
                 about = np.zeros(3)
             for sub in self.mobject.family_members_with_points():

@@ -26,7 +26,7 @@ These tests assert the state the paint walk consumes: parked opacities on
 tree-visited nodes, ghost geometry over time, and scene membership.
 """
 import pytest
-from manim import MathTex, Circle, Scene, Square, Text, VGroup
+from manim import MathTex, Circle, RIGHT, Scene, Square, Text, VGroup
 
 from real_time_manim.animations.base import get_anim_opacity
 from real_time_manim.animations.fade_transform import FadeTransform
@@ -67,15 +67,39 @@ def _sub(anim, cls):
     return next(a for a in anim._anims if isinstance(a, cls))
 
 
+def _piece_transform(anim):
+    """The per-piece FadeTransform inside the mismatch crossfade (CE parity).
+
+    ``fade_transform_mismatches=True`` builds CE's ``FadeTransformPieces`` -- an
+    AnimationGroup of one FadeTransform per matched pair -- so its ghosts live
+    on the children, not on a single whole-group FadeTransform.  Returns the
+    piece whose source and target boxes DIFFER, i.e. one whose ghost has a
+    stretch to measure.
+    """
+    from real_time_manim.animations.fade_transform import FadeTransformPieces
+    group = _sub(anim, FadeTransformPieces)
+    pieces = [a for a in group.animations if isinstance(a, FadeTransform)]
+    for piece in pieces:
+        if abs(piece.mobject.height - piece.target_mobject.height) > 0.1:
+            return group, piece
+    return group, pieces[0]
+
+
 # --------------------------------------------------------------------------- #
 # 1/2. FadeTransform: source fade + ghost presentation + morph
 # --------------------------------------------------------------------------- #
 
 def test_wrapped_fade_transform_parks_source_parts_down_and_restores():
-    """The source parts (reached via their real parent) must dim and restore.
+    """The key-mapped source part (reached via its real parent) must dim.
 
-    Before the fix the opacity landed only on the detached wrapper, so the
-    source stayed fully opaque for the whole crossfade.
+    CE pairs the key_map parts with ``FadeTransformPieces`` -- a per-piece
+    crossfade: each source part fades out where it stands while a COPY of its
+    partner fades in at the partner's place.  RTM used one whole-group
+    ``FadeTransform``, whose single ghost is stretched to the source's
+    bounding box: during the transition the source stayed at full strength
+    and that (wrongly sized) ghost was painted over it, so the wiki clip
+    ``03-动画/匹配变换/01-匹配变换-shapes_keymap`` showed "c" and "h" at
+    once instead of a clean crossfade into "hat".
     """
     scene = Scene()
     src = Text("cat", font_size=52)
@@ -87,50 +111,74 @@ def test_wrapped_fade_transform_parks_source_parts_down_and_restores():
     }
     anim = TransformMatchingShapes(src, tar, key_map=key_map, run_time=2.0)
     anim.begin(0.0)
-    ft = _sub(anim, FadeTransform)
 
-    # mid-crossfade: the source "c" sits at ~0.5 * (1 - alpha)
+    # per-piece crossfade, not a whole-group FadeTransform
+    assert not any(isinstance(a, FadeTransform) for a in anim._anims)
+    copies = anim._key_mapped_copies
+    assert len(copies.submobjects) == 1
+
+    # mid-crossfade: the source "c" sits at ~0.5 and its partner's copy too
     anim.interpolate(1.0)
     assert get_anim_opacity(src[0]) == pytest.approx(0.5, abs=0.05)
+    assert get_anim_opacity(copies.submobjects[0]) == pytest.approx(0.5, abs=0.05)
 
-    # near the end it must be gone
+    # near the end the source must be gone and the target copy fully in
     anim.interpolate(1.99)
     assert get_anim_opacity(src[0]) < 0.02
+    assert get_anim_opacity(copies.submobjects[0]) > 0.98
 
     # and the reset pass must restore it (CE resets before the source leaves)
     anim.interpolate(0.0)
     assert get_anim_opacity(src[0]) == pytest.approx(1.0)
 
 
-def test_fade_transform_ghost_morphs_to_target_shape(window):
-    """The ghost's points must morph down the family to the target's shape.
+def _mismatch_scene():
+    """Two same-count groups with a shape that exists on ONE side only.
 
-    ``VMobject.interpolate`` is not recursive; interpolating only the direct
-    children (a MathTexPart with no points of its own) morphed nothing and
-    the ghost kept the source's stretched bounding box -- a bright square --
-    for the entire crossfade (measured: height 0.332 at t=2.38/2.4, target
-    0.020).
+    The shared Square is matched by shape key, so only the Triangle/Circle pair
+    reaches the mismatch branch -- which is exactly the branch under test.
     """
-    scene = Scene()
-    anim = _tmt(scene, fade_transform_mismatches=True, run_time=2.0)
-    scene.add(anim.mobject)
+    from manim import Triangle
+    src = VGroup(Square(side_length=1.0),
+                 Triangle(radius=0.4).shift(RIGHT * 2))
+    tar = VGroup(Square(side_length=1.0).shift(RIGHT * 2),
+                 Circle(radius=1.0))
+    return Scene(), src, tar
+
+
+def test_fade_transform_ghost_morphs_to_target_shape(window):
+    """Each per-piece ghost must be presented and morph to its own target.
+
+    ``fade_transform_mismatches=True`` is CE's ``FadeTransformPieces``: one
+    FadeTransform per pair, so each ghost is stretched to ITS part's box and
+    then morphs to that part's target.  (The old whole-group FadeTransform
+    stretched one ghost to the whole group's box: measured 0.332 against a
+    0.020 target part.)
+    """
+    scene, src, tar = _mismatch_scene()
+    scene.add(src)
+    anim = TransformMatchingShapes(src, tar, fade_transform_mismatches=True,
+                                   run_time=2.0)
     anim.begin(0.0)
     window.scene = scene
     try:
-        ft = _sub(anim, FadeTransform)
+        group, ft = _piece_transform(anim)
         ghost, target = ft._ghost, ft.target_mobject
         window._present_detached_animated([anim])
+        anim.interpolate(0.0)      # the group begins its children lazily
 
         assert id(ghost) in _family_ids(scene), (
-            "FadeTransform's ghost must be presented to the paint walk")
+            "each piece's FadeTransform ghost must be presented to the paint "
+            "walk")
 
-        start_h = ghost.height                          # stretched source box
-        assert start_h > target.height                  # e.g. 0.332 vs 0.020
+        start_h = ghost.height            # stretched to this pair's source box
+        assert abs(start_h - target.height) > 1e-6, (
+            "the ghost should start at the source part's box, not the "
+            "target's (%s vs %s)" % (start_h, target.height))
 
         anim.interpolate(1.0)                          # mid-crossfade
-        assert target.height < ghost.height < start_h, (
-            "ghost should be partway between the stretched source box "
-            "and the natural target shape")
+        assert abs(ghost.height - target.height) < abs(start_h - target.height), (
+            "ghost should be partway between the source box and the target")
 
         anim.interpolate(1.99)                         # near the end
         assert ghost.height == pytest.approx(target.height, abs=0.02)
@@ -145,16 +193,19 @@ def test_tma_cleanup_removes_the_presented_ghost(window):
     Before the fix the ghost -- presented above -- would have lingered in
     the scene tree at parked opacity 0 forever.
     """
-    scene = Scene()
-    anim = _tmt(scene, fade_transform_mismatches=True, run_time=1.0)
-    scene.add(anim.mobject)
+    scene, src, tar = _mismatch_scene()
+    scene.add(src)
+    anim = TransformMatchingShapes(src, tar, fade_transform_mismatches=True,
+                                   run_time=1.0)
     anim.begin(0.0)
     window.scene = scene
     try:
         window._present_detached_animated([anim])
-        ghost = _sub(anim, FadeTransform)._ghost
+        group, ft = _piece_transform(anim)
+        ghost = ft._ghost
         assert ghost in scene.mobjects
 
+        anim.interpolate(0.5)          # the group begins its children lazily
         anim.finish()
         anim.clean_up_from_scene(scene)
         assert all(m is not ghost for m in scene.mobjects)
@@ -169,6 +220,41 @@ def test_tma_cleanup_removes_the_presented_ghost(window):
 # --------------------------------------------------------------------------- #
 # 3. TMA default branch: fade-in target copy presentation
 # --------------------------------------------------------------------------- #
+
+def test_key_map_crossfade_copies_are_presented_and_removed(window):
+    """The key-mapped partner copies must be presented DURING the play.
+
+    The per-piece crossfade parks its incoming copies in a detached VGroup,
+    which the scene tree cannot reach -- without presenting them the source
+    faded out into nothing and the target popped in at clean_up.
+    """
+    scene = Scene()
+    src = Text("cat", font_size=52)
+    tar = Text("hat", font_size=52).move_to(src)
+    scene.add(src)
+    key_map = {
+        TransformMatchingShapes.get_mobject_key(src[0]):
+        TransformMatchingShapes.get_mobject_key(tar[0]),
+    }
+    anim = TransformMatchingShapes(src, tar, key_map=key_map, run_time=1.0)
+    anim.begin(0.0)
+    window.scene = scene
+    try:
+        copies = anim._key_mapped_copies
+        window._present_detached_animated([anim])
+        assert id(copies) in _family_ids(scene), (
+            "the key-mapped crossfade copies must be presented")
+        anim.interpolate(0.5)
+        assert get_anim_opacity(copies.submobjects[0]) == pytest.approx(
+            0.5, abs=0.06)
+        anim.finish()
+        anim.clean_up_from_scene(scene)
+        assert all(m is not copies for m in scene.mobjects), (
+            "clean_up must remove the presented copies again")
+        assert anim.target_mobject in scene.mobjects
+    finally:
+        window.scene = None
+
 
 def test_tma_fade_in_target_copy_is_presented_and_removed(window):
     """The unmatched target parts must fade in DURING the play.

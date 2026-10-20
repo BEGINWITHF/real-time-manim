@@ -120,7 +120,7 @@ to Manim's `Scene.play` (`run_time`, `lag_ratio`, `rate_func`, …).
 
 | Function | Mode | Behaviour |
 |----------|------|-----------|
-| `fast_record_scene(scene, out_path=None, *, fps=60, hidden=True, overwrite=True, cleanup=True)` | offline | Fast framebuffer readback piped straight to ffmpeg. **No window** by default; runs at full speed. |
+| `fast_record_scene(scene, out_path=None, *, fps=60, hidden=True, overwrite=True, cleanup=True, jobs=None)` | offline | Fast framebuffer readback piped straight to ffmpeg. **No window** by default; runs at full speed. `jobs` splits long scenes across worker processes. |
 | `record_scene(scene, out_path=None, *, fps=60, overwrite=True, cleanup=True)` | real-time | Captures a **live, visible** window in a background thread. |
 
 Both accept a `Scene` subclass, a `Scene` instance, or a no-arg callable, and
@@ -133,9 +133,74 @@ manim `media/` after the run; set `cleanup=False` to keep it.
 fast_record_scene(MyScene)                       # ~/Downloads/output.mp4
 fast_record_scene(MyScene, "preview.mp4")        # current dir, or pass a full path
 fast_record_scene(MyScene, fps=60, hidden=False) # show the window while capturing
+fast_record_scene(MyScene, jobs=4)               # 4 worker processes, split frames
 record_scene(MyScene, "live.mp4", fps=30)        # record against a live window
 ```
 
+**`jobs`** (fast record only) records a time-addressable scene with several
+worker processes at once: the frame range is split into ordered blocks, each
+worker renders its own block into its own mp4 and they are concatenated
+losslessly, so the frame cost divides by the worker count and a long scene
+records several times sooner. It needs a `Scene` *class* another process can
+import (a directly-run script needs the usual `if __name__ == "__main__"` guard)
+and it only pays off past a few seconds of video, because every worker pays its
+own interpreter + GPU startup. So the default `jobs=None` records in one pass
+with no probe at all, `jobs=N` asks for N workers, and `jobs="auto"` probes the
+scene once and splits it only when that wins -- an importable, single-window
+scene of at least 240 frames (4 s at 60 fps) across `min(4, cpus - 1)`
+processes. `jobs=1` is the classic single pass (bit-for-bit identical to it).
+
+Note that a split record renders frames from the timeline rather than replaying
+`play()` calls, so a scene that relies on per-animation finishing hooks
+(`finish()`, `clean_up_from_scene()` -- e.g. `FadeTransform`, whose ghost copy
+is cleaned up there) can differ from a single-pass record. That is inherent to
+rendering frames out of order, not a bug: use `jobs=None` for those scenes.
+
+### Frame preview: any frame, instantly (`real_time_manim.preview`)
+
+A window opens with **nothing playing**, plus an input bar docked right
+underneath: type a frame, press Enter, and that frame is on screen -- no
+pre-render, no replay. Preparing the scene runs `construct()` once *with
+scheduling on* (nothing is drawn: `play` only records what each animation does),
+and after that every seek is O(1) -- a few milliseconds wherever it lands. See
+[`docs/2.0.0-time-addressable.md`](docs/2.0.0-time-addressable.md).
+
+A seek replays animation state; mobjects driven purely by custom updaters (or
+`TracedPath`) are exact when you step *forward* and approximate when you jump
+backwards -- making those time-replayable is that document's P3.
+
+```bash
+python -m real_time_manim.preview 1                       # demo #1 from run.py
+python -m real_time_manim.preview examples.scenes:DemoCreate --at 120
+python -m real_time_manim.preview 1 --controls slider     # drag a scrubber instead
+python -m real_time_manim.preview 1 --pos 1030,60         # keep previews apart
+python -m real_time_manim.preview 1 --no-bar              # type in the terminal
+```
+
+The window forces itself to the front (plain `SetForegroundWindow` is denied to a
+process that does not own the foreground, so it would otherwise open *behind*
+whatever you have maximized).
+
+The docked bar has two looks (`controls=`, or `--controls`):
+
+| `controls` | Bar | How you move |
+|------------|-----|--------------|
+| `input` (default) | `[ frame ] [Jump] [Save PNG] [Quit]` | type a frame/time, press Enter or *Jump* |
+| `slider` | `[=====\|====] [Save PNG] [Quit]` | drag the progress bar (it seeks as you drag) |
+
+Either way the title bar shows `frame 123/347  t=2.050s`. In the text field:
+
+| Input | Meaning |
+|-------|---------|
+| `120` / `120f` | frame 120 (frame numbers are the default unit) |
+| `1.5` / `1.5s` | time 1.5 s |
+| `+10` / `-1` | step that many frames from the current one |
+| `s` | save the current frame as PNG (into `--out`, default `frames/`) |
+| `p` | play forward from here (any input stops it) |
+| `q` | quit |
+
+The same grammar is read from the terminal when the bar is unavailable (macOS,
+or `--no-bar`), so the mode never needs a GUI toolkit.
 ### LaTeX cache helpers (`real_time_manim.util`)
 
 Rendering `MathTex`/`Tex` compiles each formula to an SVG. Cache the results so
@@ -270,5 +335,4 @@ real-time-manim/
 ## Acknowledgments
 
 - [ManimCE](https://www.manim.community/) — the mathematical animation engine
-- [stb_truetype](https://github.com/nothings/stb) — TrueType font rasterizer
 - [Vulkan](https://www.vulkan.org/) — the graphics API

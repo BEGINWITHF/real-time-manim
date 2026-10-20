@@ -1,17 +1,16 @@
 """F1 check: many MLWindows in ONE process.
 
-Reported in 1.0.1: the 13th window always died with
-    RuntimeError: Failed to load any font   (vulkan_bind.py:709)
-which matches native/draw/draw_text.c's font pool:
+This guards the churn itself: creating and closing windows repeatedly used to
+leave the GPU device, the swapchain or a static pool behind, so window N+1
+failed where window 1 worked.
 
-    #define MAX_FONTS 12
-    static unsigned char font_data[MAX_FONTS][1 << 25];   // 12 x 32 MiB
-    ...
-    if (font_count >= MAX_FONTS) return 0;
-
-If a build loads the same font blob once per window, window 13 exhausts the pool
-and every font load fails.  The dev tree dedupes identical blobs, so it should
-survive -- this script says which one you are running.
+The original failure was reported in 1.0.1 -- the 13th window died with
+``RuntimeError: Failed to load any font`` -- because ``MLWindow.__init__``
+loaded a TrueType blob into native ``draw_text.c``'s font pool
+(``MAX_FONTS 12``) for the ``AddText`` bitmap fallback.  That whole path was
+dead (nothing ever called ``AddText``), so it has been removed: windows no
+longer read a font at all, and that particular failure cannot come back.  What
+this script still verifies is that N sequential windows survive.
 
 Usage: python tests/verify_window_churn.py [count]              # dev tree
        venv21/Scripts/python.exe <this file> --installed        # installed package

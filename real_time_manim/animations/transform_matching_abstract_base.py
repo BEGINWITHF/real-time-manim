@@ -4,7 +4,7 @@ from manim import VGroup
 from real_time_manim.animations.transform import Transform
 from real_time_manim.animations.fade_out import FadeOut
 from real_time_manim.animations.fade_in import FadeIn
-from real_time_manim.animations.fade_transform import FadeTransform
+from real_time_manim.animations.fade_transform import FadeTransform, FadeTransformPieces
 
 
 class _WrappedFadeOut(FadeOut):
@@ -18,23 +18,6 @@ class _WrappedFadeOut(FadeOut):
     paint multiplies parent x child alpha, so parking at exactly one visited
     level gives the right result.  (Parking on the whole family would square
     it: part alpha x glyph alpha.)
-    """
-
-    def _park_opacity(self, mob, value):
-        super()._park_opacity(mob, value)
-        for sm in getattr(mob, "submobjects", ()):
-            set_anim_opacity(sm, value)
-
-
-class _WrappedFadeTransform(FadeTransform):
-    """FadeTransform of a DETACHED wrapper group (see TransformMatchingAbstractBase).
-
-    Same story as _WrappedFadeOut: the source group holds the real parts as
-    children but is itself unreachable from the scene tree, so the fade
-    opacity parked on the wrapper never applied -- the source stayed fully
-    opaque while its morph ghost faded in, ending on the wrong glyphs
-    ("act" instead of "hat", "+" instead of "-").  Park on the wrapper and
-    its direct children, exactly one tree-visited level.
     """
 
     def _park_opacity(self, mob, value):
@@ -98,7 +81,7 @@ class TransformMatchingAbstractBase(Animation):
             if key1 in source_map and key2 in target_map:
                 # Flatten to wrapper -> parts (same as the fade_source branch
                 # below): the parts are the nodes the paint walk visits, and
-                # _WrappedFadeTransform parks opacity on the wrapper's direct
+                # _WrappedFadeOut parks opacity on the wrapper's direct
                 # children.  Adding the shape-map GROUP instead would nest one
                 # level deeper, park on that detached group, and leave the
                 # real part -- reached through its real parent -- untouched.
@@ -107,10 +90,29 @@ class TransformMatchingAbstractBase(Animation):
                 source_map.pop(key1, None)
                 target_map.pop(key2, None)
         if len(key_mapped_source.submobjects) > 0:
-            self._anims.append(
-                _WrappedFadeTransform(key_mapped_source, key_mapped_target,
-                                      run_time=self.run_time)
-            )
+            # CE pairs these with FadeTransformPieces: each part fades out where
+            # it stands while a COPY of its partner fades in at the partner's
+            # place -- a per-piece crossfade.  RTM used one whole-group
+            # FadeTransform, whose single ghost is stretched to the source's
+            # bounding box and moved to its centre, so during the transition the
+            # source stayed at full strength and the (wrongly sized) target ghost
+            # was painted on top of it: the wiki's key_map demo showed "c" and
+            # "h" at once ("⟅at" instead of a clean crossfade into "hat").
+            # Build the same per-piece crossfade the mismatch branch below uses.
+            key_mapped_copies = VGroup()
+            for src_part, tgt_part in zip(key_mapped_source.submobjects,
+                                          key_mapped_target.submobjects):
+                part_copy = tgt_part.copy()
+                key_mapped_copies.add(part_copy)
+                self._anims.append(
+                    _WrappedFadeOut(src_part, shift=None, target_position=tgt_part,
+                                    run_time=self.run_time)
+                )
+                self._anims.append(
+                    FadeIn(part_copy, shift=None, target_position=part_copy,
+                           run_time=self.run_time)
+                )
+            self._key_mapped_copies = key_mapped_copies
 
         fade_source_parts = []
         fade_target_parts = []
@@ -128,11 +130,19 @@ class TransformMatchingAbstractBase(Animation):
                           **self._transform_kwargs)
             )
         elif self.fade_transform_mismatches:
+            # CE pairs the mismatched parts with ``FadeTransformPieces`` -- one
+            # per-piece FadeTransform (source part fades/slides into its
+            # partner while a copy of the partner fades/slides in).  RTM used a
+            # single whole-group ``_WrappedFadeTransform``, whose one ghost is
+            # stretched to the SOURCE GROUP's bounding box, so mismatched parts
+            # of different sizes were crossfaded through a wrongly sized ghost
+            # -- the same disease the key_map branch above had (wiki
+            # 03-动画/匹配变换/01-匹配变换, "异形用 FadeTransformPieces").
             fade_source = VGroup(*fade_source_parts)
             fade_target = VGroup(*fade_target_parts)
             self._anims.append(
-                _WrappedFadeTransform(fade_source, fade_target,
-                                      run_time=self.run_time)
+                FadeTransformPieces(fade_source, fade_target,
+                                    run_time=self.run_time)
             )
         else:
             # Fade out mismatched source parts, fade in mismatched target parts.
@@ -169,6 +179,9 @@ class TransformMatchingAbstractBase(Animation):
         ftc = getattr(self, '_fade_target_copy', None)
         if ftc is not None:
             mobs.append(ftc)
+        kmc = getattr(self, '_key_mapped_copies', None)
+        if kmc is not None:
+            mobs.append(kmc)
         return mobs
 
     def clean_up_from_scene(self, scene):
@@ -188,6 +201,13 @@ class TransformMatchingAbstractBase(Animation):
         ftc = getattr(self, '_fade_target_copy', None)
         if ftc is not None and ftc in scene.mobjects:
             scene.remove(ftc)
+        kmc = getattr(self, '_key_mapped_copies', None)
+        if kmc is not None:
+            if kmc in scene.mobjects:
+                scene.remove(kmc)
+            for part in kmc.submobjects:
+                if part in scene.mobjects:
+                    scene.remove(part)
         # Remove sub-anims' transform_source/transform_target VGroups
         for sub_anim in getattr(self, '_anims', []):
             if hasattr(sub_anim, 'mobject') and sub_anim.mobject in scene.mobjects:
@@ -197,10 +217,19 @@ class TransformMatchingAbstractBase(Animation):
             # FadeTransform's morph ghost was presented as an extra scene root
             # (see play._present_detached_animated); TMA drives its sub-anims
             # itself and never calls their clean_up_from_scene, so remove the
-            # ghost here or it lingers in the tree at parked opacity 0.
-            ghost = getattr(sub_anim, '_ghost', None)
-            if ghost is not None and ghost in scene.mobjects:
-                scene.remove(ghost)
+            # ghost here or it lingers in the tree at parked opacity 0.  Walk
+            # NESTED children too: `fade_transform_mismatches=True` builds one
+            # FadeTransform per pair inside a FadeTransformPieces group, so the
+            # ghosts live one level down and used to survive the whole scene.
+            def _remove_ghosts(node):
+                ghost = getattr(node, '_ghost', None)
+                if ghost is not None and ghost in scene.mobjects:
+                    scene.remove(ghost)
+                for child in (getattr(node, '_anims', None)
+                              or getattr(node, 'animations', None) or ()):
+                    _remove_ghosts(child)
+
+            _remove_ghosts(sub_anim)
         if self.target_mobject not in scene.mobjects:
             scene.add(self.target_mobject)
         set_anim_opacity(self.target_mobject, 1.0)

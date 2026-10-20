@@ -89,6 +89,52 @@ class FrameServer:
         self.window.dll.Vulkan_GetReadbackSize.restype = ctypes.c_int
         self.window.dll.Vulkan_GetReadbackSize.argtypes = [
             ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+        # Optional: the no-conversion readback (see native/SaveScreenshotRawBGRA).
+        # One memcpy of the staging buffer instead of a per-pixel BGRA->BGR loop.
+        # The bare `raw_bgra` alias is deliberate: tools/check_bindings.py only
+        # recognises `name = getattr(dll, 'Symbol', None)` and would otherwise
+        # report the export as called-but-never-bound (pointers truncated).
+        raw_bgra = getattr(self.window.dll, "SaveScreenshotRawBGRA", None)
+        if raw_bgra is not None:
+            raw_bgra.restype = ctypes.c_int
+            raw_bgra.argtypes = [
+                ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
+                ctypes.POINTER(ctypes.c_int)]
+        self._raw_bgra = raw_bgra
+        self._raw_bgra_buf = None
+        self._raw_bgr_buf = None
+
+    @property
+    def readback_format(self):
+        """What :meth:`grab_pixels` hands back: ``"bgra"`` or ``"bgr24"``."""
+        return "bgra" if self._raw_bgra is not None else "bgr24"
+
+    @property
+    def frame_size(self):
+        """``(w, h)`` of the swapchain -- what a raw pipe must be told."""
+        return self._readback_extent()
+
+    def grab_pixels(self, t):
+        """Render ``t`` and return this window's pixels in `readback_format`.
+
+        No conversion when the DLL offers the raw route (a single bulk memcpy of
+        the staging buffer) -- fast enough to sit inside a per-frame recording
+        loop.  The BGR fallback keeps older DLLs working.
+        """
+        self.render_frame(t, readback=True)
+        w, h = self._readback_extent()
+        if self._raw_bgra is not None:
+            need = w * h * 4
+            buf = self._raw_bgra_buf
+            if buf is None or len(buf) < need:
+                buf = (ctypes.c_ubyte * need)()
+                self._raw_bgra_buf = buf
+            out_size = ctypes.c_int(need)
+            if not self._raw_bgra(buf, need, ctypes.byref(out_size)):
+                raise RuntimeError("SaveScreenshotRawBGRA failed (no frame yet?)")
+            return memoryview(buf)[:out_size.value]
+        pixels, _w, _h, _rb = self._read_pixels()
+        return pixels
 
     def _readback_extent(self):
         """The swapchain's own (w, h) -- what the C side will actually write.

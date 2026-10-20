@@ -1,5 +1,6 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
-from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity
+from real_time_manim.animations.base import (Animation, release_hidden_channels,
+                                             set_anim_opacity, get_anim_opacity)
 import numpy as np
 
 
@@ -16,6 +17,10 @@ class FadeOut(Animation):
         self.fade_shift = shift
         self.target_position = target_position
         self.fade_scale = scale
+        if not mobjects and "mobject" in kwargs:
+            mobjects = (kwargs.pop("mobject"),)
+        elif mobjects and "mobject" in kwargs:
+            raise TypeError("FadeOut() got multiple values for argument 'mobject'")
         super().__init__(mobjects[0] if mobjects else None, run_time=run_time, **kwargs)
         self.mobjects = list(mobjects)
         self.remover = True
@@ -96,6 +101,11 @@ class FadeOut(Animation):
     def finish(self):
         super().finish()
         for mob in self.mobjects:
-            self._park_opacity(mob, 0.0)
             for fm, orig in self._orig_points.get(id(mob), []):
                 fm.points = orig.copy()
+            # A fade-out is a remover: CE leaves the mobject itself untouched
+            # and only takes it out of the scene, so a later `add`/`FadeIn` of
+            # the same mobject shows it whole.  Parking the opacity registry at
+            # 0.0 (which outlives the animation) made every later draw of it
+            # invisible.
+            release_hidden_channels(mob)

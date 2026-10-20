@@ -20,12 +20,8 @@ static PolygonObj g_polygons[MAX_SHAPES];
 static int g_polygon_count = 0;
 static DashedLineObj g_dashed_lines[MAX_SHAPES];
 static int g_dashed_line_count = 0;
-static ArcObj g_arcs[MAX_SHAPES];
-static int g_arc_count = 0;
 static PointObj g_points[MAX_SHAPES];
 static int g_point_count = 0;
-static TextObj g_texts[MAX_SHAPES];
-static int g_text_count = 0;
 
 #define CMD_RECT 0
 #define CMD_CIRCLE 1
@@ -33,9 +29,7 @@ static int g_text_count = 0;
 #define CMD_ELLIPSE 3
 #define CMD_POLYGON 4
 #define CMD_DASHED_LINE 5
-#define CMD_ARC 6
 #define CMD_POINT 7
-#define CMD_TEXT 8
 
 /* One entry per submitted primitive now that the bezier fill and the
    line-strip stroke are replayed in place (draw_common.h).  A text-heavy
@@ -161,6 +155,17 @@ __declspec(dllexport) void Vulkan_SetWindowVisible(int visible) {
     }
 }
 
+// Turn present pacing off (1) or back to vsync (0).  An offline record must not
+// wait for the display -- see ChoosePresentMode -- while a live window wants the
+// vsync pacing.  The mode is a swapchain property, so a change rebuilds it on
+// the next tick (the same path a resize takes).
+__declspec(dllexport) void Vulkan_SetUnpaced(int unpaced) {
+    int want = unpaced ? 1 : 0;
+    if (g_unpaced_present == want) return;
+    g_unpaced_present = want;
+    if (g_is_ready && g_swapchain) g_framebuffer_resized = true;
+}
+
 __declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
     // A SECOND init in the same process used to run `Render_Init` straight over
     // the live one: `CreateInstance`/`CreateLogicalDevice`/`CreateSwapchain`
@@ -171,6 +176,9 @@ __declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
     if (Render_IsReady() || (g_hwnd && IsWindow(g_hwnd))) {
         Vulkan_Shutdown();
     }
+    // A hidden window is offline work (fast record, frame export): present
+    // unpaced so the display cannot cap the frame rate (see ChoosePresentMode).
+    g_unpaced_present = hidden ? 1 : 0;
     SetProcessDPIAware();
     g_hinst = GetModuleHandleW(NULL);
     g_aspect_ratio = (double)w / (double)h;
@@ -290,38 +298,11 @@ __declspec(dllexport) void AddDashedLine(float x1, float y1, float x2, float y2,
     }
 }
 
-__declspec(dllexport) void AddArc(float x, float y, float radius, float start_angle, float angle, int r, int g, int b, float stroke_width, float alpha) {
-    if (g_arc_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
-        g_arcs[g_arc_count] = (ArcObj){ x, y, radius, start_angle, angle, r, g, b, stroke_width, alpha };
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_ARC, g_arc_count };
-        g_arc_count++;
-    }
-}
-
 __declspec(dllexport) void AddPoint(float x, float y, int r, int g, int b, float alpha, float radius) {
     if (g_point_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_points[g_point_count] = (PointObj){ x, y, r, g, b, alpha, radius };
         g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POINT, g_point_count };
         g_point_count++;
-    }
-}
-
-__declspec(dllexport) void AddText(float x, float y, int r, int g, int b, float font_size, float opacity, const char* text, float alpha) {
-    if (g_text_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS && text) {
-        TextObj* t = &g_texts[g_text_count];
-        t->x = x; t->y = y;
-        t->r = r; t->g = g; t->b = b;
-        t->font_size = font_size;
-        t->opacity = opacity;
-        t->alpha = alpha;
-        int len = 0;
-        while (text[len] && len < MAX_TEXT_LEN - 1) {
-            t->text[len] = text[len];
-            len++;
-        }
-        t->text[len] = '\0';
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_TEXT, g_text_count };
-        g_text_count++;
     }
 }
 
@@ -348,9 +329,7 @@ __declspec(dllexport) void ClearShapes(void) {
     g_ellipse_count = 0;
     g_polygon_count = 0;
     g_dashed_line_count = 0;
-    g_arc_count = 0;
     g_point_count = 0;
-    g_text_count = 0;
     g_image_quad_count = 0;
     g_draw_cmd_count = 0;
 }
@@ -375,9 +354,7 @@ __declspec(dllexport) int Vulkan_Tick(void) {
             g_ellipses, g_ellipse_count,
             g_polygons, g_polygon_count,
             g_dashed_lines, g_dashed_line_count,
-            g_arcs, g_arc_count,
             g_points, g_point_count,
-            g_texts, g_text_count,
             g_draw_cmds, g_draw_cmd_count
         );
         extern uint32_t g_vertex_count;
@@ -434,13 +411,33 @@ uint32_t g_last_img_idx = 0;
 
 // Persistent staging buffer for SaveScreenshot readback (allocated once,
 // reused across frames). Per-frame create/destroy of an 8MB buffer is slow.
+//
+// The buffer carries SS_SLOTS slots because a fast record arms frame k, draws
+// it, and reads it only after frame k+1 has been submitted -- that is what hides
+// the GPU fence wait (measured ~2 ms of an ~8 ms frame).  With one slot the next
+// frame's copy would overwrite the pixels still waiting to be read.
 static VkBuffer g_ss_buf = VK_NULL_HANDLE;
 static VkDeviceMemory g_ss_mem = VK_NULL_HANDLE;
-static VkDeviceSize g_ss_size = 0;
+static VkDeviceSize g_ss_slot_size = 0;      // bytes per slot (w*h*4)
 static void *g_ss_map = NULL;
 
+// Readback ring state.  SS_SLOTS slots let a record loop read frame k after
+// frame k+1 has been submitted without losing pixels (see the note further
+// down).  g_ss_pending[s] means slot s holds an in-flight or unread copy, whose
+// completion is the in-flight fence g_ss_frame[s].
+#define SS_SLOTS 2
+static uint32_t g_ss_frame[SS_SLOTS] = {0, 0};   // fence index per slot
+static int g_ss_pending[SS_SLOTS] = {0, 0};      // copy landed, not read yet
+static int g_ss_slot = -1;          // slot the ARMED copy will write
+static int g_ss_last_slot = 0;      // slot of the newest landed copy
+static uint32_t g_ss_next_slot = 0; // round-robin arm target
+
+// Whether the mapped staging memory can hold stale cache lines after the GPU
+// wrote it.  True for the cached type chosen below (see SyncScreenshotBuffer).
+static int g_ss_needs_invalidate = 0;
+
 static int EnsureScreenshotBuffer(VkDeviceSize size) {
-    if (g_ss_buf != VK_NULL_HANDLE && g_ss_size >= size) return 1;
+    if (g_ss_buf != VK_NULL_HANDLE && g_ss_slot_size >= size) return 1;
     if (g_ss_buf != VK_NULL_HANDLE) {
         /* A frame in flight may still be DMA-ing into the OLD buffer (the arm
            happened before its draw, the grow happens before the next one), and
@@ -457,14 +454,26 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
         // SaveScreenshot would read g_ss_map == NULL through the "reliable"
         // path.
         g_ss_copied = 0;
+        g_ss_pending[0] = g_ss_pending[1] = 0;
+        g_ss_slot = -1;
+        g_ss_last_slot = 0;
+        g_ss_next_slot = 0;
     }
 
     // Allocate a pure host-readable staging buffer (HOST_VISIBLE, NOT
-    // DEVICE_LOCAL). FindMemoryType() picks the first matching type, which on
-    // many GPUs is device-local host-visible memory whose reads are ~20 MB/s.
+    // DEVICE_LOCAL) holding SS_SLOTS frames.
+    //
+    // The memory type matters more than anything else in this file.  Reading
+    // the mapped buffer is the bulk of a fast record's per-frame cost, and the
+    // plain HOST_VISIBLE type most drivers hand out is *write-combined*: CPU
+    // reads of WC memory bypass the cache, and measured 260 MB/s here, i.e.
+    // ~32 ms for one 1920x1080 BGRA frame -- more than the frame's own draw.
+    // CACHED host memory reads at RAM speed; the price is that the CPU must
+    // invalidate the range after the GPU's copy lands (SyncScreenshotBuffer),
+    // or it would read cache lines from before that write.
     VkBufferCreateInfo bi = {0};
     bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bi.size = size;
+    bi.size = size * SS_SLOTS;              // one slot per ring position
     bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if (vkCreateBuffer(g_dev, &bi, NULL, &g_ss_buf) != VK_SUCCESS) return 0;
@@ -473,24 +482,30 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
     vkGetBufferMemoryRequirements(g_dev, g_ss_buf, &mr);
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(g_phys_dev, &mp);
+    // Preference order, first match wins:
+    //   0 cached + device-local (integrated GPU: cached system RAM)
+    //   1 cached                (discrete GPU: the cached host heap)
+    //   2 coherent, not device-local (the previous first choice)
+    //   3 coherent              (previous fallback)
+    static const int want_cached[4] = {1, 1, 0, 0};
+    static const int want_local[4] = {1, 0, 0, 0};      // 1 = must be local
+    static const int want_remote[4] = {0, 0, 1, 0};     // 1 = must NOT be local
     uint32_t chosen = UINT32_MAX;
-    for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
-        VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
-        if ((mr.memoryTypeBits & (1u << i)) &&
-            (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
-            (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) &&
-            !(f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-            chosen = i; break;
-        }
-    }
-    if (chosen == UINT32_MAX) {
+    int is_cached = 0;
+    for (int pass = 0; pass < 4 && chosen == UINT32_MAX; pass++) {
         for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
             VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
-            if ((mr.memoryTypeBits & (1u << i)) &&
-                (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
-                (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
-                chosen = i; break;
-            }
+            if (!(mr.memoryTypeBits & (1u << i))) continue;
+            if (!(f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
+            int cached = (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0;
+            int coherent = (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+            int local = (f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+            if (cached != want_cached[pass] || !coherent) continue;
+            if (want_local[pass] && !local) continue;
+            if (want_remote[pass] && local) continue;
+            chosen = i;
+            is_cached = cached;
+            break;
         }
     }
     if (chosen == UINT32_MAX) {
@@ -498,7 +513,7 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
         g_ss_buf = VK_NULL_HANDLE;
         // Stale size would make the next call answer "already big enough"
         // for a buffer that no longer exists.
-        g_ss_size = 0;
+        g_ss_slot_size = 0;
         return 0;
     }
 
@@ -511,20 +526,39 @@ static int EnsureScreenshotBuffer(VkDeviceSize size) {
         vkDestroyBuffer(g_dev, g_ss_buf, NULL);
         g_ss_buf = VK_NULL_HANDLE;
         g_ss_mem = VK_NULL_HANDLE;
-        g_ss_size = 0;
+        g_ss_slot_size = 0;
         return 0;
     }
-    if (vkMapMemory(g_dev, g_ss_mem, 0, size, 0, &g_ss_map) != VK_SUCCESS) {
+    if (vkMapMemory(g_dev, g_ss_mem, 0, size * SS_SLOTS, 0, &g_ss_map)
+            != VK_SUCCESS) {
         vkDestroyBuffer(g_dev, g_ss_buf, NULL);
         vkFreeMemory(g_dev, g_ss_mem, NULL);
         g_ss_buf = VK_NULL_HANDLE;
         g_ss_mem = VK_NULL_HANDLE;
         g_ss_map = NULL;
-        g_ss_size = 0;
+        g_ss_slot_size = 0;
         return 0;
     }
-    g_ss_size = size;
+    g_ss_slot_size = size;
+    // Cached memory must be invalidated before the CPU reads the GPU's copy;
+    // write-combined memory reads straight through and needs nothing.
+    g_ss_needs_invalidate = is_cached;
     return 1;
+}
+
+// Make the GPU's copy visible to the CPU.  Only meaningful for the cached
+// memory type chosen above: the CPU's cache may still hold lines from before
+// the transfer, so the range is invalidated once the fence promised the copy
+// landed.  Cheap (a cache flush), and a no-op on the write-combined path.
+static void SyncScreenshotBuffer(void) {
+    if (!g_ss_needs_invalidate) return;
+    if (g_ss_mem == VK_NULL_HANDLE || g_ss_map == NULL) return;
+    VkMappedMemoryRange r = {0};
+    r.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    r.memory = g_ss_mem;
+    r.offset = 0;
+    r.size = VK_WHOLE_SIZE;
+    vkInvalidateMappedMemoryRanges(g_dev, 1, &r);
 }
 
 static void FreeScreenshotBuffer(void) {
@@ -535,7 +569,9 @@ static void FreeScreenshotBuffer(void) {
         vkFreeMemory(g_dev, g_ss_mem, NULL);
         g_ss_buf = VK_NULL_HANDLE;
         g_ss_mem = VK_NULL_HANDLE;
-        g_ss_size = 0;
+        g_ss_slot_size = 0;
+        g_ss_pending[0] = g_ss_pending[1] = 0;
+        g_ss_slot = -1;
     }
 }
 
@@ -548,8 +584,12 @@ static void FreeScreenshotBuffer(void) {
 // is requested up front and performed by the frame's OWN command buffer, before
 // present, while the image is still ours and fully rendered.  This is the same
 // design the macOS build uses.
+//
+// The buffer carries SS_SLOTS slots (see the state block above) and the arm
+// picks them round-robin, so a record loop can read frame k *after* frame k+1
+// was submitted -- hiding the fence wait -- without frame k+1's copy landing on
+// pixels nobody has read yet.
 // ---------------------------------------------------------------------------
-static uint32_t g_ss_frame = 0;     // in-flight slot of that frame (its fence)
 
 // The size, in pixels, of the next readback: this is the SWAPCHAIN extent, not
 // anything the caller guessed from a window-message snapshot.  Callers sizing a
@@ -562,14 +602,29 @@ __declspec(dllexport) int Vulkan_GetReadbackSize(int *w, int *h) {
     return 1;
 }
 
-__declspec(dllexport) void Vulkan_RequestReadback(void) {
-    if (!g_is_ready || !g_swapchain) return;
+// Arm the next drawn frame to copy itself out.  Returns the ring slot the
+// pixels will land in (-1 when there is no window to read), which
+// SaveScreenshotSlotBGRA then reads; callers that just want "the last frame"
+// (live recording, user screenshots) can ignore it and keep using
+// SaveScreenshot/SaveScreenshotRaw/SaveScreenshotRawBGRA.
+__declspec(dllexport) int Vulkan_RequestReadback(void) {
+    if (!g_is_ready || !g_swapchain) return -1;
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
-    if (w <= 0 || h <= 0) return;
-    if (!EnsureScreenshotBuffer((VkDeviceSize)w * (VkDeviceSize)h * 4)) return;
+    if (w <= 0 || h <= 0) return -1;
+    if (!EnsureScreenshotBuffer((VkDeviceSize)w * (VkDeviceSize)h * 4)) return -1;
+    // Prefer a slot nobody still has to read: with the record loop one frame
+    // behind, the other slot is exactly the one just handed out.  (Both pending
+    // means a caller armed more frames than it read; then round-robin wins and
+    // the older frame is lost -- a gapped capture cannot be deferred safely.)
+    int slot = (int)g_ss_next_slot;
+    int other = (slot + 1) % SS_SLOTS;
+    if (g_ss_pending[slot] && !g_ss_pending[other]) slot = other;
+    g_ss_next_slot = (slot + 1) % SS_SLOTS;
+    g_ss_slot = slot;
     g_ss_copied = 0;
     g_ss_arm = 1;
+    return slot;
 }
 
 // Called by the renderer from inside the frame's command buffer (after the
@@ -579,6 +634,7 @@ int Platform_RecordReadbackCopy(VkCommandBuffer cmd,
                                 uint32_t frame_idx) {
     if (!g_ss_arm || g_ss_buf == VK_NULL_HANDLE) return 0;
     if (img_idx >= g_swapchain_img_count) return 0;
+    int slot = (g_ss_slot >= 0 && g_ss_slot < SS_SLOTS) ? g_ss_slot : 0;
 
     VkImageMemoryBarrier b = {0};
     b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -600,6 +656,7 @@ int Platform_RecordReadbackCopy(VkCommandBuffer cmd,
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent = (VkExtent3D){ g_swapchain_ext.width, g_swapchain_ext.height, 1 };
+    region.bufferOffset = (VkDeviceSize)slot * g_ss_slot_size;
     vkCmdCopyImageToBuffer(cmd, g_swapchain_imgs[img_idx],
         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_ss_buf, 1, &region);
 
@@ -614,7 +671,10 @@ int Platform_RecordReadbackCopy(VkCommandBuffer cmd,
 
     g_ss_arm = 0;
     g_ss_copied = 1;
-    g_ss_frame = frame_idx;
+    g_ss_frame[slot] = frame_idx;
+    g_ss_pending[slot] = 1;
+    g_ss_last_slot = slot;
+    g_ss_slot = -1;
     return 1;
 }
 
@@ -686,13 +746,20 @@ static void CopySwapchainImageToBuffer(uint32_t img_idx, VkBuffer dst, int w, in
     vkQueueWaitIdle(g_gfx_queue);
 }
 
-// Convert the BGRA swapchain readback (g_ss_map, w*h*4 bytes) into BGR.
+// The CPU-side pointer to one ring slot's pixels.
+static const unsigned char *SsSlotPtr(int slot) {
+    if (g_ss_map == NULL || slot < 0 || slot >= SS_SLOTS) return NULL;
+    return (const unsigned char *)g_ss_map + (VkDeviceSize)slot * g_ss_slot_size;
+}
+
+// Convert the BGRA swapchain readback (src, w*h*4 bytes) into BGR.
 // The mapped GPU buffer reads slowly byte-by-byte on Intel iGPUs, so we first
 // bulk-copy the raw bytes into CPU cache (vectorized memcpy) and convert there.
 static unsigned char *g_conv_buf = NULL;
 static VkDeviceSize g_conv_size = 0;
-static int ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
-    if (out == NULL || g_ss_map == NULL) return 0;
+static int ConvertBGRAtoBGR(const unsigned char *src, int w, int h,
+                            unsigned char *out) {
+    if (out == NULL || src == NULL) return 0;
     VkDeviceSize raw_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
     if (g_conv_size < raw_size) {
         unsigned char *fresh = (unsigned char *)malloc((size_t)raw_size);
@@ -701,12 +768,12 @@ static int ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
         g_conv_buf = fresh;
         // Only publish the new size once the allocation succeeded: publishing
         // it first made a later call treat the NULL buffer as usable and
-        // memcpy from g_ss_map into unallocated memory.
+        // memcpy from src into unallocated memory.
         g_conv_size = raw_size;
     }
     if (g_conv_buf == NULL) return 0;
     unsigned char *raw = g_conv_buf;
-    memcpy(raw, g_ss_map, (size_t)raw_size);
+    memcpy(raw, src, (size_t)raw_size);
     int rowBytes = ((w * 3 + 3) & ~3);
     for (int y = 0; y < h; y++) {
         const unsigned char *row = raw + (VkDeviceSize)y * (VkDeviceSize)w * 4;
@@ -736,12 +803,21 @@ static int ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
 //    been observed to come back stale, so this is only a best-effort guess.
 static int ResolveScreenshotSource(int w, int h) {
     if (g_ss_copied) {
-        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame], VK_TRUE, UINT64_MAX);
+        vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame[g_ss_last_slot]],
+                        VK_TRUE, UINT64_MAX);
+        g_ss_pending[g_ss_last_slot] = 0;
         g_ss_copied = 0;
+        SyncScreenshotBuffer();
         return 1;
     }
     if (g_ss_arm) return 0;
+    // Nothing was armed: fall back to a copy of the last presented image, into
+    // slot 0 (which no armed copy can own -- an arm would have taken the ring's
+    // next slot and set g_ss_arm).
     CopySwapchainImageToBuffer(g_last_img_idx, g_ss_buf, w, h);
+    g_ss_last_slot = 0;
+    g_ss_pending[0] = 0;
+    SyncScreenshotBuffer();
     return 1;
 }
 
@@ -762,7 +838,9 @@ __declspec(dllexport) int SaveScreenshot(const char *path) {
     int rowBytes = ((w * 3 + 3) & ~3);
     unsigned char *bgr = (unsigned char *)malloc((size_t)rowBytes * (size_t)h);
     if (bgr == NULL) return 0;
-    if (!ConvertBGRAtoBGR(w, h, bgr)) { free(bgr); return 0; }
+    if (!ConvertBGRAtoBGR(SsSlotPtr(g_ss_last_slot), w, h, bgr)) {
+        free(bgr); return 0;
+    }
 
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
@@ -813,7 +891,71 @@ __declspec(dllexport) int SaveScreenshotRaw(unsigned char *out, int out_cap, int
 
     if (!ResolveScreenshotSource(w, h)) return 0;
 
-    if (!ConvertBGRAtoBGR(w, h, out)) return 0;
+    if (!ConvertBGRAtoBGR(SsSlotPtr(g_ss_last_slot), w, h, out)) return 0;
     if (out_size) *out_size = rowBytes * h;
+    return 1;
+}
+
+// Same readback as SaveScreenshotRaw, but hands back the RAW BGRA image
+// (w*h*4 bytes, tightly packed) with no colour conversion at all.
+//
+// `ConvertBGRAtoBGR` additionally walks the frame pixel by pixel (2.07 million
+// iterations for 1080p) and writes a padded BGR image, so skipping it saves one
+// pass over the frame -- worth ~9% (50.1 -> 45.6 ms/frame for a 1080p scene).
+// The remaining cost is NOT the conversion but the memcpy out of the mapped
+// staging buffer, which is why the memory type (see EnsureScreenshotBuffer) is
+// what actually decides capture speed.
+__declspec(dllexport) int SaveScreenshotRawBGRA(unsigned char *out, int out_cap,
+                                                int *out_size) {
+    if (!g_is_ready || !g_swapchain || !out) return 0;
+    int w = (int)g_swapchain_ext.width;
+    int h = (int)g_swapchain_ext.height;
+    if (w <= 0 || h <= 0) return 0;
+
+    VkDeviceSize need = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+    if (out_size) *out_size = (int)need;      // also the "retry with this" hint
+    if (out_cap <= 0 || (VkDeviceSize)out_cap < need) return 0;
+
+    if (!EnsureScreenshotBuffer(need)) return 0;
+    if (!ResolveScreenshotSource(w, h)) return 0;
+    const unsigned char *src = SsSlotPtr(g_ss_last_slot);
+    if (src == NULL) return 0;
+
+    memcpy(out, src, (size_t)need);
+    if (out_size) *out_size = (int)need;
+    return 1;
+}
+
+// Read one ring slot (the value Vulkan_RequestReadback returned) and wait for
+// ITS copy.  A fast record arms frame k, draws it, and calls this only after
+// frame k+1 was submitted, so the fence is normally long signalled and the wait
+// costs nothing -- that is how the ~2 ms GPU wait disappears from the frame.
+//
+// Returns 0 when that slot holds no completed copy (never armed, or the frame
+// that would have serviced it was skipped), so the caller can drop the frame
+// instead of encoding stale pixels.
+__declspec(dllexport) int SaveScreenshotSlotBGRA(int slot, unsigned char *out,
+                                                 int out_cap, int *out_size) {
+    if (!g_is_ready || !g_swapchain || !out) return 0;
+    if (slot < 0 || slot >= SS_SLOTS) return 0;
+    int w = (int)g_swapchain_ext.width;
+    int h = (int)g_swapchain_ext.height;
+    if (w <= 0 || h <= 0) return 0;
+
+    VkDeviceSize need = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+    if (out_size) *out_size = (int)need;      // also the "retry with this" hint
+    if (out_cap <= 0 || (VkDeviceSize)out_cap < need) return 0;
+
+    if (!EnsureScreenshotBuffer(need)) return 0;
+    if (!g_ss_pending[slot]) return 0;        // nothing landed in this slot
+    vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_ss_frame[slot]], VK_TRUE,
+                    UINT64_MAX);
+    g_ss_pending[slot] = 0;
+    SyncScreenshotBuffer();
+    const unsigned char *src = SsSlotPtr(slot);
+    if (src == NULL) return 0;
+
+    memcpy(out, src, (size_t)need);
+    if (out_size) *out_size = (int)need;
     return 1;
 }

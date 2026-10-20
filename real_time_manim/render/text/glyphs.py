@@ -4,7 +4,12 @@
 outline, with the write/type animation channels applied."""
 
 import ctypes
-from real_time_manim.render.util import manim_to_screen
+
+import numpy as np
+
+from real_time_manim.render.util import (affine_frame_map, manim_to_screen,
+                                         screen_projector,
+                                         store_screen_points)
 from real_time_manim.animations import get_anim_opacity
 
 
@@ -145,6 +150,10 @@ class GlyphMixin:
         default_alpha = letter_alphas.get(len(letter_alphas) - 1, 1.0)
         grow_scale = getattr(mob, '_grow_scale', 1.0)
         grow_pt = getattr(mob, '_grow_point', None)
+        # One projection per frame for every glyph (see screen_projector): this
+        # writer converts each glyph's points, so the per-point lookup was the
+        # same hot path as _send_vmobject's.
+        _project = screen_projector(w, h)
         for i, sub in enumerate(mob.submobjects):
             sub_alpha = letter_alphas.get(i, default_alpha)
             if sub_alpha <= 0.001:
@@ -173,20 +182,34 @@ class GlyphMixin:
                 off_y = float(parent_offset[1])
             else:
                 off_x = off_y = 0.0
-            flat = []
-            for p in pts:
-                px, py = float(p[0]) + off_x, float(p[1]) + off_y
+            flat = (ctypes.c_float * (len(pts) * 3))()
+            affine = affine_frame_map(w, h)
+            if affine is not None:
+                # Affine frame: one numpy pass, same operations and order as the
+                # per-point loop below (bit-identical coordinates).
+                pts_arr = np.asarray(pts, dtype=np.float64)
+                px = pts_arr[:, 0] + off_x
+                py = pts_arr[:, 1] + off_y
                 if grow_scale != 1.0 and grow_pt is not None:
                     px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                     py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                sx, sy = manim_to_screen(px, py + b_dy, w, h, p[2])
-                flat.append(sx)
-                flat.append(sy)
-                flat.append(0.0)
+                py = py + b_dy
+                store_screen_points(flat, px, py, affine[0], affine[1],
+                                    affine[2])
+            else:
+                for pi, p in enumerate(pts):
+                    px, py = float(p[0]) + off_x, float(p[1]) + off_y
+                    if grow_scale != 1.0 and grow_pt is not None:
+                        px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                        py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                    sx, sy = _project(px, py + b_dy, p[2])
+                    flat[pi * 3] = sx
+                    flat[pi * 3 + 1] = sy
+                    flat[pi * 3 + 2] = 0.0
 
-            n = len(flat) // 3
+            n = len(pts)
             n = (n // 4) * 4
-            arr = (ctypes.c_float * len(flat))(*flat)
+            arr = flat
 
             stroke_progress = min(1.0, sub_alpha * 2.5)
             stroke_fade = max(0.0, 1.0 - max(0.0, (sub_alpha - 0.4) * 2.5))
@@ -208,57 +231,6 @@ class GlyphMixin:
                 sr, sg, sb, 0.0, 0.0, 0.0, 0.0,
             )
 
-    def _send_text_bitmap(self, mob, w, h, alpha=1.0):
-        base_r, base_g, base_b = 255, 255, 255
-        fade_scale = getattr(mob, '_fade_scale', 1.0)
-        cx, cy = mob.get_center()[0], mob.get_center()[1]
-        try:
-            c = mob.get_color()
-            r, g, b = int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)
-            if r > 0 or g > 0 or b > 0:
-                base_r, base_g, base_b = r, g, b
-        except Exception:
-            pass
-        if base_r == 255 and base_g == 255 and base_b == 255:
-            try:
-                for fm in mob.family_members_with_points():
-                    srgba = fm.stroke_rgbas
-                    if len(srgba) > 0:
-                        sr, sg, sb = float(srgba[0][0]), float(srgba[0][1]), float(srgba[0][2])
-                        if sr > 0 or sg > 0 or sb > 0:
-                            base_r, base_g, base_b = int(sr * 255), int(sg * 255), int(sb * 255)
-                            break
-            except Exception:
-                pass
-        if base_r == 0 and base_g == 0 and base_b == 0:
-            try:
-                srgbas = mob.get_stroke_rgbas()
-                if len(srgbas) > 0:
-                    sr, sg, sb = float(srgbas[0][0]), float(srgbas[0][1]), float(srgbas[0][2])
-                    base_r, base_g, base_b = int(sr * 255), int(sg * 255), int(sb * 255)
-            except Exception:
-                pass
-        if base_r == 0 and base_g == 0 and base_b == 0:
-            try:
-                frgbas = mob.get_fill_rgbas()
-                if len(frgbas) > 0:
-                    fr, fg, fb = float(frgbas[0][0]), float(frgbas[0][1]), float(frgbas[0][2])
-                    base_r, base_g, base_b = int(fr * 255), int(fg * 255), int(fb * 255)
-            except Exception:
-                pass
-        if base_r == 0 and base_g == 0 and base_b == 0:
-            base_r, base_g, base_b = 255, 255, 255
-
-        text_str = mob.text if hasattr(mob, 'text') else str(mob)
-        font_size = mob._font_size if hasattr(mob, '_font_size') else 48.0
-        font_px = font_size * (h / 480.0)
-        try:
-            bottom_y = mob.get_bottom()[1]
-            cy = bottom_y
-        except Exception:
-            cy = mob.get_center()[1]
-        sx, sy = manim_to_screen(cx, cy, w, h)
-        self.dll.AddText(sx, sy, base_r, base_g, base_b, font_px, 1.0, text_str.encode('utf-8'), alpha)
 
 
     def _send_text_stroke(self, mob, a, w, h, parent_offset=None):

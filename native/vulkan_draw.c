@@ -30,9 +30,7 @@ void BuildVerticesFromLines(const LineObj *lines, int count);
 void BuildVerticesFromEllipses(const EllipseObj *ellipses, int count);
 void BuildVerticesFromPolygons(const PolygonObj *polygons, int count);
 void BuildVerticesFromDashedLines(const DashedLineObj *lines, int count);
-void BuildVerticesFromArcs(const ArcObj *arcs, int count);
 void BuildVerticesFromPoints(const PointObj *points, int count);
-void BuildVerticesFromTexts(const TextObj *texts, int count);
 void BuildVerticesFromBezierPathAt(int i);
 void BuildVerticesFromLineStripAt(int si);
 void ResetBezierPaths(void);
@@ -44,9 +42,7 @@ void Render_DrawScene(const Rect* rects, int rect_count,
                       const EllipseObj* ellipses, int ellipse_count,
                       const PolygonObj* polygons, int polygon_count,
                       const DashedLineObj* dashed_lines, int dashed_line_count,
-                      const ArcObj* arcs, int arc_count,
                       const PointObj* points, int point_count,
-                      const TextObj* texts, int text_count,
                       const DrawCmd* cmds, int cmd_count) {
 
     g_vertex_count = 0;
@@ -73,14 +69,8 @@ void Render_DrawScene(const Rect* rects, int rect_count,
             case CMD_DASHED_LINE:
                 if (idx < dashed_line_count) BuildVerticesFromDashedLines(&dashed_lines[idx], 1);
                 break;
-            case CMD_ARC:
-                if (idx < arc_count) BuildVerticesFromArcs(&arcs[idx], 1);
-                break;
             case CMD_POINT:
                 if (idx < point_count) BuildVerticesFromPoints(&points[idx], 1);
-                break;
-            case CMD_TEXT:
-                if (idx < text_count) BuildVerticesFromTexts(&texts[idx], 1);
                 break;
             case CMD_IMAGE:
                 BuildVerticesFromImageQuad(idx);

@@ -40,8 +40,7 @@ class FadeTransform(Animation):
 
         Hook mirroring ``FadeOut._park_opacity``: the paint pipeline walks
         the SCENE tree, so a subclass whose mobject is a detached wrapper
-        (see ``_WrappedFadeTransform``) must also reach the nodes the tree
-        actually visits.
+        must also reach the nodes the tree actually visits.
         """
         set_anim_opacity(mob, value)
 
@@ -242,11 +241,17 @@ class FadeTransformPieces(AnimationGroup):
                     and _is_scene_root(scene, tm)):
                 scene.remove(tm)
 
-        # The transformed source is done: it must not stay visible (its pieces
-        # are submobjects of the group, so only the group's own alpha paints
-        # them).  Normally the children's final interpolate already parked 0.
+        # The transformed source is done and CE removes it from the scene.
+        # RTM used to keep it as a transparent ROOT ("only the group's own
+        # alpha paints it"), which leaked one dead root per FadeTransformPieces
+        # -- `scene.mobjects` ended up as `[source, target]` where CE has just
+        # `[target]` (audit state_probes: fadetransformpieces_cleanup).
         if _is_scene_root(scene, source):
             set_anim_opacity(source, 0.0)
+            try:
+                scene.remove(source)
+            except Exception:
+                pass
 
         # The whole target enters as ONE root, exactly like CE's
         # ``scene.add(to_add_on_completion)`` -- Scene.add absorbs any of its

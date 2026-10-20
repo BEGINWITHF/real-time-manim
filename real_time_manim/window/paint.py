@@ -24,7 +24,7 @@ from real_time_manim.camera_state import (
 )
 from manim.mobject.text.tex_mobject import MathTexPart
 
-from real_time_manim.render.util import fill_gradient_stops
+from real_time_manim.render.util import fill_gradient_stops, path_extent
 from real_time_manim.window.paint_order import (
     NATIVE_MAX_POLYGON_VERTS,
     container_subs,
@@ -270,11 +270,18 @@ class PaintMixin:
                 font_size = mob._font_size
             except Exception:
                 continue
-            try:
-                bottom = mob.get_bottom()[1]
-                top = mob.get_top()[1]
-            except Exception:
-                continue
+            # `get_bottom`/`get_top` each walk the whole boundary (and rebuild
+            # it per dimension); one `path_extent` gives the same min/max y
+            # exactly -- see render/util.py.
+            ext = path_extent(mob)
+            if ext is not None:
+                bottom, top = ext[0][1], ext[1][1]
+            else:
+                try:
+                    bottom = mob.get_bottom()[1]
+                    top = mob.get_top()[1]
+                except Exception:
+                    continue
             roots.append({'id': id(mob), 'font': font_size,
                           'b': bottom, 't': top})
         ids = set()
@@ -913,7 +920,22 @@ class PaintMixin:
             else:
                 self._send_ellipse(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Dot):
-            self._send_dot(mob, a, w, h, parent_offset)
+            # A partial draw (Create/Write/ShowPassingFlash) has to reveal the
+            # DISC, not pop it in: `_send_dot` submits `stroke_progress = 1.0`
+            # and native's fill ignores that channel anyway, so `Create(Dot)`
+            # planted a full yellow disc on the animation's first frame.
+            # Measured on the wiki 03-动画/变换/02b-更多函数驱动 (the yellow
+            # `d`): RTM full at frame 80 of a 0.4 s Create where CE is 3 px at
+            # 80, 52 at 84, 94 at 88.  The point path cuts both the stroke and
+            # the fill array to the drawn prefix, which is exactly CE's
+            # `pointwise_become_partial` on a fill-only shape.
+            _d_progress = getattr(mob, '_vulkan_progress', 1.0)
+            if hasattr(mob, "_vulkan_progress_upper") or _d_progress < 1.0:
+                self._send_vmobject(mob, a, w, h,
+                                    None if is_text else parent_offset, rot,
+                                    is_text=is_text)
+            else:
+                self._send_dot(mob, a, w, h, parent_offset)
         elif isinstance(mob, Circle):
             # same reasoning as the Arc branch: a partially drawn circle keeps the
             # real radius on the point path (native progress counts segments of a
@@ -1058,7 +1080,19 @@ class PaintMixin:
             _verts = mob.get_vertices()
             _too_many = (_verts is not None
                          and len(_verts) > NATIVE_MAX_POLYGON_VERTS)
-            if _too_many or fill_gradient_stops(mob) is not None:
+            # `round_corners()` keeps the Polygon class but replaces every
+            # corner with a bezier arc; `get_vertices()` then returns the arc
+            # *anchors*, so chording them chamfers the corners.  Measured on
+            # wiki 04-图形与文本/03-多边形与星形-stars_round: both trapezoids
+            # (round_corners(0.15) / (0.55)) were drawn with sharp corners
+            # while CE rounds them.  Same guard the Square/Rectangle branch
+            # above already uses: straight edges only.
+            _flat_poly = True
+            try:
+                _flat_poly = self._edges_are_straight(mob.get_points())
+            except Exception:
+                _flat_poly = True
+            if _too_many or fill_gradient_stops(mob) is not None or not _flat_poly:
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)
             else:

@@ -69,9 +69,7 @@ SOURCES=(
     "draw/draw_ellipse.c"
     "draw/draw_polygon.c"
     "draw/draw_dashed_line.c"
-    "draw/draw_arc.c"
     "draw/draw_point.c"
-    "draw/draw_text.c"
     "draw/draw_bezier.c"
 )
 OBJS=()

@@ -149,15 +149,73 @@ def _letter_alphas(anim, alpha):
         return None
 
 
+def _eased_alpha(anim, alpha):
+    """manim's ``get_sub_alpha`` for a single submobject: ease the raw alpha.
+
+    Hooks are handed the RAW progress, while manim cuts/positions with
+    ``get_sub_alpha`` = ``rate_func(clip(value - lower))`` (with
+    ``reverse_rate_function`` flipping the input first).  Deriving a window
+    from the raw value renders LINEARLY where CE eases -- see
+    ``_write_passing_flash``.
+    """
+    value = max(0.0, min(1.0, float(alpha)))
+    if getattr(anim, "reverse_rate_function", False):
+        value = 1.0 - value
+    rate = getattr(anim, "rate_func", None)
+    try:
+        return max(0.0, min(1.0, float(rate(value)) if callable(rate) else value))
+    except Exception:
+        return value
+
+
 def _write_passing_flash(anim, mob, alpha):
+    # The window has to be the one manim itself used, and it must be applied to
+    # the WHOLE contour: `ShowPartial.interpolate_submobject` has already
+    # replaced the points with the sliver (`pointwise_become_partial(start,
+    # *_get_bounds(alpha))`), exactly like Create.  Parking a second
+    # `[alpha, alpha + width]` window on those cut points cut the sliver again
+    # and shifted its phase -- measured on
+    # `ShowPassingFlash(Line([-3,0,0],[3,0,0]), time_width=0.5, run_time=1)`:
+    # at t=0.5 RTM painted manim-units [-0.03, 1.53] where CE paints
+    # [-1.50, 1.50] (the middle half), and at t=0.25 [-2.87, -2.50] instead of
+    # [-3.00, -0.75].  Put the pristine contour back first, so the window is a
+    # fraction of the full path again, and read the bounds off manim
+    # (`_get_bounds` = `[alpha*(1+tw) - tw, alpha*(1+tw)]`, upper clamped to 1)
+    # instead of re-deriving them.
     width = 0.2
     for attr in ("time_width", "width"):
         value = getattr(anim, attr, None)
         if isinstance(value, (int, float)):
             width = float(value)
             break
-    lower = alpha
-    upper = min(1.0, alpha + width)
+    # Ease the raw progress exactly as manim does before it asks for the
+    # bounds: CE cuts the path with `get_sub_alpha(...)` =
+    # `rate_func(clip(alpha))`, so its comet sweeps smoothly while a window
+    # built from the raw alpha sweeps LINEARLY.  Measured on the wiki
+    # 03-动画/强调与提示/01b-扫光与波纹 ring (the 12-piece thinning flash):
+    # CE's arc head ran 0, 2, 3, 6, 10, 16, 23, 33, 48, 67, 91, 120 deg
+    # against RTM's 3, 19, 33, 49, 63, 78, 94, 110 deg -- 3.8 deg/frame from
+    # frame one, i.e. "第二个动画还是不太对".
+    alpha = _eased_alpha(anim, alpha)
+    bounds = getattr(anim, "_get_bounds", None)
+    if callable(bounds):
+        try:
+            lower, upper = bounds(alpha)
+        except Exception:
+            lower, upper = alpha, min(1.0, alpha + width)
+    else:
+        lower, upper = alpha, min(1.0, alpha + width)
+    start = getattr(anim, "starting_mobject", None)
+    if start is not None:
+        try:
+            for live, pristine in zip(mob.get_family(), start.get_family()):
+                pts = getattr(pristine, "points", None)
+                if pts is None or not len(pts):
+                    continue
+                if len(getattr(live, "points", ())):
+                    live.points = pts.copy()
+        except Exception:
+            pass
     mob._vulkan_progress_lower = lower
     mob._vulkan_progress_upper = upper
     mob._vulkan_progress = upper
@@ -455,18 +513,34 @@ def _write_indicate(anim, mob, alpha):
     mean|d| 6.16).  When *every* child resolves to the updater bucket the
     container has no visual life of its own: relay the children and drop the
     grow channels instead of writing them.
+
+    The same holds for ``Flash`` and ``Circumscribe``: their children are
+    ``ShowPassingFlash``/``Create``/``Fade*`` animations that draw their own
+    reveal, and CE never resizes these shapes -- the flash lines are FIXED
+    length and only the light sweeps along them.  Keeping the grow channel
+    scaled the whole line group about the flash point by the raw alpha, so the
+    star's tips grew from the centre: measured on the wiki
+    03-动画/强调与提示/01-强调与闪烁 Flash (line_length=0.3, flash_radius=0.18
+    -> 65 px lines) the lit star's mean radius ran 10, 18, 26, 34, 45, 57, 69,
+    81, ... px against CE's 68, 85, 88, 94, 104, 111, 116, 116, 119, 126 --
+    a 12.5x ramp where CE grows 1.9x, and its furthest tip sat at 35 px where
+    CE's was at 111.  Any child that owns its geometry in a channel of its own
+    therefore drops the grow.
     """
     if isinstance(anim, _TRANSFORM_MORPH):
         _write_transform(anim, mob, alpha)
         return
     kids = _children(anim)
-    if kids and all(_kind_of(k) == "updates" for k in kids):
+    if kids and all(_kind_of(k) in ("updates", "passing_flash", "progress",
+                                    "fade", "indicate") for k in kids):
         for attr in ("_grow_scale", "_grow_point", "_grow_rot"):
             if hasattr(mob, attr):
                 try:
                     delattr(mob, attr)
                 except Exception:
                     pass
+        if not _is_container(mob):
+            _refresh_opacity(mob)
         return
     if not _is_container(mob):
         _refresh_opacity(mob)

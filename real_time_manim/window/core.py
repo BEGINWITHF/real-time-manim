@@ -175,14 +175,6 @@ class CoreMixin:
             ctypes.c_float, ctypes.c_float,
             ctypes.c_float,
         ]
-        self.dll.AddArc.restype = None
-        self.dll.AddArc.argtypes = [
-            ctypes.c_float, ctypes.c_float, ctypes.c_float,
-            ctypes.c_float, ctypes.c_float,
-            ctypes.c_int, ctypes.c_int, ctypes.c_int,
-            ctypes.c_float,
-            ctypes.c_float,
-        ]
         self.dll.AddPoint.restype = None
         self.dll.AddPoint.argtypes = [
             ctypes.c_float, ctypes.c_float,
@@ -190,15 +182,6 @@ class CoreMixin:
             ctypes.c_float,
             ctypes.c_float,
         ]
-        self.dll.AddText.restype = None
-        self.dll.AddText.argtypes = [
-            ctypes.c_float, ctypes.c_float,
-            ctypes.c_int, ctypes.c_int, ctypes.c_int,
-            ctypes.c_float, ctypes.c_float,
-            ctypes.c_char_p, ctypes.c_float,
-        ]
-        self.dll.Text_LoadFont.restype = ctypes.c_int
-        self.dll.Text_LoadFont.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int]
         self.dll.AddBezierPath.restype = None
         self.dll.AddBezierPath.argtypes = [
             ctypes.POINTER(ctypes.c_float), ctypes.c_int,
@@ -249,27 +232,25 @@ class CoreMixin:
                 # Older DLL without hidden creation: hide right after building.
                 self.set_visible(False)
 
-        if sys.platform == "darwin":
-            font_paths = [
-                "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
-                "/System/Library/Fonts/Supplemental/Arial.ttf",
-                "/System/Library/Fonts/Supplemental/Helvetica.ttc",
-            ]
-        else:
-            font_paths = [r"C:\Windows\Fonts\times.ttf", r"C:\Windows\Fonts\arial.ttf"]
-        font_loaded = False
-        for fp in font_paths:
-            try:
-                with open(fp, "rb") as f:
-                    data = f.read()
-                arr = (ctypes.c_ubyte * len(data))(*data)
-                if self.dll.Text_LoadFont(arr, len(data)):
-                    font_loaded = True
-                    break
-            except Exception:
-                pass
-        if not font_loaded:
-            raise RuntimeError("Failed to load any font")
+    @property
+    def hwnd(self):
+        """This window's Win32 handle (``None`` off Windows / before init).
+
+        The DLL never exports the handle, so it is looked up by class+title
+        (``window/win32.py``) and cached -- ``recording.py`` and the frame
+        preview both need it to talk to the OS window.
+        """
+        from real_time_manim.window import win32
+
+        cached = getattr(self, "_hwnd_cache", None)
+        if cached and win32.user32 is not None:
+            import ctypes
+            if win32.user32.IsWindow(cached):
+                return cached
+            self._hwnd_cache = None
+        found = win32.find_video_hwnd()
+        self._hwnd_cache = found
+        return found
 
     def _publish_background_color(self, scene):
         """Hand native the frame's clear colour.
@@ -278,11 +259,31 @@ class CoreMixin:
         to `config.background_color`); the native side used to hard-code black, so a
         scene with a light background rendered on black (measured on the gallery logo
         scene: CE luma 220 vs RTM 9.5, the largest mismatch in the suite).
+
+        `camera.background_opacity` rides along: CE paints the background with that
+        alpha over a black canvas, so the clear colour is the colour scaled by it
+        (wiki 01-场景与相机/配置/01-画质与输出 marked the property ❌ for having no
+        effect on the output).
         """
         setter = getattr(self, "_set_background", None)
         if setter is None:
             return
         camera = getattr(scene, "camera", None)
+        opacity = 1.0
+        try:
+            from manim import config as _cfg
+            fallback = _cfg["background_opacity"]
+        except Exception:
+            fallback = 1.0
+        raw = getattr(camera, "background_opacity", None)
+        try:
+            opacity = float(fallback if raw is None else raw)
+        except (TypeError, ValueError):
+            opacity = 1.0
+        if opacity < 0.0:
+            opacity = 0.0
+        elif opacity > 1.0:
+            opacity = 1.0
         colour = getattr(camera, "background_color", None)
         if colour is None:
             try:
@@ -299,7 +300,7 @@ class CoreMixin:
         except Exception:
             return
         if len(values) == 3:
-            setter(*values)
+            setter(*(v * opacity for v in values))
 
     @staticmethod
     def _camera_needs_raster(scene, cam):

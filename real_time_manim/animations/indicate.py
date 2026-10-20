@@ -1,18 +1,27 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
 from real_time_manim.animations.base import Animation, set_anim_opacity, get_anim_opacity
 import numpy as np
-from manim import YELLOW
+from manim import PURE_YELLOW
 from real_time_manim.rate_functions import _there_and_back
 
 
 class Indicate(Animation):
-    def __init__(self, mobject, scale_factor=1.2, color=YELLOW, rate_func=None, **kwargs):
+    def __init__(self, mobject, scale_factor=1.2, color=PURE_YELLOW, rate_func=None,
+                 run_time=1.0, **kwargs):
+        # CE's ``Indicate`` defaults to ``PURE_YELLOW`` (#FFFF00), not the
+        # softer ``YELLOW`` (#F7D96F) the renderer uses elsewhere -- a default
+        # that reached the screen for every ``Indicate(sq)`` that did not pass
+        # a colour.
+        # ``run_time`` used to be popped and hard-pinned to 1.0: a caller's
+        # ``Indicate(sq, run_time=3)`` rendered in one second (BUG_REPORT M2,
+        # still present).  Keep the parameter and forward it, exactly like
+        # CE's ``Indicate(..., **kwargs)`` reaching ``Animation``.
         self.scale_factor = scale_factor
         self._indicate_color = color
         self._orig_fill = None
         self._orig_stroke = None
-        kwargs.pop('run_time', None)
-        super().__init__(mobject, run_time=1.0, rate_func=rate_func or _there_and_back, **kwargs)
+        super().__init__(mobject, run_time=run_time,
+                         rate_func=rate_func or _there_and_back, **kwargs)
 
     def begin(self, t):
         super().begin(t)

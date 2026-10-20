@@ -613,7 +613,24 @@ def scan_python(paths: list[str], repo: str = REPO
         src = mask_python(raw_src)
 
         # -- argtypes / restype ------------------------------------------------
-        for m in BIND_RE.finditer(src):
+        # A handle loaded locally (`dll = ctypes.CDLL(path)`, as the probe tests
+        # and stub modules do) binds through that name, not through `self.dll`.
+        # Without this, every binding in such a file was invisible and its calls
+        # came out as "called but never given an argtypes list" -- which is
+        # exactly how two real ones hid in
+        # tests/test_focuson_screen_fill.py until the variable was renamed.
+        local_handles = set(re.findall(
+            r"(?<![\w.])(\w+)\s*=\s*(?:ctypes\.)?(?:CDLL|WinDLL|OleDLL)\s*\(",
+            src))
+        matches = list(BIND_RE.finditer(src))
+        if local_handles:
+            extra = re.compile(
+                r"(?<![\w.])(?:"
+                + "|".join(map(re.escape, sorted(local_handles)))
+                + r")\.(\w+)\.(argtypes|restype)\s*=")
+            matches.extend(extra.finditer(src))
+
+        for m in matches:
             symbol, kind = m.group(1), m.group(2)
             eq = m.end() - 1
             i = eq + 1
@@ -1142,6 +1159,15 @@ BINDING_BLOCK = """        self.dll.DrawBar.argtypes = [
 
 SELFTEST_CASES = [
     ("clean binding", None, None, [], []),
+    ("局部 CDLL 句柄上的绑定也要认", None, None,
+     ["        self.dll.FetchSize.restype = ctypes.c_int",
+      '        stub = ctypes.CDLL("fixture")\n'
+      "        stub.FetchSize.restype = ctypes.c_int",
+      "        self.dll.FetchSize.argtypes = [ctypes.POINTER(ctypes.c_int),\n"
+      "                                       ctypes.POINTER(ctypes.c_int)]",
+      "        stub.FetchSize.argtypes = [ctypes.POINTER(ctypes.c_int),\n"
+      "                                   ctypes.POINTER(ctypes.c_int)]"],
+     []),
     ("忘绑: no argtypes at all", "UNBOUND_ARGTYPES", "ERROR",
      [("        self.dll.DrawBar.argtypes = [\n"
        "            ctypes.c_float, ctypes.c_float,\n"

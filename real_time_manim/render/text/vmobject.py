@@ -6,7 +6,15 @@ before the points reach native."""
 
 import ctypes
 import math
-from real_time_manim.render.util import manim_to_screen, get_opacity, point_path_bounds, shaded_fill_rgb, shaded_fill_gradient
+
+import numpy as np
+
+from real_time_manim.render.util import (affine_frame_map, get_opacity,
+                                         path_center, point_path_bounds,
+                                         shaded_fill_rgb,
+                                         shaded_fill_gradient,
+                                         screen_projector,
+                                         store_screen_points)
 
 
 def _black_fill_is_real(mob):
@@ -328,7 +336,7 @@ class VMobjectMixin:
             if about is not None:
                 cx, cy = float(about[0]), float(about[1])
             else:
-                cx, cy, _ = mob.get_center()
+                cx, cy, _ = path_center(mob)
             sr, sg, sb, sa = 1, 1, 1, 1
             try:
                 srgbas = mob.get_stroke_rgbas()
@@ -408,11 +416,12 @@ class VMobjectMixin:
                 so_arr = smooth_so
 
             coords = (ctypes.c_float * (len(raw_pts) * 2))()
+            _project = screen_projector(w, h)
             for i in range(len(raw_pts)):
                 x0, y0 = raw_pts[i]
                 if parent_offset is not None:
                     x0 += parent_offset[0]; y0 += parent_offset[1]
-                sx, sy = manim_to_screen(x0, y0, w, h)
+                sx, sy = _project(x0, y0)
                 coords[i * 2] = sx
                 coords[i * 2 + 1] = sy
 
@@ -443,48 +452,78 @@ class VMobjectMixin:
                 sri = int(sr * 255 * a)
                 sgi = int(sg * 255 * a)
                 sbi = int(sb * 255 * a)
+                _project = screen_projector(w, h)
                 for i in range(len(pts) - 1):
                     px0, py0 = float(pts[i][0]), float(pts[i][1])
                     px1, py1 = float(pts[i+1][0]), float(pts[i+1][1])
                     if parent_offset is not None:
                         px0 += parent_offset[0]; py0 += parent_offset[1]
                         px1 += parent_offset[0]; py1 += parent_offset[1]
-                    sx0, sy0 = manim_to_screen(px0, py0, w, h)
-                    sx1, sy1 = manim_to_screen(px1, py1, w, h)
+                    sx0, sy0 = _project(px0, py0)
+                    sx1, sy1 = _project(px1, py1)
                     self._emit_stroke(sx0, sy0, sx1, sy1, sw, sri, sgi, sbi, a)
                 return
-            cx, cy, _ = mob.get_center()
+            cx, cy, _ = path_center(mob)
             cos_a = math.cos(rot)
             sin_a = math.sin(rot)
-            flat = []
+            # Preallocated rather than a Python list: this loop ran once per
+            # point and appended three floats each time (measured 1.05M appends
+            # per 150 frames of a three-Text scene).  The consumers only index
+            # it, so a ctypes array is both the destination and the result.
+            flat = (ctypes.c_float * (len(pts) * 3))()
             grow_scale = getattr(mob, '_grow_scale', 1.0)
             grow_pt = getattr(mob, '_grow_point', None)
             # Approach-A baseline shift, set on text characters at draw time so
             # a descender-heavy word is lowered onto its shared baseline without
             # ever mutating the mobject's points (no positional jitter).
             b_dy = float(getattr(mob, '_baseline_dy', 0.0) or 0.0)
-            for p in pts:
-                px, py = p[0], p[1]
-                pz = float(p[2]) if len(p) > 2 else 0.0
+            affine = affine_frame_map(w, h)
+            if affine is not None:
+                # No camera viewport: the whole conversion is affine, so one
+                # numpy pass replaces the per-point loop and its per-point
+                # projection call.  Same operations in the same order, all in
+                # double precision, so the coordinates are bit-identical.
+                pts_arr = np.asarray(pts, dtype=np.float64)
+                px = pts_arr[:, 0]
+                py = pts_arr[:, 1]
                 if grow_scale != 1.0 and grow_pt is not None:
                     px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                     py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                dx, dy = px - cx, py - cy
+                dx = px - cx
+                dy = py - cy
                 px = dx * cos_a - dy * sin_a + cx
                 py = dx * sin_a + dy * cos_a + cy
                 if parent_offset is not None:
-                    px += parent_offset[0]
-                    py += parent_offset[1]
-                py += b_dy
-                # z must reach the viewport: a ThreeDCamera rotates the point
-                # before the screen mapping, so dropping it flattens every 3D
-                # VMobject (a Surface collapsed into thin stray strips).  native
-                # AddBezierPath reads stride-3 points but only x,y, so the third
-                # slot stays 0 here.
-                sx, sy = manim_to_screen(px, py, w, h, pz)
-                flat.append(sx)
-                flat.append(sy)
-                flat.append(0.0)
+                    px = px + parent_offset[0]
+                    py = py + parent_offset[1]
+                py = py + b_dy
+                store_screen_points(flat, px, py, affine[0], affine[1],
+                                    affine[2])
+            else:
+                # A camera viewport (MovingCamera / 3D) maps each point itself.
+                _project = screen_projector(w, h)
+                for pi, p in enumerate(pts):
+                    px, py = p[0], p[1]
+                    pz = float(p[2]) if len(p) > 2 else 0.0
+                    if grow_scale != 1.0 and grow_pt is not None:
+                        px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                        py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                    dx, dy = px - cx, py - cy
+                    px = dx * cos_a - dy * sin_a + cx
+                    py = dx * sin_a + dy * cos_a + cy
+                    if parent_offset is not None:
+                        px += parent_offset[0]
+                        py += parent_offset[1]
+                    py += b_dy
+                    # z must reach the viewport: a ThreeDCamera rotates the
+                    # point before the screen mapping, so dropping it flattens
+                    # every 3D VMobject (a Surface collapsed into thin stray
+                    # strips).  native AddBezierPath reads stride-3 points but
+                    # only x,y, so the third slot stays 0 here.
+                    sx, sy = _project(px, py, pz)
+                    flat[pi * 3] = sx
+                    flat[pi * 3 + 1] = sy
+                    flat[pi * 3 + 2] = 0.0
 
         n = len(flat) // 3
         if n < 8:

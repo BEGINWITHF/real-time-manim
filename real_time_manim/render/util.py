@@ -5,22 +5,81 @@ import math
 
 import numpy as np
 
+# Resolved once: `manim_to_screen` runs once per point (cProfile: 342k calls for
+# 150 frames of a three-Text scene) and used to run two `from ... import ...`
+# statements per call, i.e. the import machinery thousands of times a frame.
+try:
+    from real_time_manim.camera_state import get_viewport as _get_viewport
+    from real_time_manim.camera_state import screen_scale as _screen_scale
+except Exception:                                  # pragma: no cover
+    _get_viewport = None
+    _screen_scale = None
+
 
 def manim_to_screen(x, y, w=800, h=600, z=0.0):
     # Phase 5: when the scene's camera exposes a frame (MovingCamera /
     # MovingCameraScene) that viewport is published per frame and every sender
     # funnels through here, so the camera finally affects what is drawn.
-    try:
-        from real_time_manim.camera_state import get_viewport, screen_scale
-        _vp = get_viewport()
-        s = screen_scale(w, h)
-    except Exception:                            # pragma: no cover
+    if _get_viewport is None:
         _vp = None
         s = float(h) / 8.0
+    else:
+        _vp = _get_viewport()
+        s = _screen_scale(w, h)
     if _vp is not None:
         return _vp.project(x, y, w, h, z)
     cx, cy = w / 2.0, h / 2.0
     return float(cx + x * s), float(cy - y * s)
+
+
+def affine_frame_map(w, h):
+    """``(scale, cx, cy)`` for the frame, or None when a camera projects points.
+
+    Senders convert points through an affine map unless the scene published a
+    camera viewport, and in that case they can do it with numpy in one pass
+    instead of looping per point.  The arithmetic is `screen_projector`'s, in the
+    same order, so the results are identical bit for bit.
+    """
+    if _get_viewport is None:                        # pragma: no cover
+        return float(h) / 8.0, w / 2.0, h / 2.0
+    if _get_viewport() is not None:
+        return None
+    return _screen_scale(w, h), w / 2.0, h / 2.0
+
+
+def store_screen_points(out, xs, ys, scale, cx, cy):
+    """Write ``xs``/``ys`` (double precision, in pixels) into stride-3 ``out``.
+
+    ``out`` is the ctypes float array the native senders take; the numpy view
+    writes into the same memory, so nothing is copied twice.
+    """
+    view = np.frombuffer(out, dtype=np.float32).reshape(-1, 3)
+    view[:, 0] = cx + xs * scale
+    view[:, 1] = cy - ys * scale
+    view[:, 2] = 0.0
+
+
+def screen_projector(w, h):
+    """A per-frame ``project(x, y, z=0) -> (sx, sy)`` (see `manim_to_screen`).
+
+    ``manim_to_screen`` re-resolves the viewport and the frame scale on *every*
+    call, and a sender calls it once per POINT: cProfile on a three-Text scene
+    measured 342k calls per 150 frames, ~30 % of the frame's CPU, all of them
+    recomputing the same two frame-constant values.  Building one projector per
+    mobject (or per frame) removes that.  The arithmetic and its order are
+    exactly ``manim_to_screen``'s, so the mapped pixels are bit-identical.
+    """
+    if _get_viewport is None:                        # pragma: no cover
+        s = float(h) / 8.0
+        cx, cy = w / 2.0, h / 2.0
+        return lambda x, y, z=0.0: (float(cx + x * s), float(cy - y * s))
+    _vp = _get_viewport()
+    if _vp is not None:
+        # A camera viewport (MovingCamera / 3D) projects per point itself.
+        return lambda x, y, z=0.0: _vp.project(x, y, w, h, z)
+    s = _screen_scale(w, h)
+    cx, cy = w / 2.0, h / 2.0
+    return lambda x, y, z=0.0: (float(cx + x * s), float(cy - y * s))
 
 
 def rotate_point(x, y, cx, cy, angle):
@@ -64,6 +123,74 @@ def point_path_bounds(mob):
     if getattr(mob, "_vulkan_points_partial", False):
         return 0.0, 1.0
     return 0.0, float(getattr(mob, "_vulkan_progress", 1.0))
+
+
+def curve_segments(radius_px, turns=1.0, base=48, base_radius=135.0):
+    """Segments to draw an on-screen arc of ``radius_px`` with, no faceting.
+
+    Mirrors native's ``curve_segments`` (shared_types.h): a fixed segment count
+    looks fine at the default zoom and collapses when the camera zooms in -- a
+    Circle's stroke was a hard-coded 48-gon, so at 8x (1080 px radius) the
+    outline was a polygon with a 4.6 px sagitta, and the sagitta is what you see
+    as "不够平滑".  Keeping the sagitta constant means ``segs ∝ sqrt(radius)``,
+    calibrated so that ``base`` segments come out at ``base_radius`` px (the
+    radius the default frame gives a unit circle) -- i.e. an unzoomed frame
+    draws exactly what it used to.
+    """
+    r = abs(float(radius_px))
+    zoom = math.sqrt(r / base_radius) if r > base_radius else 1.0
+    segs = int(math.ceil(base * zoom * max(0.0, float(turns))))
+    if segs < 3:
+        segs = 3
+    return segs if segs < 2048 else 2048
+
+
+def path_extent(mob):
+    """``(lo, hi)`` bounds of manim's "defining boundary" points, or None.
+
+    That boundary is every family member's bezier **anchors** (a strided slice
+    of its points -- ``get_points_defining_boundary``), and every critical-point
+    query walks it: manim builds it by chaining per-submobject slices into a
+    Python tuple, re-arrays it, and rebuilds it once per dimension.  cProfile put
+    that at ~18 % of a three-Text frame's CPU in ``sync``.
+
+    min/max are exact and order-independent, so combining each submobject's
+    strided slice in place gives the same bounds as manim's chained array.
+    Returns ``None`` when there is nothing to measure.
+    """
+    try:
+        lo = hi = None
+        for sub in mob.get_family():
+            pts = sub.points
+            n = len(pts)
+            if n == 0:
+                continue
+            run = [pts]
+            if n > 1:
+                k = int(getattr(sub, "n_points_per_cubic_curve", 4) or 4)
+                if k != 1:
+                    run = [pts[0::k], pts[k - 1::k]]
+            for arr in run:
+                if len(arr) == 0:
+                    continue
+                a_lo = arr.min(axis=0)
+                a_hi = arr.max(axis=0)
+                lo = a_lo if lo is None else np.minimum(lo, a_lo)
+                hi = a_hi if hi is None else np.maximum(hi, a_hi)
+        if lo is not None:
+            return lo, hi
+    except Exception:                                # pragma: no cover
+        pass
+    return None
+
+
+def path_center(mob):
+    """``mob.get_center()`` from `path_extent` (identical, and much cheaper)."""
+    ext = path_extent(mob)
+    if ext is None:
+        return mob.get_center()
+    lo, hi = ext
+    return ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2)
 
 
 def get_fill_rgb(mob, alpha=1.0):

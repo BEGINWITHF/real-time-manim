@@ -18,6 +18,37 @@
 #define MSAA_SAMPLE_COUNT 8
 #endif
 
+/* --- circle/arc/ellipse tessellation ------------------------------------
+   All three used a fixed segment count (36, 36, 48), so their on-screen
+   smoothness collapsed as the camera zoomed in: at 8x a Circle is drawn at a
+   1080 px radius, where a 36-gon has a 4.1 px sagitta -- visibly faceted (and
+   what "放大后圆不够平滑" reports).  The count below keeps the sagitta at the
+   value the old 36-gon had at the radius the DEFAULT frame gives a unit circle
+   (135 px -> 0.51 px), so:
+     * zoomed frames get proportionally more segments (sagitta �?r/segs^2,
+       hence segs �?sqrt(r)),
+     * an unzoomed frame keeps exactly 36/48 segments, so existing renders are
+       bit-identical.
+   Radii are in screen pixels (the senders pass projected coordinates). */
+#define CURVE_SEGS_BASE 36
+#define CURVE_SEGS_BASE_RADIUS 135.0f
+#define CURVE_SEGS_MAX 2048
+
+static inline int curve_segments_base(float radius_px, float turns, int base) {
+    float r = radius_px < 0.0f ? -radius_px : radius_px;
+    if (turns <= 0.0f) return 3;
+    float zoom = r > CURVE_SEGS_BASE_RADIUS
+               ? sqrtf(r / CURVE_SEGS_BASE_RADIUS) : 1.0f;
+    int segs = (int)ceilf((float)base * zoom * turns);
+    if (segs < 3) segs = 3;
+    if (segs > CURVE_SEGS_MAX) segs = CURVE_SEGS_MAX;
+    return segs;
+}
+
+static inline int curve_segments(float radius_px, float turns) {
+    return curve_segments_base(radius_px, turns, CURVE_SEGS_BASE);
+}
+
 typedef struct {
     float x, y, hw, hh, rot;
     int r, g, b;
@@ -72,14 +103,6 @@ typedef struct {
 } DashedLineObj;
 
 typedef struct {
-    float x, y, radius;
-    float start_angle, angle;
-    int r, g, b;
-    float stroke_width;
-    float alpha;
-} ArcObj;
-
-typedef struct {
     float x, y;
     int r, g, b;
     float alpha;
@@ -102,18 +125,5 @@ typedef struct {
     float xy[8];
     float opacity;
 } ImageQuad;
-
-#ifndef MAX_TEXT_LEN
-#define MAX_TEXT_LEN 512
-#endif
-
-typedef struct {
-    float x, y;
-    int r, g, b;
-    float font_size;
-    float opacity;
-    char text[MAX_TEXT_LEN];
-    float alpha;
-} TextObj;
 
 #endif
