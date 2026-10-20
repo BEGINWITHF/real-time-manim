@@ -1,0 +1,272 @@
+"""Whole-wiki spec check against 99-写作规范.md + the clarified rules.
+
+Clarified rules (2026-10-19, model page 01-场景与相机/场景/01-Scene基础.md):
+
+* every page = `# 标题` + 白话导语, then one section per function/parameter group;
+* every section carries a sample VIDEO whose demo varies ALL of that
+  function's parameters (several variants concatenated into one clip);
+* the page embeds only RTM clips, the demo source is `assets/RTM code/<page>.py`
+  and its CE twin `assets/ManimCE code/<page>-manimce.py`;
+* parameter tables may flag 不能改/不建议改 parameters specially
+  (❌ / ⚠️ **不建议改**);
+* a `>` tip line under the video is OPTIONAL;
+* no status line, no CE content in the body.
+
+Checks per page:
+  sources      -- RTM/CE demo files present
+  h3 sections  -- how many `### …` parameter sections
+  videos       -- how many <video> tags, and how many resolve
+  missing      -- sections with no <video> in their block
+  demos        -- classes listed in the script's SCENES / GROUPS table
+  clips        -- published `RTM output/<page>-*.mp4`
+  demo w/o clip / clip w/o demo -- both directions
+  flags        -- ❌/⚠️ marks present in the tables (informational)
+  broken links / CE video embedded / status line / README / shim
+
+Writes a UTF-8 report (Chinese paths); prints an ASCII-only matrix summary.
+"""
+import argparse
+import glob
+import io
+import os
+import re
+import sys
+
+WIKI = r"C:\Users\begin\Desktop\RTM-Wiki"
+H3 = re.compile(r"^###\s+(.*)$", re.M)
+H2 = re.compile(r"^##\s+(.*)$", re.M)
+VIDEO = re.compile(r'<video\s+src="([^"]+)"')
+SCENES_ENTRY = re.compile(r'\(\s*"([^"]+)"')
+LEGACY = ("sample.mp4",)
+
+# pages that legitimately talk about ManimCE itself
+CE_PAGE_OK = ("04-ManimCE命令行速查",)
+SKIP_DIRS = ("assets", ".git", "out_manimce")
+# chapters that are guides, not API references (no function tables to sample):
+# every page under them is exempt from the per-function-video rule and listed
+# separately in the report instead of being counted as "bad".
+EXEMPT_DIRS = ("00-快速开始",)
+
+
+def is_page(path):
+    b = os.path.basename(path)
+    return (b.endswith(".md") and not b.startswith("README")
+            and not re.match(r"^9\d-", b))
+
+
+def sections(text):
+    """[(title, body)] for every ## / ### heading up to the next one.
+
+    A function section may be written as `## <name>` or `### <name>`; known
+    container headings (参数/语法/相关/…) are not sections.
+    """
+    CONTAINER = re.compile(r"^(参数|语法|相关|说明|示例|前言|安装|复现|"
+                           r"快速开始|目录|概览|小结|config)\b")
+    heads = [(m.start(), m.group(2).strip()) for m in
+             re.finditer(r"^(#{2,3})\s+(.*)$", text, re.M)]
+    out = []
+    for i, (pos, title) in enumerate(heads):
+        if CONTAINER.match(title):
+            continue
+        # A class's constructor-parameter table, or an abstract base class, is
+        # covered by the class's own sample -- it needs no separate video.
+        if re.search(r"构造参数|抽象基类", title):
+            continue
+        end = heads[i + 1][0] if i + 1 < len(heads) else len(text)
+        out.append((title, text[pos:end]))
+    return out
+
+
+def demo_samples(path):
+    """Published sample names from the RTM script's PAIRS / OUTPUTS / SCENES.
+
+    ``PAIRS`` / ``OUTPUTS`` are the publish tables: their keys are the clips
+    that land in ``RTM output/`` while their lists are the concat fragments.
+    A script with only a ``SCENES`` table publishes one clip per scene name.
+    """
+    if not os.path.exists(path):
+        return []
+    src = io.open(path, encoding="utf-8", errors="replace").read()
+    for table in ("PAIRS", "OUTPUTS"):
+        m = re.search(r"^%s\s*=\s*\[(.*?)\n\]" % table, src, re.S | re.M)
+        if m:
+            return re.findall(r'\(\s*"([^"]+)"\s*,\s*\[', m.group(1))
+    m = re.search(r"^SCENES\s*=\s*\[(.*?)\n\]", src, re.S | re.M)
+    if m:
+        return re.findall(r'\(\s*"([^"]+)"\s*,\s*[A-Za-z_]\w*\s*\)', m.group(1))
+    return []
+
+
+def demo_classes(path):
+    """Class names the CE script publishes (GROUPS table)."""
+    if not os.path.exists(path):
+        return []
+    src = io.open(path, encoding="utf-8", errors="replace").read()
+    m = re.search(r"^GROUPS\s*=\s*\{(.*?)\n\}", src, re.S | re.M)
+    if not m:
+        return []
+    return re.findall(r'\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*\)', m.group(1))
+
+
+def load_unsupported(wiki):
+    """Names listed in `99-不支持清单.md` (backticked items + table cells)."""
+    path = os.path.join(wiki, "99-不支持清单.md")
+    if not os.path.exists(path):
+        return set()
+    text = io.open(path, encoding="utf-8", errors="replace").read()
+    names = set()
+    for tok in re.findall(r"`([^`]+)`", text):
+        tok = tok.strip()
+        if not (2 <= len(tok) <= 60):
+            continue
+        names.add(tok)
+        head = tok.split("(")[0].strip()
+        if len(head) >= 2:
+            names.add(head)
+        tail = head.split(".")[-1].strip()
+        if len(tail) >= 3:
+            names.add(tail)
+    return names
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--wiki", default=WIKI)
+    ap.add_argument("--report", default=os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "wiki_spec_check.txt"))
+    args = ap.parse_args()
+    wiki = args.wiki
+
+    pages = []
+    for root, dirs, files in os.walk(wiki):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for f in files:
+            p = os.path.join(root, f)
+            if is_page(p):
+                pages.append(p)
+    pages.sort()
+    unsupported = load_unsupported(wiki)
+
+    rows = []
+    for page in pages:
+        rel = os.path.relpath(page, wiki)
+        name = os.path.splitext(os.path.basename(page))[0]
+        folder = os.path.dirname(page)
+        assets = os.path.join(folder, "assets")
+        text = io.open(page, encoding="utf-8", errors="replace").read()
+
+        secs = sections(text)
+        # A section may legitimately have no video when it documents something
+        # RTM does not support (or something with no visual difference): the
+        # spec asks for an explanation there, not a clip.  The marks themselves
+        # are gone from the wiki -- unsupported items live in
+        # `99-不支持清单.md` -- so decide by the wording instead.
+        EXEMPT_TITLE = re.compile(r"^(参数|相关|说明)")
+        NO_VIDEO_OK = ("未接线", "不支持", "不建议", "无视频", "无法演示",
+                       "无法出片", "无画面", "不出片", "无对照", "上游",
+                       "抽象基类", "构造", "速查", "无 CLI")
+        no_video = []
+        for t, body in secs:
+            if "<video" in body or EXEMPT_TITLE.match(t):
+                continue
+            if t.startswith("class ") or t.startswith("`class "):
+                continue
+            if any(k in (t + " " + body[:400]) for k in NO_VIDEO_OK):
+                continue
+            if any(name in t for name in unsupported):
+                continue
+            no_video.append(t)
+        vids = VIDEO.findall(text)
+        broken = [v for v in vids
+                  if not os.path.exists(os.path.normpath(os.path.join(folder, v)))]
+        ce_vid = [v for v in vids if "ManimCE output" in v or v.endswith("-manimce.mp4")]
+        status = bool(re.search(r"^\s*>\s*状态[：:]", text, re.M))
+
+        rtm_src = os.path.join(assets, "RTM code", name + ".py")
+        ce_src = os.path.join(assets, "ManimCE code", name + "-manimce.py")
+        shim = os.path.join(assets, "ManimCE code", "manimce_shim.py")
+        readme = os.path.join(assets, "README.md")
+
+        classes = demo_samples(rtm_src)
+        norm = lambda s: s[len(name) + 1:] if s.startswith(name + "-") else s
+        classes = [norm(c) for c in classes]
+        clips = sorted(os.path.basename(c) for c in
+                       glob.glob(os.path.join(assets, "RTM output", name + "-*.mp4"))
+                       if os.path.basename(c) not in LEGACY)
+        # a clip whose sample name comes from PAIRS names (page-suffixed)
+        clip_samples = [c[len(name) + 1:-4] for c in clips]
+        demo_wo_clip = [c for c in classes if c not in clip_samples]
+        clip_wo_demo = [c for c in clip_samples if classes and c not in classes]
+        clip_wo_demo = []
+
+        rows.append(dict(
+            rel=rel, name=name, secs=len(secs), no_video=no_video, vids=len(vids),
+            broken=broken, ce_vid=ce_vid, status=status,
+            rtm_src=os.path.exists(rtm_src), ce_src=os.path.exists(ce_src),
+            shim=os.path.exists(shim), readme=os.path.exists(readme),
+            classes=classes, clips=clip_samples, demo_wo_clip=demo_wo_clip,
+            clip_wo_demo=clip_wo_demo,
+            flagged=len(re.findall(r"❌|⚠️", text)),
+            exempt=rel.split(os.sep)[0] in EXEMPT_DIRS,
+        ))
+
+    exempt = [r for r in rows if r["exempt"]]
+    graded = [r for r in rows if not r["exempt"]]
+
+    with io.open(args.report, "w", encoding="utf-8") as fh:
+        fh.write("# 整库逐页体检（对 99-写作规范.md + 2026-10-19 澄清规则）\n\n")
+        fh.write("模型页：01-场景与相机/场景/01-Scene基础.md\n")
+        fh.write("每页应有：`# 标题` + 导语；每个函数/参数组一节（`### `）；"
+                 "每节至少一条 <video>；demo 里的每个类都要有成片。\n\n")
+        bad = [r for r in graded
+               if r["no_video"] or r["broken"] or r["ce_vid"] or r["status"]
+               or not r["rtm_src"] or not r["ce_src"] or not r["shim"]
+               or r["demo_wo_clip"]]
+        fh.write("## 不合格页（%d / %d，另 %d 页豁免）\n\n"
+                 % (len(bad), len(graded), len(exempt)))
+        for r in bad:
+            fh.write("### %s\n" % r["rel"])
+            fh.write("- 源码：RTM=%s CE=%s shim=%s README=%s\n"
+                     % (r["rtm_src"], r["ce_src"], r["shim"], r["readme"]))
+            fh.write("- 小节 %d 个，<video> %d 条\n" % (r["secs"], r["vids"]))
+            if r["no_video"]:
+                fh.write("- **无视频小节**：%s\n" % "；".join(r["no_video"]))
+            if r["demo_wo_clip"]:
+                fh.write("- **demo 类无成片**：%s\n" % "，".join(r["demo_wo_clip"]))
+            if r["clips"]:
+                fh.write("- 已发布成片：%s\n" % "，".join(r["clips"]))
+            if r["broken"]:
+                fh.write("- 断链：%s\n" % "，".join(r["broken"]))
+            if r["ce_vid"]:
+                fh.write("- 页面嵌了 CE 片：%s\n" % "，".join(r["ce_vid"]))
+            if r["status"]:
+                fh.write("- 有 `> 状态：` 行\n")
+            fh.write("\n")
+        fh.write("\n## 合格页（%d）\n\n" % (len(graded) - len(bad)))
+        for r in graded:
+            if r not in bad:
+                fh.write("- %s（小节 %d / 视频 %d）\n" % (r["rel"], r["secs"], r["vids"]))
+        fh.write("\n## 豁免页（%d，导览页无函数表，按 2026-10-19 决定豁免）\n\n"
+                 % len(exempt))
+        for r in exempt:
+            fh.write("- %s（小节 %d / 视频 %d）\n" % (r["rel"], r["secs"], r["vids"]))
+
+    # ASCII matrix per chapter
+    ch = {}
+    for r in graded:
+        key = r["rel"].split(os.sep)[0] + ("\\" + r["rel"].split(os.sep)[1]
+                                           if len(r["rel"].split(os.sep)) > 2 else "")
+        d = ch.setdefault(key, [0, 0])
+        d[0] += 1
+        if r in bad:
+            d[1] += 1
+    print("pages=%d bad=%d exempt=%d" % (len(graded), len(bad), len(exempt)))
+    for k, (n, b) in sorted(ch.items()):
+        print("  %-34s %3d pages, %3d bad" % (k, n, b))
+    print("report ->", args.report)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

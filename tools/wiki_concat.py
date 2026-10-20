@@ -86,6 +86,9 @@ def plan(page_py, force=False):
     mod = _load(page_py)
     here = os.path.dirname(os.path.abspath(page_py))
     out_dir = os.path.join(here, "final")
+    per_page = os.path.join(out_dir, os.path.splitext(os.path.basename(page_py))[0])
+    if os.path.isdir(per_page):             # newer scripts: per-page fragments
+        out_dir = per_page
     rtm_out = os.path.join(os.path.dirname(here), RTM_OUT)
     # Several pages share one `final/` dir, so a fragment called `points`,
     # `coords` or `interpolate` may have been written by a *sibling* page after
@@ -171,10 +174,12 @@ def page_plan(page_py):
     ce_out = os.path.join(assets, "ManimCE output")
 
     frags = [f for _out, names in table for f in names]
+    per_page = os.path.join(here, "final", os.path.splitext(os.path.basename(page_py))[0])
     rtm_srcs = []
     for f in frags:
         cands = [os.path.join(rtm_out, f"{page}-{f}.mp4"),          # wiki_render naming
-                 os.path.join(here, "final", f + ".mp4"),           # raw fragment render
+                 os.path.join(per_page, f + ".mp4"),                # per-page fragments
+                 os.path.join(here, "final", f + ".mp4"),           # shared fragments
                  os.path.join(rtm_out, f + ".mp4")]                 # old layout
         rtm_srcs.append(next((c for c in cands if os.path.exists(c)), cands[0]))
     ce_srcs = []

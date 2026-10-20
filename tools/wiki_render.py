@@ -47,16 +47,25 @@ def _outputs(mod):
     return [(out, list(frags)) for out, frags in table]
 
 
+def _per_page_frag_dir(here, page_py):
+    """`final/<page>/` when the script renders into its own fragment dir."""
+    stem = os.path.splitext(os.path.basename(page_py))[0]
+    return os.path.join(here, "final", stem)
+
+
 def _shared_fragments(here, page_py, mod):
     """Fragments this page declares that a *sibling* page script also declares.
 
-    Several pages share one `final/` directory (`02-Mobject通用/assets/RTM code/`
+    Older pages share one `final/` directory (`02-Mobject通用/assets/RTM code/`
     holds 16 scripts), so a fragment called `interpolate` or `points` is
     rendered by more than one page into the same file.  In `--refresh-only`
     mode nobody can tell whose render currently sits there, so publishing such
     a name is a coin flip -- skip it instead (the caller must re-render the
-    page, which renders and publishes in one pass).
+    page, which renders and publishes in one pass).  Newer scripts render into
+    a per-page `final/<page>/`, where nothing can collide.
     """
+    if os.path.isdir(_per_page_frag_dir(here, page_py)):
+        return set()
     own = {name for name, _cls in getattr(mod, "SCENES", [])}
     shared = set()
     for f in sorted(os.listdir(here)):
@@ -79,7 +88,7 @@ def render(page_py, fragments, keep_going=False, verbose=False,
            refresh_only=False):
     page_py = os.path.abspath(page_py)
     here = os.path.dirname(page_py)
-    out_dir = os.path.join(here, "final")
+    out_dir = _per_page_frag_dir(here, page_py)
     assets = os.path.dirname(here)
     rtm_out = os.path.join(assets, RTM_OUT)
 
@@ -96,6 +105,9 @@ def render(page_py, fragments, keep_going=False, verbose=False,
             sys.stderr.write(proc.stderr)
         if proc.returncode and not keep_going:
             raise SystemExit(f"{os.path.basename(page_py)} exited {proc.returncode}")
+
+    if not os.path.isdir(out_dir):          # older scripts share one `final/`
+        out_dir = os.path.join(here, "final")
 
     mod = _load(page_py)
     page = getattr(mod, "PAGE", "")

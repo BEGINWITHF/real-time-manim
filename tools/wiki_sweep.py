@@ -56,9 +56,16 @@ def _one(args):
     except Exception as exc:
         return (float("nan"), rtm, ce, f"{type(exc).__name__}: {exc}", None)
     detail = buf.getvalue().strip()
-    nbig = int((diff > threshold).sum()) if diff is not None else -1
-    first = int(np_first(diff, threshold)) if diff is not None else -1
-    return (mean, rtm, ce, f"bad_frames={nbig} first_bad={first}", diff)
+    # Summarise and DROP the per-frame array: the whole-wiki run keeps every
+    # pair's diff alive otherwise (277 pairs x ~600 frames x 480x270 uint8 is
+    # tens of GB, and the process died with no output at all).  `--out` re-runs
+    # compare() for the pairs it wants to dump, so nothing needs it here.
+    if diff is not None:
+        nbig = int((diff > threshold).sum())
+        first = int(np_first(diff, threshold))
+    else:
+        nbig = first = -1
+    return (mean, rtm, ce, f"bad_frames={nbig} first_bad={first}", None)
 
 
 def np_first(diff, threshold):

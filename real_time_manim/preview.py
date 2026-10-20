@@ -283,6 +283,13 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
             ("RegisterClassExW", wt.ATOM, [ctypes.POINTER(_WNDCLASSEXW)]),
             ("UnregisterClassW", wt.BOOL, [wt.LPCWSTR, wt.HINSTANCE]),
             ("LoadCursorW", wt.HANDLE, [wt.HINSTANCE, wt.LPCWSTR]),
+            ("SetWindowLongPtrW", ctypes.c_void_p,
+             [wt.HWND, ctypes.c_int, ctypes.c_void_p]),
+            ("CallWindowProcW", _LRESULT,
+             [ctypes.c_void_p, wt.HWND, ctypes.c_uint, _WPARAM, _LPARAM]),
+            ("LoadImageW", wt.HANDLE,
+             [wt.HINSTANCE, wt.LPCWSTR, ctypes.c_uint,
+              ctypes.c_int, ctypes.c_int, ctypes.c_uint]),
             ("GetDpiForWindow", ctypes.c_uint, [wt.HWND]),
             ("AdjustWindowRectEx", wt.BOOL,
              [ctypes.POINTER(wt.RECT), ctypes.c_uint, wt.BOOL, ctypes.c_uint]),
@@ -305,6 +312,8 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
     _SW_SHOW = 5
     _WM_CLOSE, _WM_DESTROY, _WM_COMMAND, _WM_SETFOCUS = 0x0010, 0x0002, 0x0111, 0x0007
     _WM_HSCROLL = 0x0114
+    _WM_LBUTTONDOWN = 0x0201
+    _GWLP_WNDPROC = -4
     _WM_SETFONT = 0x0030
     _DEFAULT_GUI_FONT = 17
     _LTGRAY_BRUSH = 1        # GetStockObject: WHITE 0, LTGRAY 1, GRAY 2, BLACK 4
@@ -425,6 +434,20 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
             wc.hCursor = _u.LoadCursorW(None, wt.LPCWSTR(_IDC_ARROW))
             wc.hbrBackground = _g.GetStockObject(_LTGRAY_BRUSH)
             wc.lpszClassName = self.CLASS_NAME
+            # Same icon as the main window: the control bar is a separate
+            # window class, so without this it shows the default Python icon.
+            _icon = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "logo.ico")
+            if getattr(_u, "LoadImageW", None) is not None and os.path.exists(_icon):
+                _LR_LOADFROMFILE, _LR_DEFAULTSIZE = 0x10, 0x40
+                _IMAGE_ICON = 1
+                try:
+                    wc.hIcon = _u.LoadImageW(
+                        None, wt.LPCWSTR(_icon), _IMAGE_ICON, 0, 0,
+                        _LR_LOADFROMFILE | _LR_DEFAULTSIZE)
+                    wc.hIconSm = wc.hIcon
+                except Exception:
+                    pass
             _u.RegisterClassExW(ctypes.byref(wc))
             _CLASS_REGISTERED = True
 
@@ -467,6 +490,12 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
             _u.SendMessageW(self._slider, _TBM_SETTICFREQ,
                             max(1, self._n_frames // 10), 0)
             _u.SendMessageW(self._slider, _TBM_SETPOS, 1, 0)
+            # click-to-seek: remember the width and subclass the control
+            self._slider_w = w
+            self._slider_proc_obj = _WNDPROC(self._slider_proc)
+            self._slider_old_proc = _u.SetWindowLongPtrW(
+                self._slider, _GWLP_WNDPROC,
+                ctypes.cast(self._slider_proc_obj, ctypes.c_void_p))
             controls.append(self._slider)
             x += w + pad
             buttons = (("Save PNG", _ID_SAVE, 0), ("Quit", _ID_QUIT, 0))
@@ -549,6 +578,25 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
                 applied_pos = self._position
                 _u.SendMessageW(self._slider, _TBM_SETPOS, 1, applied_pos)
             time.sleep(0.01)
+
+    def _slider_proc(self, hwnd, msg, wparam, lparam):
+        """Exact seek on a channel click (the stock control only pages)."""
+        if msg == _WM_LBUTTONDOWN:
+            try:
+                x = ctypes.c_short(lparam & 0xFFFF).value
+                margin = int(6 * self._dpi_scale())
+                span = max(1, self._slider_w - 2 * margin)
+                frac = (x - margin) / span
+                pos = int(round((self._n_frames - 1)
+                                * min(1.0, max(0.0, frac))))
+                _u.SendMessageW(hwnd, _TBM_SETPOS, 1, pos)
+                # TB_THUMBTRACK = 5: the bar seeks straight to this frame
+                _u.SendMessageW(self._hwnd, _WM_HSCROLL,
+                                (pos << 16) | 5, hwnd)
+            except Exception:
+                pass
+        return _u.CallWindowProcW(self._slider_old_proc, hwnd, msg,
+                                  wparam, lparam)
 
     # -- window messages ----------------------------------------------------
     def _on_message(self, hwnd, msg, wparam, lparam):
