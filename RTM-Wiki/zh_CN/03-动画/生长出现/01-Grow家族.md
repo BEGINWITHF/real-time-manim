@@ -172,11 +172,20 @@ if __name__ == "__main__":
         fps=60, hidden=True, overwrite=True, cleanup=True, verbose=True)
 ```
 
-这段代码在做什么：三段依次演示——① `GrowFromPoint(sq, ORIGIN, point_color=RED, run_time=1.3)` 让蓝方块从画面中心（坐标当起点）带红色渐变长出来，接着 `GrowFromPoint(tri, anchor, point_color=BLUE, run_time=1.3)` 让红三角从灰点 `anchor`（mobject 当起点、取其中心）长出来；② `GrowFromCenter(ci, point_color=GREEN, run_time=1.3)` 让绿圆从自身中心长大；③ `GrowFromEdge(rect, RIGHT, point_color=ORANGE, run_time=1.3)` 让橙色长条从包围盒右边长出来。每段之间把标签和对象一起淡出，画面保持干净。
+这段代码在做什么：三段依次演示。
+
+- ① `GrowFromPoint(sq, ORIGIN, point_color=RED, run_time=1.3)` 让蓝方块从画面中心（坐标当起点）带红色渐变长出来；接着 `GrowFromPoint(tri, anchor, point_color=BLUE, run_time=1.3)` 让红三角从灰点 `anchor`（mobject 当起点、取其中心）长出来。
+- ② `GrowFromCenter(ci, point_color=GREEN, run_time=1.3)` 让绿圆从自身中心长大。
+- ③ `GrowFromEdge(rect, RIGHT, point_color=ORANGE, run_time=1.3)` 让橙色长条从包围盒右边长出来。
+
+每段之间把标签和对象一起淡出，画面保持干净。
 
 <video src="assets/RTM output/01-Grow家族.mp4" controls width="560"></video>
 
-> 提醒：`point_color=None`（默认）与不传完全一样（沿用对象自身颜色），想看"起点变色"效果就显式给一个颜色；`point` 传 mobject 时取的是它的**中心**，别传还没定位好的对象。
+> 提醒：
+>
+> - `point_color=None`（默认）与不传完全一样，都是沿用对象自身颜色；想看"起点变色"效果就显式给一个颜色。
+> - `point` 传 mobject 时取的是它的**中心**，别传还没定位好的对象。
 
 ---
 

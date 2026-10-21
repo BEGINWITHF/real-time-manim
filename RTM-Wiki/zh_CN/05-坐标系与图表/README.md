@@ -1,25 +1,20 @@
 # 05-坐标系与图表
 
-数轴、二维坐标系、坐标换算、网格与复平面、函数曲线、面积与黎曼矩形、极坐标、图表与刻度缩放。
+> 功能目录 · 14 页。
 
-[首页](../README.md) ｜ [功能状态总览](../99-功能状态总览.md)
-
-> 状态列与 [98-功能清单](../98-功能清单.md) 第 6 节一致：14 页全部——核心类已实渲染验证（2026-10-11 实渲染，2026-10-16 复跑全绿），走通用矢量回退但回退能正确画出。14 页现已**全部附样例视频与 ManimCE 对照**（`08`/`09`/`10` 于 2026-10-17 补齐）；`07` 页的 `plot_surface` 曾因存档件与 CE 对照件不同源、且渲染器截断整屏填充而表现未定，现已复原样例并逐帧对齐（198 帧，`frames>4.0: 0`，见 `07-极坐标与三维坐标系.md` 与 `tests/test_plot_surface.py`）。
-
-| 页面 | 内容 | 状态 |
-| --- | --- | --- |
-| [01b-数轴方法进阶](01b-数轴方法进阶.md) | 数轴方法进阶（换算、标签与刻度） | （已渲染） |
-| [01-NumberLine](01-NumberLine.md) | 数轴 NumberLine | （已渲染） |
-| [02-Axes](02-Axes.md) | 二维坐标系 Axes | （已渲染） |
-| [02b-引导线与折线图](02b-引导线与折线图.md) | 引导线与折线图 | （已渲染） |
-| [03-坐标换算](03-坐标换算.md) | 坐标换算（c2p / p2c / @ / add_coordinates） | （已渲染，随 `Axes.plot` 验证） |
-| [04-网格与复平面](04-网格与复平面.md) | 网格与复平面（NumberPlane / ComplexPlane） | （已渲染） |
-| [05b-曲线标注与辅助线](05b-曲线标注与辅助线.md) | 曲线标注与辅助线 | （已渲染） |
-| [05c-导数原函数与切线](05c-导数原函数与切线.md) | 导数、原函数与曲线取点 | （已渲染） |
-| [05-函数曲线](05-函数曲线.md) | 绘制函数曲线（plot 与参数曲线） | （已渲染） |
-| [06-面积与黎曼矩形](06-面积与黎曼矩形.md) | 面积与黎曼矩形 | （已渲染） |
-| [07-极坐标与三维坐标系](07-极坐标与三维坐标系.md) | 极坐标与三维坐标系 | （已渲染） |
-| [08-图表BarChart](08-图表BarChart.md) | 图表 BarChart | （有专项 `tests/test_phase2_graphics.py:249` `test_bar_chart`；样例视频 + CE 对照已补，2026-10-17） |
-| [09-概率与SampleSpace](09-概率与SampleSpace.md) | 概率与采样空间 SampleSpace | （有专项 `tests/test_phase2_graphics.py:256` `test_sample_space`；样例视频 + CE 对照已补，2026-10-17） |
-| [10-刻度与缩放](10-刻度与缩放.md) | 刻度与缩放 scaling | （有专项 `tests/test_phase7_remaining.py:250/258` `test_log_base_scaling` / `test_linear_base_scaling`；样例视频 + CE 对照已补，2026-10-17） |
-
+| 页面 | 功能 |
+| --- | --- |
+| [01-NumberLine](01-NumberLine.md) | NumberLine · UnitInterval |
+| [01b-数轴方法进阶](01b-数轴方法进阶.md) | 数轴方法进阶（换算、标签与刻度） |
+| [02-Axes](02-Axes.md) | Axes · add_coordinates · 取轴 · 轴标签 |
+| [02b-引导线与折线图](02b-引导线与折线图.md) | 引导线与折线图 |
+| [03-坐标换算](03-坐标换算.md) | 坐标换算（c2p / p2c / @ / add_coordinates） |
+| [04-网格与复平面](04-网格与复平面.md) | NumberPlane · ComplexPlane |
+| [05-函数曲线](05-函数曲线.md) | Axes.plot · FunctionGraph · CoordinateSystem.plot_parametric_curve |
+| [05b-曲线标注与辅助线](05b-曲线标注与辅助线.md) | Axes.plot_implicit_curve · Axes.get_graph_label · Axes.get_T_label · Axes.get_secant_slope_group · Axes.get_vertical_lines_to_graph |
+| [05c-导数原函数与切线](05c-导数原函数与切线.md) | Axes.plot_derivative_graph · Axes.plot_antiderivative_graph · Axes.slope_of_tangent · Axes.angle_of_tangent |
+| [06-面积与黎曼矩形](06-面积与黎曼矩形.md) | Axes.get_area · Axes.get_riemann_rectangles |
+| [07-极坐标与三维坐标系](07-极坐标与三维坐标系.md) | PolarPlane · ThreeDAxes · plot_surface |
+| [08-图表BarChart](08-图表BarChart.md) | BarChart · BarChart.get_bar_labels · BarChart.change_bar_values · get_bar_labels · change_bar_values |
+| [09-概率与SampleSpace](09-概率与SampleSpace.md) | SampleSpace · divide_vertically · divide_horizontally |
+| [10-刻度与缩放](10-刻度与缩放.md) | LogBase · LinearBase · Axes |

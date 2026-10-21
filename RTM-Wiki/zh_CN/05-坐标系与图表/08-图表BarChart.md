@@ -1,12 +1,12 @@
 # 图表 BarChart
 
-RTM 走通用矢量回退出图（2026-10-11 实渲染验证，回退能正确画出）。柱状图继承 `Axes`，`c2p`、`plot`、`get_area`、`x_axis_config`/`y_axis_config` 全部可用。
+RTM 走通用矢量回退出图（2026-10-11 实渲染验证，回退能正确画出）。柱状图继承 `Axes`，所以 `c2p`、`plot`、`get_area`、`x_axis_config` / `y_axis_config` 全部可用。
 
 ## BarChart
 
 `BarChart(values, bar_names=None, y_range=None, x_length=None, y_length=None, bar_colors=["#003f5c", "#58508d", "#bc5090", "#ff6361", "#ffa600"], bar_width=0.6, bar_fill_opacity=0.7, bar_stroke_width=3, **kwargs)`
 
-构造时自动铺柱子、给 y 轴加数字、给 x 轴加 `bar_names` 标签；内部固定 `x_range=[0, len(values), 1]`、`tips=False`，x 轴默认 `font_size=24`、`label_constructor=Tex`。
+构造时自动铺柱子、给 y 轴加数字、给 x 轴加 `bar_names` 标签。内部固定 `x_range=[0, len(values), 1]`、`tips=False`；x 轴默认 `font_size=24`、`label_constructor=Tex`。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -40,7 +40,7 @@ RTM 走通用矢量回退出图（2026-10-11 实渲染验证，回退能正确�
 
 `BarChart.change_bar_values(values, update_colors=True) -> None`
 
-**就地**更新柱高（不重新建图），是做"数值增长"动画（`Transform`/`always_redraw`）的核心方法；新 `values` 长度不必与原值相同（超出部分忽略），原柱高为 0 时会重建该柱。
+**就地**更新柱高（不重新建图），是做"数值增长"动画（`Transform` / `always_redraw`）的核心方法。新 `values` 长度不必与原值相同（超出部分忽略），原柱高为 0 时会重建该柱。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -49,7 +49,7 @@ RTM 走通用矢量回退出图（2026-10-11 实渲染验证，回退能正确�
 
 ## 样例 1：构造 + `get_bar_labels`
 
-构造时自动铺柱子、给 y 轴加数字、给 x 轴加 `bar_names` 标签；`get_bar_labels` 另外**返回**柱顶数值标签。样例用带负值的 `values` 让负柱自动朝下，`y_range` 只给两元组（步长自动补）。
+构造时自动铺柱子、给 y 轴加数字、给 x 轴加 `bar_names` 标签；`get_bar_labels` 另外**返回**柱顶数值标签。样例用带负值的 `values` 让负柱自动朝下，`y_range` 只给两元组，步长自动补。
 
 ```python
 from real_time_manim import (
@@ -77,15 +77,21 @@ class BasicDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：`BarChart` 继承 `Axes`，构造时把 `values` 变成一排 `Rectangle`（`chart.bars`），负值柱向下画；y 轴刻度数字与 x 轴 `bar_names` 标签一起生成（`label_constructor` 默认 `Tex`）。`get_bar_labels()` 再按每根柱的顶端（负柱则在底端）生成一个数值标签 `VGroup`——**只返回不自动上屏**，样例里显式 `FadeIn(labels)`。
+这段代码在做什么：
+
+- `BarChart` 继承 `Axes`，构造时把 `values` 变成一排 `Rectangle`（`chart.bars`），负值柱向下画；y 轴刻度数字与 x 轴 `bar_names` 标签一起生成（`label_constructor` 默认 `Tex`）。
+- `get_bar_labels()` 再按每根柱的顶端（负柱则在底端）生成一个数值标签 `VGroup`——**只返回不自动上屏**，样例里显式 `FadeIn(labels)`。
 
 <video src="assets/RTM output/08-图表BarChart-basic.mp4" controls width="560"></video>
 
-> 提醒：`bar_names` 比 `values` **长会索引越界**（短没关系）；`get_bar_labels` 的返回值不会写回 `chart.bar_labels`（该属性构造时为 `None`），要自己存变量再上屏。
+> 提醒：
+>
+> - `bar_names` 比 `values` **长会索引越界**（短没关系）。
+> - `get_bar_labels` 的返回值不会写回 `chart.bar_labels`（该属性构造时为 `None`），要自己存变量再上屏。
 
 ## 样例 2：`change_bar_values` 就地改柱高
 
-`change_bar_values(values)` **就地**换柱高、不重建图表；沿 `.animate` 播就是平滑长高/缩矮。样例从 `[3, 4, 2]` 依次变到 `[7, 5, 3]`、`[1, 2, 9]`。
+`change_bar_values(values)` **就地**换柱高、不重建图表；沿 `.animate` 播就是平滑长高 / 缩矮。样例从 `[3, 4, 2]` 依次变到 `[7, 5, 3]`、`[1, 2, 9]`。
 
 ```python
 from real_time_manim import (
@@ -117,10 +123,15 @@ class ChangeValuesDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：`change_bar_values` 本身是同步方法，直接调只会在下一帧瞬变；样例用 `chart.animate.change_bar_values(...)` 把它包成动画，柱子的高度与颜色在 1 秒里连续插值。这是做「数值增长」类动画的核心手法，配合 `always_redraw`/`ValueTracker` 可以逐帧跟随。
+这段代码在做什么：`change_bar_values` 本身是同步方法，直接调只会在下一帧瞬变。样例用 `chart.animate.change_bar_values(...)` 把它包成动画，柱子的高度与颜色在 1 秒里连续插值。
+
+这是做「数值增长」类动画的核心手法，配合 `always_redraw` / `ValueTracker` 可以逐帧跟随。
 
 <video src="assets/RTM output/08-图表BarChart-changevalues.mp4" controls width="560"></video>
 
-> 提醒：新 `values` 长度**不必**与原值相同（超出部分忽略、原高为 0 的柱子会重建）；`update_colors=True`（默认）会按 `bar_colors` 重新渐变上色。
+> 提醒：
+>
+> - 新 `values` 长度**不必**与原值相同（超出部分忽略，原高为 0 的柱子会重建）。
+> - `update_colors=True`（默认）会按 `bar_colors` 重新渐变上色。
 
 相关：[二维坐标系](02-Axes.md) · [坐标换算](03-坐标换算.md) · [面积与黎曼矩形](06-面积与黎曼矩形.md)

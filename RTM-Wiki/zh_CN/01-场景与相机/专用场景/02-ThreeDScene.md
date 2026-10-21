@@ -1,6 +1,8 @@
 # ThreeDScene（三维场景）
 
-三维视角控制场景：给 `Scene` 换上 `ThreeDCamera`，可以随时改视角（`phi` / `theta` / `gamma`）、缩放（`zoom`）、换画面中心，还有环境旋转、3D 错觉晃动、把对象钉在屏幕上的 fixed 系列，以及加强版子场景 `SpecialThreeDScene`。角度一律是**弧度**（`70 * DEGREES` 才是 70°）。RTM 下这些能力全部渲染实测可用；注意两个"视角类"构造参数都只是存起来、不会自己生效（详见样例 1）。
+三维视角控制场景：给 `Scene` 换上 `ThreeDCamera`，可以随时改视角（`phi` / `theta` / `gamma`）、缩放（`zoom`）、换画面中心，还有环境旋转、3D 错觉晃动、把对象钉在屏幕上的 fixed 系列，以及加强版子场景 `SpecialThreeDScene`。角度一律是**弧度**（`70 * DEGREES` 才是 70°）。
+
+RTM 下这些能力全部渲染实测可用；注意两个"视角类"构造参数都只是存起来、不会自己生效（详见样例 1）。
 
 ## 参数
 
@@ -29,7 +31,7 @@ def set_to_default_angled_camera_orientation(self, **kwargs: Any) -> None:
 
 #### 样例：构造参数改动
 
-什么都不传时的起始视角其实是**正面**（`phi=0°`、`theta=0°`，经典斜角并不会自动出现）；两个视角类构造参数都只存不用 —— `default_angled_camera_orientation_kwargs` 要等 `set_to_default_angled_camera_orientation()` 才应用，`ambient_camera_rotation` 上游根本没人读。
+什么都不传时的起始视角其实是**正面**（`phi=0°`、`theta=0°`，经典斜角并不会自动出现）。两个视角类构造参数都只存不用 —— `default_angled_camera_orientation_kwargs` 要等 `set_to_default_angled_camera_orientation()` 才应用，`ambient_camera_rotation` 上游根本没人读。
 
 ```python
 from real_time_manim import ThreeDScene, ThreeDAxes, Cube, Text, FadeIn, \
@@ -112,11 +114,19 @@ class CtorAmbient(ThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：三段连着讲构造参数。第一段什么都不传，起始就是正面视角，再调 `set_to_default_angled_camera_orientation()` 跳到存着的经典斜视角（70° / -135°）；第二段构造时传自定义的 `{phi: 60°, theta: -45°}`，画面**依旧不动**（光传参没人用），直到同一个方法被调用才跳到自定义角度；第三段传 `ambient_camera_rotation={"theta": 0.15}` 后画面纹丝不动，改调 `begin_ambient_camera_rotation()` 才开始转 —— 用对照证明两个参数都是"存而不用"。
+这段代码在做什么：三段连着讲构造参数。
+
+- 第一段什么都不传，起始就是正面视角，再调 `set_to_default_angled_camera_orientation()` 跳到存着的经典斜视角（70° / -135°）。
+- 第二段构造时传自定义的 `{phi: 60°, theta: -45°}`，画面**依旧不动**（光传参没人用），直到同一个方法被调用才跳到自定义角度。
+- 第三段传 `ambient_camera_rotation={"theta": 0.15}` 后画面纹丝不动，改调 `begin_ambient_camera_rotation()` 才开始转 —— 用对照证明两个参数都是"存而不用"。
 
 <video src="assets/RTM output/02-ThreeDScene-ctor.mp4" controls width="560"></video>
 
-> 提醒：构造参数传了不生效是上游 `manim` 0.21 的既有行为，命令行渲染和 RTM 完全一致，不是 RTM 的问题。日常想摆斜视角，最直接是在 `construct` 里 `set_camera_orientation(phi=70 * DEGREES, theta=-135 * DEGREES)`；`default_angled_camera_orientation_kwargs` 的用途是"预设一档，后面随时一键调回"。`ambient_camera_rotation` 这个参数可以直接忽略，环境旋转的正路是样例 3 的 `begin_ambient_camera_rotation()`。
+> 提醒：构造参数传了不生效是上游 `manim` 0.21 的既有行为，命令行渲染和 RTM 完全一致，不是 RTM 的问题。
+>
+> 日常想摆斜视角，最直接是在 `construct` 里 `set_camera_orientation(phi=70 * DEGREES, theta=-135 * DEGREES)`；`default_angled_camera_orientation_kwargs` 的用途是"预设一档，后面随时一键调回"。
+>
+> `ambient_camera_rotation` 这个参数可以直接忽略，环境旋转的正路是样例 3 的 `begin_ambient_camera_rotation()`。
 
 ### set_camera_orientation / move_camera
 
@@ -191,11 +201,17 @@ class OrientationDemo(ThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先用 `set_camera_orientation` 一帧跳到 `phi=30°` 的俯视角，再用 `move_camera` 平滑绕到 `70°/-45°`，接着同一条 `move_camera` 依次演示三个"局部"参数：`gamma` 让画面歪 25°、`zoom=1.8` 推近、`frame_center=cube` 把画面中心挪到立方体上（前两步不动中心、这一步不动缩放）。最后用一个 `set_camera_orientation` 把 `phi`/`theta`/`gamma`/`zoom`/`frame_center` 五项一次性复位，镜头回到经典斜视角全景。
+这段代码在做什么：先用 `set_camera_orientation` 一帧跳到 `phi=30°` 的俯视角，再用 `move_camera` 平滑绕到 `70°/-45°`，接着同一条 `move_camera` 依次演示三个"局部"参数：`gamma` 让画面歪 25°、`zoom=1.8` 推近、`frame_center=cube` 把画面中心挪到立方体上（前两步不动中心、这一步不动缩放）。
+
+最后用一个 `set_camera_orientation` 把 `phi`/`theta`/`gamma`/`zoom`/`frame_center` 五项一次性复位，镜头回到经典斜视角全景。
 
 <video src="assets/RTM output/02-ThreeDScene-camera.mp4" controls width="560"></video>
 
-> 提醒：`set_camera_orientation` 没有动画（一帧跳变），要平滑过渡就用 `move_camera`。`move_camera` 内部会调 `self.play`，在 RTM 里必须先写 `self.play = win.play`，否则镜头不动。角度都按弧度算，写 `25 * DEGREES` 才是 25°。复位时 `frame_center=ORIGIN` 别忘了 —— 只写 `phi/theta` 的话，之前挪走的画面中心还在。另外：`zoom` **构造参数**一直生效，但运行时的 `move_camera(zoom=…)` / `set_zoom` 到 2026-10-17 才在 RTM 里真正起作用（此前 `camera_state` 读的是 `ThreeDCamera` 只写一次的死属性 `camera.zoom`，而动画驱动的是 `zoom_tracker`／`get_zoom`），因此本段的 `zoom=1.8` 推近当时是无效的；修复后本条。
+> 提醒：`set_camera_orientation` 没有动画（一帧跳变），要平滑过渡就用 `move_camera`。`move_camera` 内部会调 `self.play`，在 RTM 里必须先写 `self.play = win.play`，否则镜头不动。角度都按弧度算，写 `25 * DEGREES` 才是 25°。
+>
+> 复位时 `frame_center=ORIGIN` 别忘了 —— 只写 `phi/theta` 的话，之前挪走的画面中心还在。
+>
+> 另外：`zoom` **构造参数**一直生效，但运行时的 `move_camera(zoom=…)` / `set_zoom` 到 2026-10-17 才在 RTM 里真正起作用（此前 `camera_state` 读的是 `ThreeDCamera` 只写一次的死属性 `camera.zoom`，而动画驱动的是 `zoom_tracker`／`get_zoom`），因此本段的 `zoom=1.8` 推近当时是无效的；修复后本条。
 
 ### begin/stop_ambient_camera_rotation、begin/stop_3dillusion_camera_rotation
 
@@ -260,11 +276,15 @@ class RotationDemo(ThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先把镜头摆到斜视角，然后开三段旋转：第一段绕竖直轴（`about="theta"`）匀速环绕 1.6 秒后停；第二段换 `about="phi"` 俯仰方向再转 1.6 秒，`stop` 时把同样的 `about` 传回去；第三段开 3D 错觉旋转（`rate=1`），画面在当前视角附近小幅晃动出立体感，最后停住收工。整个过程中顶部标题因为被钉在屏幕上，始终正对观众不动。
+这段代码在做什么：先把镜头摆到斜视角，然后开三段旋转：第一段绕竖直轴（`about="theta"`）匀速环绕 1.6 秒后停；第二段换 `about="phi"` 俯仰方向再转 1.6 秒，`stop` 时把同样的 `about` 传回去；第三段开 3D 错觉旋转（`rate=1`），画面在当前视角附近小幅晃动出立体感，最后停住收工。
+
+整个过程中顶部标题因为被钉在屏幕上，始终正对观众不动。
 
 <video src="assets/RTM output/02-ThreeDScene-rotation.mp4" controls width="560"></video>
 
-> 提醒：`stop_*` 的 `about` 要和 `begin_*` 时一致（`theta` 和 `phi` 各停各的，写错会停不掉）。旋转只在"播放中"前进，RTM 里就是 `win.play(Wait(1.6))` 这类等待期间在转 —— 别换成不进播放循环的写法。构造参数 `ambient_camera_rotation` 没有这个效果（见样例 1），要转必须调方法。
+> 提醒：`stop_*` 的 `about` 要和 `begin_*` 时一致（`theta` 和 `phi` 各停各的，写错会停不掉）。
+>
+> 旋转只在"播放中"前进，RTM 里就是 `win.play(Wait(1.6))` 这类等待期间在转 —— 别换成不进播放循环的写法。构造参数 `ambient_camera_rotation` 没有这个效果（见样例 1），要转必须调方法。
 
 ### add/remove_fixed_in_frame_mobjects、add/remove_fixed_orientation_mobjects
 
@@ -320,17 +340,25 @@ class FixedDemo(ThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先摆好斜视角看两个对象的初始状态 —— 黄色标题贴在屏幕顶端，绿色标签悬在立方体上方的 3D 空间里。第一次 `move_camera` 环绕 90°：标题纹丝不动（钉死了），标签却跟着立方体在画面里挪了位置（因为它的位置还在 3D 空间）。然后把两种锁定都解除，第二次环绕时两者都变成普通 3D 对象，跟着视角一起歪、一起转到背面去。
+这段代码在做什么：先摆好斜视角看两个对象的初始状态 —— 黄色标题贴在屏幕顶端，绿色标签悬在立方体上方的 3D 空间里。
+
+第一次 `move_camera` 环绕 90°：标题纹丝不动（钉死了），标签却跟着立方体在画面里挪了位置（因为它的位置还在 3D 空间）。然后把两种锁定都解除，第二次环绕时两者都变成普通 3D 对象，跟着视角一起歪、一起转到背面去。
 
 <video src="assets/RTM output/02-ThreeDScene-fixed.mp4" controls width="560"></video>
 
-> 提醒：`add_fixed_in_frame_mobjects` 会把对象**直接加进场景**，不用再 `self.add(...)`（样例里标题没出现在 `self.add` 的参数里，就是这个原因）；`remove_*` 只解除锁定，对象仍留在场景中。想让文字"始终正对镜头但还能被透视推着走"（如贴着对象的标注）用 `fixed_orientation`，想完全静止（标题、字幕）用 `fixed_in_frame`。
+> 提醒：`add_fixed_in_frame_mobjects` 会把对象**直接加进场景**，不用再 `self.add(...)`（样例里标题没出现在 `self.add` 的参数里，就是这个原因）；`remove_*` 只解除锁定，对象仍留在场景中。
+>
+> 想让文字"始终正对镜头但还能被透视推着走"（如贴着对象的标注）用 `fixed_orientation`，想完全静止（标题、字幕）用 `fixed_in_frame`。
 
 ### class SpecialThreeDScene
 
-`ThreeDScene` 的加强版：默认开着色与指数投影，并带一套 3D 坐标轴、球体的默认参数。配套方法：`get_axes()` 生成 3D 坐标轴、`get_sphere(**kwargs)` 生成球体、`get_default_camera_position()` 返回默认视角 dict、`set_camera_to_default_position()` 把相机设回默认斜视角。
+`ThreeDScene` 的加强版：默认开着色与指数投影，并带一套 3D 坐标轴、球体的默认参数。
 
-> 上游 `manim` 0.21 在这个子类上有**三处 bug**（构造期读 `self.renderer`、默认 `three_d_axes_config` 含已删除的 `tick_frequency`、`get_axes` 用已删除的 `axis.tick_marks`），原样继承在命令行渲染下同样崩溃；样例里给出三处绕法，照抄即可正常出片。
+配套方法：`get_axes()` 生成 3D 坐标轴、`get_sphere(**kwargs)` 生成球体、`get_default_camera_position()` 返回默认视角 dict、`set_camera_to_default_position()` 把相机设回默认斜视角。
+
+> 上游 `manim` 0.21 在这个子类上有**三处 bug**（构造期读 `self.renderer`、默认 `three_d_axes_config` 含已删除的 `tick_frequency`、`get_axes` 用已删除的 `axis.tick_marks`），原样继承在命令行渲染下同样崩溃。
+>
+> 样例里给出三处绕法，照抄即可正常出片。
 
 ```python
 def __init__(self, cut_axes_at_radius: bool = True, camera_config: dict = {"should_apply_shading": True, "exponential_projection": True}, three_d_axes_config: dict = {...}, sphere_config: dict = {"radius": 2, "resolution": (24, 48)}, default_angled_camera_position: dict = {"phi": 70 * DEGREES, "theta": -110 * DEGREES}, low_quality_config: dict = {...}, **kwargs: Any) -> None:
@@ -420,11 +448,17 @@ class SpecialDemo(SpecialThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先用三处绕法把上游 bug 垫掉（替身 `renderer`、删 `tick_frequency`、覆写 `get_axes`），然后按配置生成"在球面半径处截断"的坐标轴和半透明球体，钉上标题，`set_camera_to_default_position()` 回到这个子类专属的默认斜视角（控制台同时打印 `get_default_camera_position()` 的内容），停 0.8 秒后再 `move_camera` 环绕一圈展示立体感。
+这段代码在做什么：先用三处绕法把上游 bug 垫掉（替身 `renderer`、删 `tick_frequency`、覆写 `get_axes`），然后按配置生成"在球面半径处截断"的坐标轴和半透明球体，钉上标题。
+
+`set_camera_to_default_position()` 回到这个子类专属的默认斜视角（控制台同时打印 `get_default_camera_position()` 的内容），停 0.8 秒后再 `move_camera` 环绕一圈展示立体感。
 
 <video src="assets/RTM output/02-ThreeDScene-special.mp4" controls width="560"></video>
 
-> 提醒：三处绕法（`self.renderer` 替身、删 `tick_frequency`、`get_tick_marks()`）缺一个都会崩，照抄即可；它们不是 RTM 特有的补丁，纯命令行渲染同样需要。`SpecialThreeDScene` 的默认视角是 `phi=70° theta=-110°`，和 `ThreeDScene` 构造里存的 `-135°` 不是同一个，别混用。`low_quality_config` 是给 `-ql` 低画质渲染准备的，RTM 恒为 1080p60，永远走不到。
+> 提醒：三处绕法（`self.renderer` 替身、删 `tick_frequency`、`get_tick_marks()`）缺一个都会崩，照抄即可；它们不是 RTM 特有的补丁，纯命令行渲染同样需要。
+>
+> `SpecialThreeDScene` 的默认视角是 `phi=70° theta=-110°`，和 `ThreeDScene` 构造里存的 `-135°` 不是同一个，别混用。
+>
+> `low_quality_config` 是给 `-ql` 低画质渲染准备的，RTM 恒为 1080p60，永远走不到。
 
 ---
 

@@ -39,3 +39,11 @@ syntax_compare/
 *.swp
 .DS_Store
 Thumbs.db
+
+# ---- Not published in the remote repository ----
+/tests/
+/tools/
+/docs/
+/examples/
+/run.py
+/run_all.py

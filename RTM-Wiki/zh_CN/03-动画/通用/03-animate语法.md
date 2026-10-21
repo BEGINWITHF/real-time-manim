@@ -43,7 +43,12 @@ MoveToTarget(mobject, **kwargs)
 
 #### 样例：.animate 三种写法 + generate_target / MoveToTarget
 
-链式 `.animate.shift(...)`、`.animate(run_time=1.3).set_color(RED).rotate(PI/5)`（kwargs 紧跟 `.animate(...)`、多个方法合成一个动画）、`.animate(rate_func=there_and_back).scale(0.55)`，以及显式 `ci.generate_target()` + `MoveToTarget(ci, run_time=1.2)`。
+样例演示三种 `.animate` 写法，外加显式的 `generate_target()` + `MoveToTarget`：
+
+- 链式 `.animate.shift(...)`；
+- `.animate(run_time=1.3).set_color(RED).rotate(PI/5)`（kwargs 紧跟 `.animate(...)`、多个方法合成一个动画）；
+- `.animate(rate_func=there_and_back).scale(0.55)`；
+- 显式 `ci.generate_target()` + `MoveToTarget(ci, run_time=1.2)`。
 
 ```python
 import os
@@ -135,7 +140,12 @@ if __name__ == "__main__":
                       fps=60, hidden=True, overwrite=True, cleanup=True, verbose=True)
 ```
 
-这段代码在做什么：四步演示——① `sq.animate.shift(RIGHT * 1.6)` 最朴素的"改属性即动画"；② `sq.animate(run_time=1.3).set_color(RED).rotate(PI / 5)` 把动画参数紧跟在 `.animate(...)` 后面、再链两个方法，合成一个 1.3 秒的变色+旋转动画；③ `sq.animate(rate_func=there_and_back).scale(0.55)` 把速率函数写进 `.animate(...)`，缩放"出去又回来"；④ 给圆 `ci.generate_target()` 生成目标副本，改好 `ci.target` 的颜色/位置/大小后 `MoveToTarget(ci, run_time=1.2)` 一次变过去。
+这段代码在做什么：四步演示——
+
+- ① `sq.animate.shift(RIGHT * 1.6)`，最朴素的"改属性即动画"；
+- ② `sq.animate(run_time=1.3).set_color(RED).rotate(PI / 5)`，把动画参数紧跟在 `.animate(...)` 后面、再链两个方法，合成一个 1.3 秒的变色+旋转动画；
+- ③ `sq.animate(rate_func=there_and_back).scale(0.55)`，把速率函数写进 `.animate(...)`，缩放"出去又回来"；
+- ④ 给圆 `ci.generate_target()` 生成目标副本，改好 `ci.target` 的颜色/位置/大小后，用 `MoveToTarget(ci, run_time=1.2)` 一次变过去。
 
 <video src="assets/RTM output/03-animate语法.mp4" controls width="560"></video>
 

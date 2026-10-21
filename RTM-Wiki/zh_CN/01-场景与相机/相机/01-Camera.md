@@ -1,6 +1,8 @@
 # Camera（Cairo 基类相机）
 
-所有场景背后默默干活的基类相机：RTM 会按窗口把它建好，你几乎不用手动构造。日常真正能用上的就三样——背景色、`is_in_frame` 判定、`use_z_index` 绘制顺序；其余构造参数和「读像素 / 手动抓帧」那半边 API 都属 Cairo 像素管线，RTM 走 Vulkan 渲染没有接线（下文标）。
+所有场景背后默默干活的基类相机：RTM 会按窗口把它建好，你几乎不用手动构造。日常真正能用上的只有三样：背景色、`is_in_frame` 判定、`use_z_index` 绘制顺序。
+
+其余构造参数，以及「读像素 / 手动抓帧」那半边 API，都属 Cairo 像素管线——RTM 走 Vulkan 渲染，没有接线（下文标）。
 
 ## 参数
 
@@ -31,7 +33,13 @@ def __init__(self, background_image: str | None = None, frame_center: Point3D = 
 
 **返回**：无（构造实例）。所有为 `None` 的参数会自动取 `config` 的同名值。
 
-为什么这节不出视频：`Scene` 只保存 `camera_class` 这个**类**，渲染器建相机用的是 `camera_class()` 无参调用——构造参数根本递不进去（想递只能用 `functools.partial(Camera, ...)` 或子类覆盖默认值），而这批参数又没有一个值得费这个劲：像素管线参数 RTM 压根不走，背景相关的两个直接改 property（样例 1），`use_z_index` 运行期改属性一样生效（样例 3）。
+为什么这节不出视频：`Scene` 只保存 `camera_class` 这个**类**，渲染器建相机用的是 `camera_class()` 无参调用——构造参数根本递不进去（想递只能用 `functools.partial(Camera, ...)` 或子类覆盖默认值）。
+
+而这批参数又没有一个值得费这个劲：
+
+- 像素管线参数，RTM 压根不走；
+- 背景相关的两个，直接改 property（样例 1）；
+- `use_z_index`，运行期改属性一样生效（样例 3）。
 
 ### Camera.background_color / Camera.background_opacity（property）
 
@@ -78,11 +86,19 @@ class BackgroundDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先放一个蓝色方块，此刻背景还是 manim 默认的黑；接着一行 `self.camera.background_color = "#1E3A5F"` 把背景换成深蓝——不用播放任何动画，赋值那一瞬间画面就变了，视频里能清楚看到背景跳色。然后写入 `background_opacity = 0.6` 并把当前值打到屏幕上：这个值读得出来也写得进去，但出片是不透明的 MP4（只有 RGB），所以后半段画面纹丝不动。
+这段代码在做什么：先放一个蓝色方块，此刻背景还是 manim 默认的黑。
+
+接着一行 `self.camera.background_color = "#1E3A5F"` 把背景换成深蓝——不用播放任何动画，赋值那一瞬间画面就变了，视频里能清楚看到背景跳色。
+
+然后写入 `background_opacity = 0.6` 并把当前值打到屏幕上：这个值读得出来也写得进去，但出片是不透明的 MP4（只有 RGB），所以后半段画面纹丝不动。
 
 <video src="assets/RTM output/01-Camera-background.mp4" controls width="560"></video>
 
-> 提醒：背景色随时可改、随时生效，做「换色转场」不用额外动画；但 `background_opacity` 只是记录在相机上的一个数，导出视频时会被丢掉——想做半透明效果请给 mobject 本身设 `fill_opacity`，别指望背景变淡。另外 `MLWindow(960, 540)` 会被强制纠正成 1920×1080 并打印一行提示，不是报错。
+> 提醒：
+>
+> - 背景色随时可改、随时生效，做「换色转场」不用额外动画。
+> - `background_opacity` 只是记录在相机上的一个数，导出视频时会被丢掉——想做半透明效果，请给 mobject 本身设 `fill_opacity`，别指望背景变淡。
+> - `MLWindow(960, 540)` 会被强制纠正成 1920×1080 并打印一行提示，这不是报错。
 
 ### Camera.is_in_frame(mobject)
 
@@ -125,11 +141,16 @@ class IsInFrameDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：画面正中放一个方块、右边很远处放一个圆（远到根本看不见），先读一组 `is_in_frame` 结果打到屏幕上——方块 `True`、圆 `False`；然后把方块平移出画面，动画结束后再判一次，读数翻成 `False`。整个判定是纯几何计算、不碰渲染，所以任何时刻调用都是瞬间出结果，常用来做「对象出画就换镜头」这类逻辑。
+这段代码在做什么：画面正中放一个方块、右边很远处放一个圆（远到根本看不见），先读一组 `is_in_frame` 结果打到屏幕上——方块 `True`、圆 `False`；然后把方块平移出画面，动画结束后再判一次，读数翻成 `False`。
+
+整个判定是纯几何计算、不碰渲染，所以任何时刻调用都是瞬间出结果，常用来做「对象出画就换镜头」这类逻辑。
 
 <video src="assets/RTM output/01-Camera-is_in_frame.mp4" controls width="560"></video>
 
-> 提醒：判定标准是「和取景框有没有交集」，对象一半在画面外照样返回 `True`；圆放在 `RIGHT * 10` 加进场景后完全看不见，这正是 `False` 的效果——出不出画不用肉眼猜，问它就行。注意普通 `Camera` 的取景框永远是默认画幅，`frame_center` 改了它也跟着变（但画面不动，见上表），拿不准就别动 `frame_center`。
+> 提醒：
+>
+> - 判定标准是「和取景框有没有交集」，对象一半在画面外照样返回 `True`；圆放在 `RIGHT * 10` 加进场景后完全看不见，这正是 `False` 的效果——出不出画不用肉眼猜，问它就行。
+> - 普通 `Camera` 的取景框永远是默认画幅，`frame_center` 改了它也跟着变（但画面不动，见上表），拿不准就别动 `frame_center`。
 
 ### Camera.use_z_index
 
@@ -168,11 +189,17 @@ class UseZIndexDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：两个半透明方块错开叠放，蓝色先加但 `z_index=1`、红色后加但 `z_index=0`。前半段 `use_z_index=True`（默认），按 `z_index` 排序绘制，重叠区是蓝色压着红色；中途一行 `self.camera.use_z_index = False` 关掉 z 序，立刻改成按添加顺序绘制，重叠区翻成红色压着蓝色。同一对对象、同一位置，只改这一个布尔值，上下关系整个反过来。
+这段代码在做什么：两个半透明方块错开叠放，蓝色先加但 `z_index=1`、红色后加但 `z_index=0`。
+
+前半段 `use_z_index=True`（默认），按 `z_index` 排序绘制，重叠区是蓝色压着红色；中途一行 `self.camera.use_z_index = False` 关掉 z 序，立刻改成按添加顺序绘制，重叠区翻成红色压着蓝色。
+
+同一对对象、同一位置，只改这一个布尔值，上下关系整个反过来。
 
 <video src="assets/RTM output/01-Camera-use_z_index.mp4" controls width="560"></video>
 
-> 提醒：这是运行期属性，不需要重新建相机——构造参数传不进 `Camera`（见本页开头），直接 `self.camera.use_z_index = False` 就行。两个对象 `z_index` 相同时，两种模式的画面完全一样（都按添加顺序），所以想看出差异得像样例这样给对象设不同的 `z_index`。
+> 提醒：这是运行期属性，不需要重新建相机——构造参数传不进 `Camera`（见本页开头），直接 `self.camera.use_z_index = False` 就行。
+>
+> 另外，两个对象 `z_index` 相同时，两种模式的画面完全一样（都按添加顺序），所以想看出差异，得像样例这样给对象设不同的 `z_index`。
 
 ### 像素读取与手动捕获（capture_mobjects / capture_mobject / get_image / set_background_from_func）
 
@@ -193,7 +220,9 @@ def set_background_from_func(self, coords_to_colors_func: Callable[[np.ndarray],
 
 **返回**：`capture_mobjects` / `capture_mobject` / `set_background_from_func` 无返回；`get_image` 返回 `PIL.Image.Image`。
 
-**无视频**：这四个是 Cairo 像素数组管线的 API——把画面画进 `camera.pixel_array` 再读回来。RTM 走 Vulkan 向量渲染，画完直接进窗口/编码器，根本没有可读的像素数组，这些调用拿不到当帧图像。想要「截一帧」请用 `fast_record_scene` 出片后用 ffmpeg 抽帧。
+**无视频**：这四个是 Cairo 像素数组管线的 API——把画面画进 `camera.pixel_array` 再读回来。RTM 走 Vulkan 向量渲染，画完直接进窗口/编码器，根本没有可读的像素数组，这些调用拿不到当帧图像。
+
+想要「截一帧」，请用 `fast_record_scene` 出片后用 ffmpeg 抽帧。
 
 **补充区分**：**相机**的 `background_image`（构造参数）在 RTM 下未接线（见本页开头参数表）；这里说的是**给 mobject** 用的 `Mobject.color_using_background_image`——RTM 只取那张图片的平均色当作该对象的描边色（`real_time_manim/background_color.py:1-40`），与「截一帧当背景」无关，也不构成截帧手段。
 

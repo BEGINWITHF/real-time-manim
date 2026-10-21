@@ -1,6 +1,8 @@
 # ThreeDCamera（三维相机）
 
-三维相机：视角记在 5 个 `ValueTracker`（`phi` / `theta` / `focal_distance` / `gamma` / `zoom`）里，所以既能整体 `set`/`get`，也能对 tracker 直接做动画；光照、着色、投影方式也归它管。视角通常经 `ThreeDScene` 的 `set_camera_orientation` / `move_camera` 设置（详见 [ThreeDScene](../专用场景/02-ThreeDScene.md)），本页讲相机**自己**的构造参数与方法。
+三维相机：视角记在 5 个 `ValueTracker`（`phi` / `theta` / `focal_distance` / `gamma` / `zoom`）里，所以既能整体 `set`/`get`，也能对 tracker 直接做动画；光照、着色、投影方式也归它管。
+
+视角通常经 `ThreeDScene` 的 `set_camera_orientation` / `move_camera` 设置（详见 [ThreeDScene](../专用场景/02-ThreeDScene.md)），本页讲相机**自己**的构造参数与方法。
 
 ## 参数
 
@@ -26,7 +28,9 @@ def __init__(self, focal_distance: float = 20.0, shading_factor: float = 0.2, de
 
 **返回**：无（构造实例）。
 
-怎么把构造参数送进去：`Scene` 的 `camera_class` 只收**类**，渲染器建相机用的是 `camera_class()` 无参调用——要塞构造参数得用 `functools.partial(ThreeDCamera, ...)` 或子类覆盖默认值（样例用的就是 `partial`）。另外注意区分：`ThreeDScene` 构造里那个「默认斜视角」参数（`default_angled_camera_orientation_kwargs`）是**只存不用**的（两引擎渲染出来都是正面视角，见 [ThreeDScene](../专用场景/02-ThreeDScene.md) 页），别和 `ThreeDCamera` 自己的 `phi`/`theta` 混为一谈。
+怎么把构造参数送进去：`Scene` 的 `camera_class` 只收**类**，渲染器建相机用的是 `camera_class()` 无参调用——要塞构造参数得用 `functools.partial(ThreeDCamera, ...)` 或子类覆盖默认值（样例用的就是 `partial`）。
+
+另外注意区分：`ThreeDScene` 构造里那个「默认斜视角」参数（`default_angled_camera_orientation_kwargs`）是**只存不用**的（两引擎渲染出来都是正面视角，见 [ThreeDScene](../专用场景/02-ThreeDScene.md) 页），别和 `ThreeDCamera` 自己的 `phi`/`theta` 混为一谈。
 
 #### 样例：class ThreeDCamera（构造参数）
 
@@ -103,11 +107,20 @@ class CtorShadingDemo(ThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：三段对比。第 1 段只靠构造参数 `partial(ThreeDCamera, phi=70°, theta=-60°)` 摆出斜视角——**没有任何** `set_camera_orientation` 调用，画面直接就是斜的，证明 `ThreeDCamera` 的视角构造参数真生效。第 2 段把光源从默认的「左下后」翻到「右上前」（`9*UP + 7*RIGHT + 10*OUT`），视角用显式调用摆回同一角度，只比光照：立方体的明暗面整个翻转。第 3 段演示 `should_apply_shading`：前半段各个面深浅不同（着色开），中途关掉后所有面变成同一个蓝色（平色）。
+这段代码在做什么：三段对比。
+
+- 第 1 段只靠构造参数 `partial(ThreeDCamera, phi=70°, theta=-60°)` 摆出斜视角——**没有任何** `set_camera_orientation` 调用，画面直接就是斜的，证明 `ThreeDCamera` 的视角构造参数真生效。
+- 第 2 段把光源从默认的「左下后」翻到「右上前」（`9*UP + 7*RIGHT + 10*OUT`），视角用显式调用摆回同一角度，只比光照：立方体的明暗面整个翻转。
+- 第 3 段演示 `should_apply_shading`：前半段各个面深浅不同（着色开），中途关掉后所有面变成同一个蓝色（平色）。
 
 <video src="assets/RTM output/03-ThreeDCamera-ctor.mp4" controls width="560"></video>
 
-> 提醒：抽帧验证过的结论——`ThreeDCamera` 自己的 `phi`/`theta`/`gamma`/`zoom` 构造参数在 RTM 与 ManimCE 两个引擎下**都生效**（第 1 段）；真正「只存不用」的是 `ThreeDScene` 那边的 `default_angled_camera_orientation_kwargs`/`ambient_camera_rotation`。即便如此，日常还是建议在 `construct` 里显式 `self.set_camera_orientation(...)`——不依赖构造链路，最直观也最好改。`shading_factor`/`default_distance` 两个参数在 0.21 里是死参数，别费劲调。`MLWindow(960, 540)` 被强制纠正成 1920×1080 属正常提示。
+> 提醒：
+>
+> - 抽帧验证过的结论：`ThreeDCamera` 自己的 `phi`/`theta`/`gamma`/`zoom` 构造参数在 RTM 与 ManimCE 两个引擎下**都生效**（第 1 段）；真正「只存不用」的是 `ThreeDScene` 那边的 `default_angled_camera_orientation_kwargs`/`ambient_camera_rotation`。
+> - 即便如此，日常还是建议在 `construct` 里显式 `self.set_camera_orientation(...)`——不依赖构造链路，最直观也最好改。
+> - `shading_factor`/`default_distance` 两个参数在 0.21 里是死参数，别费劲调。
+> - `MLWindow(960, 540)` 被强制纠正成 1920×1080 属正常提示。
 
 ### ThreeDCamera 视角参数（get_* / set_* / get_value_trackers）
 
@@ -210,11 +223,19 @@ class ViewAngleDemo(ThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：三段各演示一类玩法。第 1 段把五个视角参数读出来打在屏幕上，`set_focal_distance(18.0)` + `set_zoom(1.15)` 两行**立即**把画面推近——读数同步刷新成 `zoom=1.15 focal=18.0`。第 2 段玩 tracker：`get_value_trackers()` 返回 `[phi, theta, focal_distance, gamma, zoom]` 顺序的 5 个 `ValueTracker`，对下标 1 的 theta tracker 做动画，相机就平滑地绕场景环绕。第 3 段演示瞬时视角跳变：`set_phi(0.6)` 让镜头俯得浅一些、`set_gamma(0.25)` 让画面绕视轴滚转，两行都是一步到位、没有过渡动画。
+这段代码在做什么：三段各演示一类玩法。
+
+- 第 1 段把五个视角参数读出来打在屏幕上，`set_focal_distance(18.0)` + `set_zoom(1.15)` 两行**立即**把画面推近——读数同步刷新成 `zoom=1.15 focal=18.0`。
+- 第 2 段玩 tracker：`get_value_trackers()` 返回 `[phi, theta, focal_distance, gamma, zoom]` 顺序的 5 个 `ValueTracker`，对下标 1 的 theta tracker 做动画，相机就平滑地绕场景环绕。
+- 第 3 段演示瞬时视角跳变：`set_phi(0.6)` 让镜头俯得浅一些、`set_gamma(0.25)` 让画面绕视轴滚转，两行都是一步到位、没有过渡动画。
 
 <video src="assets/RTM output/03-ThreeDCamera-view.mp4" controls width="560"></video>
 
-> 提醒：`set_*` 全是瞬间跳变，想要平滑过渡要么对 tracker 做 `animate`（第 2 段），要么用 `ThreeDScene` 的 `move_camera`（见 [ThreeDScene](../专用场景/02-ThreeDScene.md) 页）。tracker 就是普通 `ValueTracker`，也可以塞进 `AnimationGroup` 和别的动画并排播。角度一律是弧度——手写 `0.6` 也好，`70 * DEGREES` 也好，都是弧度值。
+> 提醒：
+>
+> - `set_*` 全是瞬间跳变，想要平滑过渡要么对 tracker 做 `animate`（第 2 段），要么用 `ThreeDScene` 的 `move_camera`（见 [ThreeDScene](../专用场景/02-ThreeDScene.md) 页）。
+> - tracker 就是普通 `ValueTracker`，也可以塞进 `AnimationGroup` 和别的动画并排播。
+> - 角度一律是弧度——手写 `0.6` 也好，`70 * DEGREES` 也好，都是弧度值。
 
 ### ThreeDCamera.add_fixed_in_frame_mobjects / add_fixed_orientation_mobjects
 
@@ -271,11 +292,16 @@ class FixedDemo(ThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：立方体上方 3D 空间里放一个绿色标签、屏幕顶端钉一个黄色标题，然后 `move_camera` 环绕 90°：标题纹丝不动、标签跟着立方体在画面里移动但保持朝向不翻倒。接着 `remove_fixed_*` 解除两者的锁定，再环绕一次——这回两个文字都变成普通 3D 对象，跟着视角一起歪过去。锁定与否的差别一目了然。
+这段代码在做什么：立方体上方 3D 空间里放一个绿色标签、屏幕顶端钉一个黄色标题，然后 `move_camera` 环绕 90°：标题纹丝不动、标签跟着立方体在画面里移动但保持朝向不翻倒。
+
+接着 `remove_fixed_*` 解除两者的锁定，再环绕一次——这回两个文字都变成普通 3D 对象，跟着视角一起歪过去。锁定与否的差别一目了然。
 
 <video src="assets/RTM output/03-ThreeDCamera-fixed.mp4" controls width="560"></video>
 
-> 提醒：**相机的 `add_fixed_*` 只登记绘制方式，不会替你把对象加进场景**——忘了 `self.add` 它就整个不出现（样例特意把标题也放进 `self.add` 就是这个原因）；`ThreeDScene` 也有同名的场景方法，那版会顺手替你 `add`，两个入口二选一。朝向锁定的对象位置仍在 3D 空间，透视斜切会让它看着有点歪，这是正常现象。
+> 提醒：
+>
+> - **相机的 `add_fixed_*` 只登记绘制方式，不会替你把对象加进场景**——忘了 `self.add` 它就整个不出现（样例特意把标题也放进 `self.add` 就是这个原因）；`ThreeDScene` 也有同名的场景方法，那版会顺手替你 `add`，两个入口二选一。
+> - 朝向锁定的对象位置仍在 3D 空间，透视斜切会让它看着有点歪，这是正常现象。
 
 ### ThreeDCamera.project_point / project_points
 
@@ -348,11 +374,16 @@ class ExponentialDemo(ThreeDScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：第 1 段把原点和 `RIGHT`、`UP` 两个单位向量投影成屏幕坐标打到屏幕上——注意投影是按**当前视角**算的，所以在摆好斜视角之后再问才有意义。第 2 段把焦距拉到 6.0 强化透视，前半段是普通投影（线性透视，远处的绿方块被放大得很夸张），中途把 `exponential_projection` 切成 `True`，远处物体立刻缩回正常大小——这就是两种投影公式的差别。
+这段代码在做什么：第 1 段把原点和 `RIGHT`、`UP` 两个单位向量投影成屏幕坐标打到屏幕上——注意投影是按**当前视角**算的，所以在摆好斜视角之后再问才有意义。
+
+第 2 段把焦距拉到 6.0 强化透视，前半段是普通投影（线性透视，远处的绿方块被放大得很夸张），中途把 `exponential_projection` 切成 `True`，远处物体立刻缩回正常大小——这就是两种投影公式的差别。
 
 <video src="assets/RTM output/03-ThreeDCamera-project.mp4" controls width="560"></video>
 
-> 提醒：`project_*` 返回的是当前投影矩阵下的坐标，视角一转数值就变——读数和画面永远对得上。`exponential_projection` 运行期赋值即生效，焦距越小（透视越强）两种投影的差别越明显；默认线性投影就够用，超广角深景再考虑指数投影。
+> 提醒：
+>
+> - `project_*` 返回的是当前投影矩阵下的坐标，视角一转数值就变——读数和画面永远对得上。
+> - `exponential_projection` 运行期赋值即生效，焦距越小（透视越强）两种投影的差别越明显；默认线性投影就够用，超广角深景再考虑指数投影。
 
 ### ThreeDCamera.capture_mobjects
 
@@ -367,7 +398,9 @@ def capture_mobjects(self, mobjects: Iterable[Mobject], **kwargs: Any) -> None:
 
 **返回**：无。上游语义：先按当前视角刷新旋转矩阵，再把对象「拍」进相机的像素数组。
 
-**无视频**：这是 Cairo 像素捕获管线的入口，RTM 走 Vulkan 向量渲染、没有可拍的像素数组，同 [Camera](01-Camera.md) 页的 `capture_*` 一族。其余低频方法里 `get_rotation_matrix`（当前 3×3 旋转矩阵）和上面的 `project_*` 都是纯计算、随时可用；`add_fixed_*` 见对应小节。
+**无视频**：这是 Cairo 像素捕获管线的入口，RTM 走 Vulkan 向量渲染、没有可拍的像素数组，同 [Camera](01-Camera.md) 页的 `capture_*` 一族。
+
+其余低频方法里，`get_rotation_matrix`（当前 3×3 旋转矩阵）和上面的 `project_*` 都是纯计算、随时可用；`add_fixed_*` 见对应小节。
 
 ---
 

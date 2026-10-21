@@ -75,7 +75,10 @@ class GraphConfigDemo(Scene):
 
 <video src="assets/RTM output/01-Graph与DiGraph-config.mp4" controls width="560"></video>
 
-> 提醒：`vertex_config`/`edge_config` 的"逐个覆盖"项是**整体替换**而非合并——给某顶点写了 `{color: RED}`，公共的 `radius` 就不再作用于它。另外 `labels=True` 的标签走 `MathTex`，黑字白点才看得清，别把 `label_fill_color` 改成和顶点同色。
+> 提醒：
+>
+> - `vertex_config`/`edge_config` 的"逐个覆盖"项是**整体替换**而非合并——给某顶点写了 `{color: RED}`，公共的 `radius` 就不再作用于它。
+> - `labels=True` 的标签走 `MathTex`，黑字白点才看得清，别把 `label_fill_color` 改成和顶点同色。
 
 ### layout —— 布局（12 种取值速查）
 
@@ -133,7 +136,13 @@ class GraphLayoutDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：六个顶点七条边的同一张图，只换 `layout` 参数画三遍——`"circular"` 顶点均匀站成一个圈（1→4 的弦跨过圆心）、`"spring"` 力导向随机散开（种子 7 写死保证可复现）、`"partite"` 把 `[[1,2,3],[4,5,6]]` 排成左右两栏、栏间连线。三条片段拼在一条视频里。
+这段代码在做什么：六个顶点七条边的同一张图，只换 `layout` 参数画三遍：
+
+- `"circular"`：顶点均匀站成一个圈（1→4 的弦跨过圆心）。
+- `"spring"`：力导向随机散开（种子 7 写死保证可复现）。
+- `"partite"`：把 `[[1,2,3],[4,5,6]]` 排成左右两栏、栏间连线。
+
+三条片段拼在一条视频里。
 
 <video src="assets/RTM output/01-Graph与DiGraph-layout.mp4" controls width="560"></video>
 
@@ -199,7 +208,10 @@ class DiGraphTipDemo(Scene):
 
 <video src="assets/RTM output/01-Graph与DiGraph-digraph.mp4" controls width="560"></video>
 
-> 提醒：DiGraph 的边 updater 每帧会 `pop_tips()` 再 `add_tip()` 重摆箭头尖——所以挪动顶点/改布局时箭头不会被拉变形，这也是它比 Graph 多一层开销的原因。想画"无向图但用双向箭头"，用 `Graph(..., edge_type=DoubleArrow)` 即可（`CurvedArrow` 不是 `Line` 子类，会 `TypeError`）。
+> 提醒：
+>
+> - DiGraph 的边 updater 每帧会 `pop_tips()` 再 `add_tip()` 重摆箭头尖——所以挪动顶点/改布局时箭头不会被拉变形，这也是它比 Graph 多一层开销的原因。
+> - 想画"无向图但用双向箭头"，用 `Graph(..., edge_type=DoubleArrow)` 即可（`CurvedArrow` 不是 `Line` 子类，会 `TypeError`）。
 
 ## from_networkx —— 从 networkx 图构建
 

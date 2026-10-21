@@ -1,6 +1,8 @@
 # ManimCE 命令行速查（RTM 不支持）
 
-RTM **没有命令行**：不装 `manim` CLI 那套旗标，画幅由 `MLWindow(w, h)` 决定、输出由 `fast_record_scene` / `record_scene` 的 `out_path` / `fps` 决定。本页是全 wiki 唯一放 ManimCE 内容的地方，把 `manim [选项] 文件名.py [场景名 ...]` 的旗标逐条速查，并给 RTM 的等价做法——所有旗标对 RTM 一律（不存在）。
+RTM **没有命令行**：不装 `manim` CLI 那套旗标，画幅由 `MLWindow(w, h)` 决定、输出由 `fast_record_scene` / `record_scene` 的 `out_path` / `fps` 决定。
+
+本页是全 wiki 唯一放 ManimCE 内容的地方，把 `manim [选项] 文件名.py [场景名 ...]` 的旗标逐条速查，并给 RTM 的等价做法——所有旗标对 RTM 一律（不存在）。
 
 ## 参数
 
@@ -56,7 +58,9 @@ RTM **没有命令行**：不装 `manim` CLI 那套旗标，画幅由 `MLWindow(
 
 其它子命令（全部不支持）：**`manim cfg`** 管理 `manim.cfg`（`write`/`show`/`export -d 目录`）；**`manim init`** 脚手架（`project`/`scene`）；**`manim plugins -l`** 列出插件；**`manim checkhealth`** 安装体检。
 
-> 提醒：这张表在 RTM 里不是「填了不生效」，而是**根本没有这些入口**——`manim` 命令**只有另外安装了 ManimCE 的环境**才有（RTM 本身不提供：`real_time_manim/manim/` 删掉了 `cli/` 与 `__main__.py`，`pyproject.toml` 也没有 console script）。只装 RTM 时装不出 `manim` 命令；另装 ManimCE 后它照样能跑，只是渲出来的是 CE 画面。想用 RTM 渲，就写 Python 脚本调 `fast_record_scene` / `record_scene`。两边的画面对比可以看 `assets/README.md`。
+> 提醒：这张表在 RTM 里不是「填了不生效」，而是**根本没有这些入口**——`manim` 命令**只有另外安装了 ManimCE 的环境**才有（RTM 本身不提供：`real_time_manim/manim/` 删掉了 `cli/` 与 `__main__.py`，`pyproject.toml` 也没有 console script）。
+>
+> 只装 RTM 时装不出 `manim` 命令；另装 ManimCE 后它照样能跑，只是渲出来的是 CE 画面。想用 RTM 渲，就写 Python 脚本调 `fast_record_scene` / `record_scene`。两边的画面对比可以看 `assets/README.md`。
 
 ### manim 命令 ↔ RTM 调用
 
@@ -105,7 +109,9 @@ class QualityTiersDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：把 `-ql` 到 `-qk` 五个画质档位（分辨率 @ 帧率）排成一列淡入上屏，`-qh` 高亮标黄——它就是 RTM 的固定输出档；最后在画面底部写出「RTM = 1920x1080 @ 60 only」。看这条视频记住一件事就够了：**RTM 不分档**，传什么尺寸/帧率都会被强制纠正成 1080p60（强制提示的实拍见 [05-RTM的录制与窗口参数](05-RTM的录制与窗口参数.md) 的 `MLWindow` 样例）。
+这段代码在做什么：把 `-ql` 到 `-qk` 五个画质档位（分辨率 @ 帧率）排成一列淡入上屏，`-qh` 高亮标黄——它就是 RTM 的固定输出档；最后在画面底部写出「RTM = 1920x1080 @ 60 only」。
+
+看这条视频记住一件事就够了：**RTM 不分档**，传什么尺寸/帧率都会被强制纠正成 1080p60（强制提示的实拍见 [05-RTM的录制与窗口参数](05-RTM的录制与窗口参数.md) 的 `MLWindow` 样例）。
 
 <video src="assets/RTM output/04-ManimCE命令行速查-quality_tiers.mp4" controls width="560"></video>
 
@@ -140,13 +146,17 @@ class CliEquivDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：三行文字依次淡入——上面是 ManimCE 的完整命令 `manim -qh -o my_video --fps 60 scene.py Hello`，中间一行 "same output" 说明两者出片相同，下面是 RTM 的等价调用 `fast_record_scene(Hello, out_path='my_video.mp4', fps=60)`。记忆点：命令行里的 `-o 名称` 对应 `out_path`、`--fps` 对应 `fps`、文件名/场景名的位置参数对应函数的第一个参数。
+这段代码在做什么：三行文字依次淡入——上面是 ManimCE 的完整命令 `manim -qh -o my_video --fps 60 scene.py Hello`，中间一行 "same output" 说明两者出片相同，下面是 RTM 的等价调用 `fast_record_scene(Hello, out_path='my_video.mp4', fps=60)`。
+
+记忆点：命令行里的 `-o 名称` 对应 `out_path`、`--fps` 对应 `fps`、文件名/场景名的位置参数对应函数的第一个参数。
 
 <video src="assets/RTM output/04-ManimCE命令行速查-cli_equiv.mp4" controls width="560"></video>
 
 > 提醒：`fast_record_scene` 的第二参数直接就是**文件路径**（带 `.mp4`），不是命令行那种「不带扩展名的名字」；场景参数可以是类、实例或无参可调用（见 [05-RTM的录制与窗口参数](05-RTM的录制与窗口参数.md) 的 `scene` 样例）。
 
-**总结**：ManimCE 的命令行旗标在 RTM 里全部不存在；画质固定 1080p60、输出由 `out_path`/`fps` 两个参数给、想看效果用 `hidden=False` 或 `record_scene`。真要跑 ManimCE 的命令行（比如只为出低清草稿），先另装 ManimCE（`pip install "real-time-manim[test]"` 或 `pip install manim`），之后 `manim` 命令照常用——只是那不是 RTM 的画面。
+**总结**：ManimCE 的命令行旗标在 RTM 里全部不存在；画质固定 1080p60、输出由 `out_path`/`fps` 两个参数给、想看效果用 `hidden=False` 或 `record_scene`。
+
+真要跑 ManimCE 的命令行（比如只为出低清草稿），先另装 ManimCE（`pip install "real-time-manim[test]"` 或 `pip install manim`），之后 `manim` 命令照常用——只是那不是 RTM 的画面。
 
 两条样例两引擎逐像素一致（120 帧 / 2.00s、126 帧 / 2.10s）。
 

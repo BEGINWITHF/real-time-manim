@@ -1,12 +1,12 @@
 # 概率与采样空间 SampleSpace
 
-RTM 走通用矢量回退出图（2026-10-11 实渲染验证，回退能正确画出）。手册第九节实际条目只有 `SampleSpace`（未收录 `Tree`、`Bayes` 等其它概率 mobject）。
+RTM 走通用矢量回退出图（2026-10-11 实渲染验证，回退能正确画出）。手册第九节实际只有 `SampleSpace` 一个条目（未收录 `Tree`、`Bayes` 等其它概率 mobject）。
 
 ## SampleSpace
 
 `SampleSpace(height=3, width=3, fill_color=DARK_GREY, fill_opacity=1, stroke_width=0.5, stroke_color=LIGHT_GREY, default_label_scale_val=1)`
 
-二维矩形"样本空间"图块（概率论视频里的方框），可按概率列表水平/垂直切分成若干子块，并配花括号与文字标注；`Rectangle` 子类，`sample_space[i]` 可索引取第 i 块。
+二维矩形"样本空间"图块（概率论视频里的方框），可按概率列表水平 / 垂直切分成若干子块，并配花括号与文字标注。它是 `Rectangle` 子类，`sample_space[i]` 可索引取第 i 块。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -54,7 +54,7 @@ RTM 走通用矢量回退出图（2026-10-11 实渲染验证，回退能正确�
 
 ## 样例 1：`divide_vertically` + 花括号标签
 
-`divide_vertically(p_list, colors, vect)` 按概率列表把方框竖着切成几块，结果存进 `poly.vertical_parts` 并 `add` 进自身；`poly[i]` 也能直接索引第 i 块。样例切出 0.37 / 0.13 / 0.50 三块，再给首尾两块挂 `Brace` + 数值标签。
+`divide_vertically(p_list, colors, vect)` 按概率列表把方框竖着切成几块，结果存进 `poly.vertical_parts` 并 `add` 进自身；`poly[i]` 也能直接索引第 i 块。样例切出 0.37 / 0.13 / 0.50 三块，再给首尾两块挂上 `Brace` + 数值标签。
 
 ```python
 import numpy as np
@@ -90,11 +90,18 @@ class VerticalDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：`divide_vertically` 按 `p_list` 的比例把宽度分掉，`colors` 只有 3 个 → 每块一色（多于 3 块时用 `color_gradient` 插值）；`add_title` 用 `Tex` 在方框上方写标题（过宽会自动缩到与方框同宽）。花括号是标准 `Brace`：贴在 `vertical_parts[i]` 的左侧/右侧，`get_text` 给出旁边那行标签。
+这段代码在做什么：
+
+- `divide_vertically` 按 `p_list` 的比例把宽度分掉；`colors` 只有 3 个 → 每块一色（多于 3 块时用 `color_gradient` 插值）。
+- `add_title` 用 `Tex` 在方框上方写标题（过宽会自动缩到与方框同宽）。
+- 花括号是标准 `Brace`：贴在 `vertical_parts[i]` 的左侧 / 右侧，`get_text` 给出旁边那行标签。
 
 <video src="assets/RTM output/09-概率与SampleSpace-basic.mp4" controls width="560"></video>
 
-> 提醒：`add_title` 内部是 `Tex(title)`，**标题里别写 `_`**（数学模式下标，会 `Missing $ inserted`)；要下划线得转义或改用 `Text`。`p_list` 的和只要 ≤1，不足部分由 `complete_p_list` 自动补成最后一块。
+> 提醒：
+>
+> - `add_title` 内部是 `Tex(title)`，**标题里别写 `_`**（数学模式下标，会 `Missing $ inserted`）；要下划线得转义，或改用 `Text`。
+> - `p_list` 的和只要 ≤1，不足部分由 `complete_p_list` 自动补成最后一块。
 
 ## 样例 2：`divide_horizontally` + 占比不足自动补余量
 
@@ -133,10 +140,13 @@ class HorizontalDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：横向切分后 `horizontal_parts` 从上到下排列；`colors=[GREEN_E, BLUE_E]` 只给两色 → 三块做渐变上色。`complete_p_list` 把不足 1 的部分补到末尾，所以第三块的标签是自动算出的 `0.35`。
+这段代码在做什么：横向切分后，`horizontal_parts` 从上到下排列；`colors=[GREEN_E, BLUE_E]` 只给两色 → 三块做渐变上色。`complete_p_list` 把不足 1 的部分补到末尾，所以第三块的标签是自动算出的 `0.35`。
 
 <video src="assets/RTM output/09-概率与SampleSpace-horizontal.mp4" controls width="560"></video>
 
-> 提醒：`horizontal_parts[i]` 是**子块 mobject**，可以直接 `Brace` / 上色 / 做动画；`parts.braces`、`parts.labels` 只有走那四个（在 0.21 里坏掉的）helper 才会被写上。
+> 提醒：
+>
+> - `horizontal_parts[i]` 是**子块 mobject**，可以直接 `Brace` / 上色 / 做动画。
+> - `parts.braces`、`parts.labels` 只有走那四个（在 0.21 里坏掉的）helper 才会被写上。
 
 相关：[图表 BarChart](08-图表BarChart.md) · [容器与组合](../04-图形与文本/06-容器与组合.md) · [布尔运算](../04-图形与文本/05-布尔运算.md)

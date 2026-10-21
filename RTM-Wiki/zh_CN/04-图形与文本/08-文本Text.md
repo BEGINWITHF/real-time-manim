@@ -72,7 +72,12 @@ class TextDemo(Scene):
 # ===== 样例 2：MarkupText —— Pango 标记文本 ===============================
 ```
 
-这段代码在做什么：第一行默认文本；第二行把 `font="Arial"`、`font_size=40`、`weight="BOLD"`、`slant="ITALIC"` 一起给上；第三行是两行文本，用 `color=TEAL` 与 `line_spacing=1.2` 看行距；第四行用 `t2c` 把 `red`/`green`/`blue` 三个词分别染红绿蓝。
+这段代码在做什么：四行文本各演示一组参数。
+
+- 第一行是默认文本。
+- 第二行把 `font="Arial"`、`font_size=40`、`weight="BOLD"`、`slant="ITALIC"` 一起给上。
+- 第三行是两行文本，用 `color=TEAL` 与 `line_spacing=1.2` 看行距。
+- 第四行用 `t2c` 把 `red`/`green`/`blue` 三个词分别染红绿蓝。
 
 <video src="assets/RTM output/08-文本Text-text.mp4" controls width="560"></video>
 

@@ -2,7 +2,9 @@
 
 在数轴平面上画向量、写坐标、标注基向量的线性代数教学场景，网格变换玩法见 [线性变换场景](05-线性变换场景.md)。RTM 实测全部可播动画的方法都能用。
 
-先记一个通用前提：`add_plane()` 返回的平面**不会**自动挂到 `self.plane` 上，而 `get_vector` / `add_vector` 又要读 `self.plane` —— 所以样例里每次 `add_plane` 之后都紧跟一句 `self.plane = plane` 手动挂上，你自己的代码也要这么写。
+先记一个通用前提：`add_plane()` 返回的平面**不会**自动挂到 `self.plane` 上，而 `get_vector` / `add_vector` 又要读 `self.plane`。
+
+所以样例里每次 `add_plane` 之后都紧跟一句 `self.plane = plane` 手动挂上，你自己的代码也要这么写。
 
 ## 参数
 
@@ -213,11 +215,19 @@ class VectorLabelDemo(VectorScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先加一个 `[2, 1]` 黄色向量，然后三步标注依次登场 —— ① `write_vector_coordinates(v)` 在向量旁写出列矩阵 `★[2, 1]`；② `label_vector(v, "v")` 用 `Write` 在向量旁写标签，单字符 `v` 被排成带箭头的字母形式；③ `get_vector_label(v, "w", at_tip=True, ...)` 只生成一个绿色 `w` 放到箭头尖端，手动 `self.add` 才出现。三个标注最终同屏共存。
+这段代码在做什么：先加一个 `[2, 1]` 黄色向量，然后三步标注依次登场。
+
+- ① `write_vector_coordinates(v)` 在向量旁写出列矩阵 `★[2, 1]`
+- ② `label_vector(v, "v")` 用 `Write` 在向量旁写标签，单字符 `v` 被排成带箭头的字母形式
+- ③ `get_vector_label(v, "w", at_tip=True, ...)` 只生成一个绿色 `w` 放到箭头尖端，手动 `self.add` 才出现
+
+三个标注最终同屏共存。
 
 <video src="assets/RTM output/04-向量场景VectorScene-labels.mp4" controls width="560"></video>
 
-> 提醒：`label_vector` 会播动画（`animate=True` 默认），RTM 里要先 `self.play = win.play`；`get_vector_label` 不播动画，属于"生成器"，别忘了 `self.add`。单字符 `label` 的箭头字母排版是上游排版规则，不是渲染问题。`at_tip=True` 会把标签放到箭头尖端 —— 如果旁边还有矩阵，两者会挨得比较近，想错开就用默认的 `at_tip=False` + `direction="left"`。
+> 提醒：`label_vector` 会播动画（`animate=True` 默认），RTM 里要先 `self.play = win.play`；`get_vector_label` 不播动画，属于"生成器"，别忘了 `self.add`。单字符 `label` 的箭头字母排版是上游排版规则，不是渲染问题。
+>
+> `at_tip=True` 会把标签放到箭头尖端 —— 如果旁边还有矩阵，两者会挨得比较近，想错开就用默认的 `at_tip=False` + `direction="left"`。
 
 ### get_basis_vectors / get_basis_vector_labels
 
@@ -271,7 +281,9 @@ class BasisDemo(VectorScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先 `get_basis_vectors()` 拿默认配色的 `î`/`ĵ`（分别是 `GREEN_C`/`RED_C`）配上 `get_basis_vector_labels()` 的 `MathTex` 标签一起上屏；0.9 秒后收走，换成显式传 `GREEN`/`RED` 的版本（标签复用），再看 0.9 秒。两档颜色只差一档深浅，肉眼对比微妙 —— 想要明显区分就直接传自己的颜色（如 `BLUE`/`ORANGE`）。
+这段代码在做什么：先 `get_basis_vectors()` 拿默认配色的 `î`/`ĵ`（分别是 `GREEN_C`/`RED_C`）配上 `get_basis_vector_labels()` 的 `MathTex` 标签一起上屏；0.9 秒后收走，换成显式传 `GREEN`/`RED` 的版本（标签复用），再看 0.9 秒。
+
+两档颜色只差一档深浅，肉眼对比微妙 —— 想要明显区分就直接传自己的颜色（如 `BLUE`/`ORANGE`）。
 
 <video src="assets/RTM output/04-向量场景VectorScene-basis.mp4" controls width="560"></video>
 
@@ -324,11 +336,17 @@ class CoordsDemo(VectorScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：第一次把 `[-1, 2]` 分解 —— 白色向量长出来，接着画出绿色的 x 分量线（标 `-1`）和红色的 y 分量线（标 `2`），再写出列矩阵 `[-1, 2]`，`clean_up=True` 让这一切自动退场；第二次换成小数向量 `[1.5, -1]` 并把 `integer_labels` 关掉，标签就显示 `1.5`、`-1.0`（而不是四舍五入的 `2`、`-1`）。两次演示的就是同一套分解动画在两种标签规则下的样子。
+这段代码在做什么：第一次把 `[-1, 2]` 分解 —— 白色向量长出来，接着画出绿色的 x 分量线（标 `-1`）和红色的 y 分量线（标 `2`），再写出列矩阵 `[-1, 2]`，`clean_up=True` 让这一切自动退场。
+
+第二次换成小数向量 `[1.5, -1]` 并把 `integer_labels` 关掉，标签就显示 `1.5`、`-1.0`（而不是四舍五入的 `2`、`-1`）。两次演示的就是同一套分解动画在两种标签规则下的样子。
 
 <video src="assets/RTM output/04-向量场景VectorScene-coords.mp4" controls width="560"></video>
 
-> 提醒：`vector_to_coords` 内部连播两个动画、**没有 `run_time` 参数**（签名固定），单次约 6 秒，整条视频 13 秒就是这么来的。`clean_up=True` 会在结束时把分解线和矩阵收掉，想留住过程就传 `False`。反方向的 `coords_to_vector`（坐标矩阵 → 向量）在上游 `manim` 0.21 里有 bug，见下一节。
+> 提醒：`vector_to_coords` 内部连播两个动画、**没有 `run_time` 参数**（签名固定），单次约 6 秒，整条视频 13 秒就是这么来的。
+>
+> `clean_up=True` 会在结束时把分解线和矩阵收掉，想留住过程就传 `False`。
+>
+> 反方向的 `coords_to_vector`（坐标矩阵 → 向量）在上游 `manim` 0.21 里有 bug，见下一节。
 
 ### lock_in_faded_grid / coords_to_vector / show_ghost_movement
 

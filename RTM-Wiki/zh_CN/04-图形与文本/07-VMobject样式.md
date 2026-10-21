@@ -1,6 +1,6 @@
 # VMobject 样式（一）：填充、描边与整体样式
 
-> 状态：部分验证 —— `set_fill` / `set_stroke` / `set_color` 核心类已实渲染验证（2026-10-11，引擎原生样式通道）；`set_style`（多 stop 渐变 / sheen 已生效，专项 `tests/test_gradient_fill_stops.py`；仅 `background_image` 纹理填充不生效）
+> 状态：部分验证 —— `set_fill` / `set_stroke` / `set_color` 核心类已实渲染验证（2026-10-11，引擎原生样式通道）；`set_style` 的多 stop 渐变与 sheen 已生效（专项 `tests/test_gradient_fill_stops.py`），仅 `background_image` 纹理填充不生效。
 
 以下方法定义在 `mobject/types/vectorized_mobject.py` 的 `VMobject` 上，**对所有形状/文本/矩阵/表格通用**（`Mobject` 层的 `scale`/`rotate`/`shift` 不在本页范围）。
 
@@ -50,7 +50,7 @@
 ## VMobject.set_style（仅 `background_image` 不生效）
 `set_style(fill_color=None, fill_opacity=None, stroke_color=None, stroke_width=None, stroke_opacity=None, background_stroke_color=None, background_stroke_width=None, background_stroke_opacity=None, sheen_factor=None, sheen_direction=None, background_image=None, family=True)`：一次性设置全部矢量样式（`set_fill` + `set_stroke` + 光泽的合并版），参数为 `None` 的项保持原值。
 
-> 状态说明：sheen（`sheen_factor`/`sheen_direction`）与**多色/多 stop 渐变填充**在 RTM 的 Vulkan 路径上已生效（多 stop 渐变不再被平均成单色，取首尾 stop 走 native 线性渐变，见 `render/util.py:220-351`，专项 `tests/test_gradient_fill_stops.py`）；只有 `background_image`（纹理填充）在 RTM 下不生效。
+> 状态说明：sheen（`sheen_factor`/`sheen_direction`）与**多色/多 stop 渐变填充**在 RTM 的 Vulkan 路径上已生效——多 stop 渐变不再被平均成单色，而是取首尾 stop 走 native 线性渐变（见 `render/util.py:220-351`，专项 `tests/test_gradient_fill_stops.py`）。只有 `background_image`（纹理填充）在 RTM 下不生效。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |

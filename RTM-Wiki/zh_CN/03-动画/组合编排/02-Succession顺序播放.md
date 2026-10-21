@@ -1,6 +1,6 @@
 # Succession：顺序播放
 
-手册「八、组合动画」后半：一个播完再播下一个的串行编排，同一时刻只有一个子动画在跑。走 RTM 自有实现实测可渲，`Wait` 可直接当子动画留白。
+手册「八、组合动画」后半，讲一个播完再播下一个的串行编排，同一时刻只有一个子动画在跑。它走 RTM 自有实现，实测可渲，`Wait` 可以直接当子动画留白。
 
 ## 参数
 
@@ -20,7 +20,9 @@ Succession(*animations, lag_ratio=1, **kwargs)
 
 > **返回**：`Animation`（交给 `play` 播放）。
 
-> `Wait`（已支持）可以作为子动画直接放进 `Succession` 时间轴，用来在两段动作之间留白；`Animation` 基类也可直接实例化占位（见[等待、速率与变速](../等待与变速/01-等待速率与变速.md)）。`AnimationGroup` 与 `LaggedStart`/`LaggedStartMap` 的实测结论见 [01-AnimationGroup与错峰](01-AnimationGroup与错峰.md)。
+> `Wait`（已支持）可以作为子动画直接放进 `Succession` 时间轴，用来在两段动作之间留白；`Animation` 基类也可直接实例化占位（见[等待、速率与变速](../等待与变速/01-等待速率与变速.md)）。
+>
+> `AnimationGroup` 与 `LaggedStart`/`LaggedStartMap` 的实测结论见 [01-AnimationGroup与错峰](01-AnimationGroup与错峰.md)。
 
 #### 样例：动→动→留白→变色，四段一次 play 排完
 
@@ -56,7 +58,9 @@ class SuccessionDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：蓝块先移到绿块位置（1 秒），绿块再移到灰块位置（1 秒），接着 `Wait(0.6)` 原地留白 0.6 秒，最后灰块在 0.8 秒内变成红色。四段收进一次 `play`，同一时刻只有一个小段在动，顺序绝对可靠（对比 `AnimationGroup` 的并行/错峰）；未传组级 `run_time` 时总时长就是各子动画 `run_time` 之和。
+这段代码在做什么：蓝块先移到绿块位置（1 秒），绿块再移到灰块位置（1 秒），接着 `Wait(0.6)` 原地留白 0.6 秒，最后灰块在 0.8 秒内变成红色。
+
+四段收进一次 `play`，同一时刻只有一个小段在动，顺序绝对可靠（对比 `AnimationGroup` 的并行/错峰）。未传组级 `run_time` 时，总时长就是各子动画 `run_time` 之和。
 
 <video src="assets/RTM output/02-Succession顺序播放-succession.mp4" controls width="560"></video>
 

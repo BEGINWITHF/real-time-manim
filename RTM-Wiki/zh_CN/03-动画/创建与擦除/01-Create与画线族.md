@@ -1,6 +1,11 @@
 # Create 与画线族：Create / Write / DrawBorderThenFill / ShowPartial
 
-"一笔一笔画出来"收录的类：沿矢量笔画从无到有画出来。`Create` 是最标准的画图动画，`Write` 是最常用的出场动画，`DrawBorderThenFill` 适合带填充的图形，`ShowPartial` 是它们共同的抽象基类。
+这一节讲"一笔一笔画出来"收录的类：它们都沿矢量笔画，把对象从无到有画出来。
+
+- `Create`：最标准的画图动画。
+- `Write`：最常用的出场动画。
+- `DrawBorderThenFill`：适合带填充的图形。
+- `ShowPartial`：它们共同的抽象基类。
 
 ## 参数
 
@@ -10,9 +15,17 @@
 Create(mobject, run_time=1.0, lag_ratio=1.0, **kwargs)
 ```
 
-继承 `Create(Animation)`（RTM 自有实现，`real_time_manim/animations/create.py`；**不是** `ShowPartial` 子类）。沿矢量笔画**从头到尾逐渐画出**，最标准的"画图"动画。RTM 版**不做类型校验**；默认 `lag_ratio=1.0` 让多个子笔画**依次**画完。
+继承 `Create(Animation)`（RTM 自有实现，`real_time_manim/animations/create.py`；**不是** `ShowPartial` 子类）。它沿矢量笔画**从头到尾逐渐画出**，是最标准的"画图"动画。RTM 版**不做类型校验**；默认 `lag_ratio=1.0`，让多个子笔画**依次**画完。
 
-> **2026-10-17 更新 · 导入**：本页签名描述的是 **RTM 自有** `Create`，须 `from real_time_manim.vulkan_bind import Create`（或 `real_time_manim.animations`）。样例代码从 `real_time_manim` **顶层**导入，拿到的是**内置 ManimCE 0.21 版**（`Create(ShowPartial)`、`introducer` 固定 `True`、非矢量对象抛 `TypeError`）——两版同名同参用法一致，样例不依赖这处差别。
+> **2026-10-17 更新 · 导入**：本页签名描述的是 **RTM 自有** `Create`，须 `from real_time_manim.vulkan_bind import Create`（或 `real_time_manim.animations`）。
+>
+> 样例代码从 `real_time_manim` **顶层**导入，拿到的是**内置 ManimCE 0.21 版**：
+>
+> - `Create(ShowPartial)`
+> - `introducer` 固定 `True`
+> - 非矢量对象抛 `TypeError`
+>
+> 两版同名同参、用法一致，样例不依赖这处差别。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -64,7 +77,12 @@ class CreateDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：把 `Animation` 公共参数整套传给 `Create` 一遍——重点看 `lag_ratio=0.3`：Text 的每个字母错峰 30% 依次画出（默认 `1.0` 是一个接一个，`0` 则所有笔画同时长）；`rate_func=smooth` 收尾带缓动，画完字留在画面上（`remover=False`），`introducer=True` 让对象播放前不用手动进场景。
+这段代码在做什么：把 `Animation` 公共参数整套传给 `Create` 走一遍，重点看 `lag_ratio=0.3`。
+
+- `lag_ratio=0.3`：Text 的每个字母错峰 30% 依次画出（默认 `1.0` 是一个接一个，`0` 则所有笔画同时长）。
+- `rate_func=smooth`：收尾带缓动。
+- `remover=False`：画完字留在画面上。
+- `introducer=True`：对象播放前不用手动进场景。
 
 <video src="assets/RTM output/01-Create与画线族-create.mp4" controls width="560"></video>
 
@@ -74,7 +92,9 @@ class CreateDemo(Scene):
 Write(mobject, rate_func=linear, reverse=False, run_time=None, lag_ratio=None, **kwargs)
 ```
 
-继承 `Write(DrawBorderThenFill) ← DrawBorderThenFill(Animation)`。模拟"手写/手画"：先描边、再填充，逐笔出现，最常用的出场动画（`Text`、`Tex`、`MathTex`、任意 `VMobject`）。默认速率 `linear`；`run_time` 与 `lag_ratio` 默认 `None`、按对象复杂度自动取值（`length < 15` 时 `run_time=1`，否则 `2`；`lag_ratio = min(4/length, 0.2)`），显式传入则以你传的为准。`reverse=True` 变成"倒着写"，并自动 `remover=True`、`introducer=False`。
+继承 `Write(DrawBorderThenFill) ← DrawBorderThenFill(Animation)`。它模拟"手写/手画"：先描边、再填充，逐笔出现，是最常用的出场动画，`Text`、`Tex`、`MathTex`、任意 `VMobject` 都能用。
+
+默认速率是 `linear`。`run_time` 与 `lag_ratio` 默认都是 `None`，按对象复杂度自动取值（`length < 15` 时 `run_time=1`，否则 `2`；`lag_ratio = min(4/length, 0.2)`），显式传入则以你传的为准。`reverse=True` 则变成"倒着写"，并自动 `remover=True`、`introducer=False`。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -124,7 +144,7 @@ class WriteDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：`Write(obj2, rate_func=linear, run_time=1.5, lag_ratio=0.2, ...)` 先描边再填充、逐笔写出 "Hello Manim"；`linear` 匀速才像手写，`run_time` / `lag_ratio` 显式传入就压过了按长度自动取的默认逻辑（见提醒）。
+这段代码在做什么：`Write(obj2, rate_func=linear, run_time=1.5, lag_ratio=0.2, ...)` 先描边再填充，逐笔写出 "Hello Manim"。`linear` 匀速才像手写；`run_time` / `lag_ratio` 显式传入，就压过了按长度自动取值的默认逻辑（见提醒）。
 
 <video src="assets/RTM output/01-Create与画线族-write.mp4" controls width="560"></video>
 
@@ -137,7 +157,7 @@ DrawBorderThenFill(mobject, run_time=2.0, stroke_width=2, stroke_color=None,
                    rate_func=double_smooth, introducer=True, **kwargs)
 ```
 
-继承 `DrawBorderThenFill(Animation)`（RTM 自有实现）。**先画轮廓、再显示填充**的两段式动画；`Write` 的直接父类，但自己没有 `lag_ratio` 自动逻辑、也不逐笔细分——适合"带填充的图形"整体出现。RTM 自有版**不做类型校验**。
+继承 `DrawBorderThenFill(Animation)`（RTM 自有实现）。它是**先画轮廓、再显示填充**的两段式动画，也是 `Write` 的直接父类，但自己没有 `lag_ratio` 自动逻辑，也不逐笔细分，适合让"带填充的图形"整体出现。RTM 自有版**不做类型校验**。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -201,7 +221,13 @@ class BorderFillDemo(Scene):
 ShowPartial(mobject, **kwargs)
 ```
 
-继承 `ShowPartial(Animation)`（**这是 ManimCE 的类**：`ShowPartial` 不在 RTM 自有 39 个动画的导出清单里，随内置 ManimCE 从 `real_time_manim` 顶层导入）。**抽象基类**，在 CE 里是"每帧只显示一部分笔画"的动画（`Create`、`ShowPassingFlash`）的父类；构造时检查对象是否有 `pointwise_become_partial` 方法，没有就抛 `TypeError`。直接实例化会在播放时报 `NotImplementedError("Please use Create or ShowPassingFlash")`——**用户不应直接使用**，列出仅为说明 CE 侧继承链。RTM **自有**的 `Create` / `ShowPassingFlash` 都**不是**它的子类（各自直接继承 `Animation`），RTM 下直传实测可播（`real_time_manim/compat.py` 给 `_get_bounds` 打了补丁，按 Create 式 bounds 渲染）。
+继承 `ShowPartial(Animation)`（**这是 ManimCE 的类**：`ShowPartial` 不在 RTM 自有 39 个动画的导出清单里，随内置 ManimCE 从 `real_time_manim` 顶层导入）。
+
+它是**抽象基类**，在 CE 里是"每帧只显示一部分笔画"的动画（`Create`、`ShowPassingFlash`）的父类。构造时会检查对象有没有 `pointwise_become_partial` 方法，没有就抛 `TypeError`。
+
+直接实例化会在播放时报 `NotImplementedError("Please use Create or ShowPassingFlash")`，所以**用户不应直接使用**；这里列出它，只是为了说明 CE 侧的继承链。
+
+RTM **自有**的 `Create` / `ShowPassingFlash` 都**不是**它的子类（各自直接继承 `Animation`）。RTM 下直传实测可播：`real_time_manim/compat.py` 给 `_get_bounds` 打了补丁，按 Create 式 bounds 渲染。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
