@@ -141,6 +141,83 @@ def save_tex_cache(cache_dir: str,
     )
 
 
+def _purge(folder: str, only_ext: Set[str], dry_run: bool, verbose: bool) -> int:
+    """Delete matching files from ``folder`` and drop it once empty.
+
+    Returns the number of files removed (or that ``dry_run`` would remove).
+    """
+    names = _candidates(folder, only_ext)
+    if not names:
+        if verbose:
+            print(f"[cache] nothing to clear in {folder}")
+        return 0
+    if verbose:
+        print(f"[cache] clearing {len(names)} file(s) in {folder}")
+    if not dry_run:
+        for name in names:
+            try:
+                os.remove(os.path.join(folder, name))
+            except OSError:
+                pass
+        try:                                   # remove the folder if now empty
+            if not os.listdir(folder):
+                os.rmdir(folder)
+        except OSError:
+            pass
+    return len(names)
+
+
+def clear_tex_cache(cache_dir: Optional[str] = "tex_cache",
+                    media_dir: Optional[str] = None,
+                    *,
+                    tex_subdir: str = "Tex",
+                    only_ext: Iterable[str] = (),
+                    dry_run: bool = False,
+                    verbose: bool = True) -> int:
+    """Delete cached compiled LaTeX/Typst assets so the next render recompiles.
+
+    Two places are cleared -- each is a dedicated cache, so the default
+    ``only_ext=()`` removes **every** file:
+
+    * manim's working folder ``<media_dir>/<tex_subdir>`` (the SVGs a run
+      compiles into; also where the first-render wait comes from), and
+    * the persistent cache ``cache_dir`` -- ``None`` skips it; the default
+      ``"tex_cache"`` is the folder :func:`save_tex_cache` writes and the
+      repo's ``clear_cache.py`` used to delete by hand.
+
+    This is the inverse of :func:`restore_tex_cache` / :func:`save_tex_cache`
+    and the cache-scoped sibling of :func:`clear_media`.
+
+    Parameters
+    ----------
+    cache_dir:
+        Persistent SVG cache to empty; ``None`` clears only ``media/Tex``.
+    media_dir:
+        Root media folder; defaults to ``<cwd>/media``.
+    tex_subdir:
+        Sub-folder manim compiles LaTeX into (default ``Tex``).
+    only_ext:
+        Extensions to remove (default ``()`` = every file).  Pass ``(".svg",)``
+        to keep the ``.tex``/``.dvi``/``.log`` intermediates behind.
+    dry_run:
+        Report what would be removed without deleting anything.
+    verbose:
+        Print a line per folder plus the total.
+
+    Returns
+    -------
+    Number of files removed (or that would be removed under ``dry_run``).
+    """
+    exts = {e.lower() for e in only_ext}
+    removed = _purge(_media_tex_dir(media_dir, tex_subdir), exts, dry_run, verbose)
+    if cache_dir:
+        removed += _purge(cache_dir, exts, dry_run, verbose)
+    if verbose:
+        verb = "would clear" if dry_run else "cleared"
+        print(f"[cache] {verb} {removed} file(s) total")
+    return removed
+
+
 def clear_media(media_dir: Optional[str] = None,
                 *,
                 verbose: bool = True) -> bool:

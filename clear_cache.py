@@ -1,11 +1,15 @@
-"""Clear the persistent LaTeX SVG cache."""
-import shutil, os
+"""Clear the LaTeX / Typst cache.
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tex_cache")
+Removes the persistent ``tex_cache/`` folder next to this script and the
+compiled SVGs in ``media/Tex/``, so the next run recompiles from scratch.
+This is a thin wrapper over ``real_time_manim.util.clear_tex_cache``.
+"""
+import os
 
-if os.path.exists(CACHE_DIR):
-    n = len(os.listdir(CACHE_DIR))
-    shutil.rmtree(CACHE_DIR)
-    print(f"Deleted tex_cache/ ({n} files)")
-else:
-    print("tex_cache/ does not exist — nothing to clear")
+from real_time_manim.util import clear_tex_cache
+
+REPO = os.path.dirname(os.path.abspath(__file__))
+
+if __name__ == "__main__":
+    clear_tex_cache(cache_dir=os.path.join(REPO, "tex_cache"),
+                    media_dir=os.path.join(REPO, "media"))

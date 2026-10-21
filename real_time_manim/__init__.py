@@ -184,6 +184,8 @@ _LAZY_EXPORTS = {
     "record_scene": ("real_time_manim.record", "record_scene"),
     "restore_tex_cache": ("real_time_manim.util", "restore_tex_cache"),
     "save_tex_cache": ("real_time_manim.util", "save_tex_cache"),
+    "clear_tex_cache": ("real_time_manim.util", "clear_tex_cache"),
+    "clear_media": ("real_time_manim.util", "clear_media"),
 }
 
 
