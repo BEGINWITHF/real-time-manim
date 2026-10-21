@@ -69,7 +69,7 @@ def close(self):
 | `RTM_LANG` | 自动 | 强制弹窗语言：`zh` / `en` / `ja` / `ko` |
 | `RTM_WAIT_ICON` | 内置沙漏图标 | 换弹窗图标（给 `.ico` 路径） |
 
-> 提醒：弹窗只是「告知」，**不影响编译结果**（`fast_record_scene` 的成片与有没有弹窗逐字节相同）。想彻底不等待就先预热缓存（`save_tex_cache` / `restore_tex_cache`，仓库 `run.py` 就是这么做的），或先空跑一次。
+> 提醒：弹窗只是「告知」，**不影响编译结果**（`fast_record_scene` 的成片与有没有弹窗逐字节相同）。想彻底不等待就先预热缓存（`save_tex_cache` / `restore_tex_cache`，仓库 `run.py` 就是这么做的），或先空跑一次；要反过来强制重编 / 清空间，用 `clear_tex_cache()`——它同时清 `<media>/Tex` 和持久缓存 `tex_cache/`，返回删除的文件数（`dry_run=True` 只预览，`only_ext=(".svg",)` 只清 SVG）。
 
 ## 示例
 

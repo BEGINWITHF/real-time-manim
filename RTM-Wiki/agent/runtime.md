@@ -489,6 +489,7 @@ def export_srt(path, entries=None, windows=None, verbose=False)
 - `silent`: hidden/offline runs — `fast_record_scene` and `FrameServer` build hidden windows.
 - `content`: live `已等待 N.Ns` counter + marquee progress bar. Language follows the **Windows display language (user UI language)** — `zh`/`en`/`ja`/`ko`, else English.
 - `effect on output`: **none** — it only observes elapsed time; the compile and the recorded video are unchanged. No-op off Windows.
+- `avoid / clear the wait`: warm the cache with `restore_tex_cache` (see *LaTeX / Typst cache* below), or force a recompile with `clear_tex_cache`.
 
 | env | default | effect |
 | --- | --- | --- |
@@ -498,6 +499,85 @@ def export_srt(path, entries=None, windows=None, verbose=False)
 | `RTM_WAIT_ICON` | bundled `wait.ico` | override the popup icon (`.ico` path) |
 
 - `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
+
+## LaTeX / Typst cache
+
+> src: `real_time_manim/util.py`. RTM compiles every `MathTex`/`Tex`/`Typst` to an SVG under `<media>/Tex`; a cold compile is what makes the first formula render pause. These four helpers warm, stash, or clear that folder, and all are exported top-level.
+
+### `restore_tex_cache`
+```python
+def restore_tex_cache(cache_dir, media_dir=None, *, tex_subdir="Tex",
+                      only_ext=(".svg",), overwrite=False,
+                      dry_run=False, verbose=True) -> int
+```
+- `ret`: number of files copied into `<media>/<tex_subdir>`.
+- `args`:
+
+| arg | type | default | meaning |
+| --- | --- | --- | --- |
+| `cache_dir` | `str` | required | folder of previously saved SVGs (eg `tex_cache`) |
+| `media_dir` | `str \| None` | `None` | media root; `None` → `<cwd>/media` |
+| `tex_subdir` | `str` | `"Tex"` | sub-folder manim compiles into |
+| `only_ext` | `Iterable[str]` | `(".svg",)` | extensions to copy; `()` copies every file |
+| `overwrite` | `bool` | `False` | also replace files already present |
+| `dry_run` | `bool` | `False` | report only, copy nothing |
+| `verbose` | `bool` | `True` | print a line per file |
+
+- `notes`: call **before** a run to skip recompiling unchanged math; `run.py` does this.
+- `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
+
+### `save_tex_cache`
+```python
+def save_tex_cache(cache_dir, media_dir=None, *, tex_subdir="Tex",
+                   only_ext=(".svg",), overwrite=False,
+                   dry_run=False, verbose=True) -> int
+```
+- `ret`: number of files copied into `cache_dir`.
+- `args`: mirror `restore_tex_cache` (source and destination swapped).
+- `notes`: call **after** a run to stash newly compiled SVGs for the next one.
+- `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
+
+### `clear_tex_cache`
+```python
+def clear_tex_cache(cache_dir="tex_cache", media_dir=None, *,
+                    tex_subdir="Tex", only_ext=(),
+                    dry_run=False, verbose=True) -> int
+```
+- `ret`: number of files removed (or that `dry_run` would remove).
+- `args`:
+
+| arg | type | default | meaning |
+| --- | --- | --- | --- |
+| `cache_dir` | `str \| None` | `"tex_cache"` | persistent cache to empty; `None` clears only `<media>/Tex` |
+| `media_dir` | `str \| None` | `None` | media root; `None` → `<cwd>/media` |
+| `tex_subdir` | `str` | `"Tex"` | sub-folder manim compiles into |
+| `only_ext` | `Iterable[str]` | `()` | extensions to remove; `()` removes every file |
+| `dry_run` | `bool` | `False` | report only, delete nothing |
+| `verbose` | `bool` | `True` | print a line per folder plus the total |
+
+- `notes`:
+  - Clears **both** `<media>/<tex_subdir>` and `cache_dir` (each is a dedicated cache, hence `only_ext=()` by default). `only_ext=(".svg",)` keeps the `.tex`/`.dvi`/`.log` intermediates.
+  - Empties a folder and then removes it; idempotent — returns `0` when nothing exists.
+  - Inverse of `restore_tex_cache` / `save_tex_cache`; the repo's `clear_cache.py` is a thin wrapper over it.
+- `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
+- `eg`:
+```python
+clear_tex_cache()                    # <media>/Tex + tex_cache/
+clear_tex_cache(dry_run=True)        # preview only
+clear_tex_cache(only_ext=(".svg",))  # keep .tex/.dvi intermediates
+clear_tex_cache(cache_dir=None)      # only <media>/Tex
+```
+
+### `clear_media`
+```python
+def clear_media(media_dir=None, *, verbose=True) -> bool
+```
+- `ret`: `True` if the folder existed and was removed, else `False`.
+- `notes`:
+  - Removes the **whole** `media/` folder, not just `Tex`; unconditional (never skipped).
+  - Does **not** follow `config.media_dir` — it always targets `<cwd>/media` unless `media_dir` is given.
+  - `record.py` calls it after a run when `cleanup=True`.
+- `see`: ../zh_CN/00-快速开始/04-录制视频.md
 
 ## Hard constraints
 
