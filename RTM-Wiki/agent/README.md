@@ -76,6 +76,7 @@ fast_record_scene(MyScene, "out.mp4")
 - **Paint order**: document order by default; `z_index` participates; under `ThreeDCamera` it is re-sorted by camera-space depth; `Camera(use_z_index=False)` disables the z sort (`window/paint_order.py`).
 - **Custom-camera fallback**: a camera that overrides `capture_mobjects`/`get_frame` (and is not one of the handled ones: `MovingCamera`/`ThreeDCamera`/…) falls back to **per-frame full-screen rasterization** — correct but slow (`core.py::_rasterise_custom_camera`).
 - **RTM vs CE**: RTM uses its own `play()` and does **not** drive ManimCE's `Scene.render()`/file-writer. It calls `Scene.setup()` → `construct()` → `tear_down()` itself, in order.
+- **First formula render blocks**: `MathTex`/`Tex`/`Typst` compile synchronously at construction (~1–2 s cold). On a cold cache a **visible** window shows a small "compiling formula" popup (hidden/offline runs stay silent); the output is unaffected. See `runtime.md` → *Compile-wait popup*.
 - **Param-table semantics** (from zh_CN): `能填` = allowed values; `不建议` = allowed but discouraged; `不接线 / 未接线` = RTM ignores it.
 
 ## 6. File map

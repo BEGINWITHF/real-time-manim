@@ -481,6 +481,24 @@ def export_srt(path, entries=None, windows=None, verbose=False)
   - `next_section` per-section video splitting is not automatic: `.srt`/segments need manual ffmpeg cuts.
 - `see`: ../zh_CN/00-快速开始/04-录制视频.md · ../zh_CN/01-场景与相机/场景/04-分段字幕与声音.md
 
+## Compile-wait popup (first formula render)
+
+`MathTex` / `Tex` / `Typst` / `MathTypst` compile **synchronously in `__init__`** (LaTeX ~1–2 s cold, Typst ~0.4 s). On a live scene the `MLWindow` already exists, so the pause happens with an empty window on screen. RTM shows a small always-on-top popup so it does not look like a freeze.
+
+- `shows`: only when a **visible** `MLWindow` is registered (`MLWindow._registry`, `hidden` False) **and** the compile exceeds `RTM_WAIT_POPUP_DELAY` (default `0.35` s). A cache hit (~30 ms) never triggers it.
+- `silent`: hidden/offline runs — `fast_record_scene` and `FrameServer` build hidden windows.
+- `content`: live `已等待 N.Ns` counter + marquee progress bar. Language follows the **Windows display language (user UI language)** — `zh`/`en`/`ja`/`ko`, else English.
+- `effect on output`: **none** — it only observes elapsed time; the compile and the recorded video are unchanged. No-op off Windows.
+
+| env | default | effect |
+| --- | --- | --- |
+| `RTM_WAIT_POPUP` | `1` | `0` disables the popup |
+| `RTM_WAIT_POPUP_DELAY` | `0.35` | seconds before it appears |
+| `RTM_LANG` | auto | force `zh` / `en` / `ja` / `ko` |
+| `RTM_WAIT_ICON` | bundled `wait.ico` | override the popup icon (`.ico` path) |
+
+- `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
+
 ## Hard constraints
 
 | Constraint | Value | Notes |

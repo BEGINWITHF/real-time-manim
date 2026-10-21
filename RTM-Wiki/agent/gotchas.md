@@ -135,6 +135,7 @@
 - **`VMobject` multi-stop gradient fill uses first→last stop** (native linear gradient, not averaged); `background_image` texture fill not wired.
 
 ### Text / math / tabular
+- **Cold tex cache = a visible pause before the first frame** (not a hang): `MathTex`/`Tex`/`Typst`/`MathTypst` compile synchronously in `__init__` (~1–2 s LaTeX / ~0.4 s Typst). With a **visible** window RTM shows a "compiling formula" popup (`runtime.md` → *Compile-wait popup*); `RTM_WAIT_POPUP=0` disables it, `RTM_LANG` forces its language, and a warm cache (`restore_tex_cache`) removes the wait. Output is unaffected.
 - **`from real_time_manim import remove_invisible_chars`** → `ImportError` (not exported) → filter invisible chars yourself.
 - **`MarkupText` with `<span foreground=…>`** → `ElementTree.ParseError: no element found` → give the whole string a `color` or use `Text` + `t2c`.
 - **`get_part_by_tex` no match returns `None`** → chaining `part.width` gives `AttributeError` → test for `None`.

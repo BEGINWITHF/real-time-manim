@@ -145,6 +145,7 @@ def __init__(self, *tex_strings: str, font_size: float = 48, color: ParsableMani
   - No `$` inside `MathTex` (already math mode). A single string's `{{ }}` only splits the first part; write parts as **separate args** to index/color them.
   - Env vars: `RTM_TYPST=0` disables the Typst layer; `RTM_TYPST_DEBUG=1` prints routing reasons.
   - Fragment API (`set_color_by_tex` / `get_part_by_tex` / `set_opacity_by_tex` / `tex_to_color_map`) works on both the Typst and LaTeX paths.
+  - **First render blocks the caller**: the compile is synchronous in `__init__` (~1–2 s LaTeX / ~0.4 s Typst cold). With a **visible** window RTM shows a "compiling formula" popup so it is not mistaken for a freeze (`runtime.md` → *Compile-wait popup*); the output is unaffected, and a cache hit (~30 ms) shows nothing. `RTM_WAIT_POPUP=0` disables it.
 - `see`: ../zh_CN/04-图形与文本/09-LaTeX公式.md
 - `eg`:
 ```python
@@ -299,6 +300,7 @@ def __init__(self, typst_code: str, *, font_size: float = 48, typst_preamble: st
   - **RTM-provided**: Typst typesetting backend; upstream ManimCE 0.21 lacks `TypstMath` (re-exported from the bundled manim).
   - Typst math uses `$...$` (not LaTeX `$` pairing). `#let` definitions must precede their use (`typst_preamble` or top of `typst_code`).
   - When both `height` and `font_size` are given, `height` wins.
+  - **First render blocks the caller**: compilation is synchronous in `__init__` (~0.4 s cold, ~30 ms cached). A **visible** window shows a "compiling formula" popup (`runtime.md` → *Compile-wait popup*); output is unaffected.
 - `see`: ../zh_CN/04-图形与文本/10-Typst.md
 
 ### `Typst.select`
