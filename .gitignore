@@ -22,6 +22,10 @@ media/
 tex_cache/
 frames/
 
+# ---- RTM-Wiki sample renders (per-scene intermediates, regenerable) ----
+RTM-Wiki/**/assets/RTM code/final/
+RTM-Wiki/**/assets/RTM code/concat.txt
+
 # ---- MSVC build byproducts (build_msvc.bat) ----
 *.obj
 real_time_manim/vulkan_core.lib
