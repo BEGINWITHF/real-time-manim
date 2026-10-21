@@ -53,6 +53,24 @@ def close(self):
 
 **录制的编码收尾不在 `MLWindow.close` 里**：它由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 在调用 `close()` 前先执行 `_finish_fast_record()` / `stop_record()`（`record.py:181-186`、`window/recording.py:217-221`）。直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾，必须自己调 `win._finish_fast_record()`。
 
+### 首次编译公式的等待提示
+
+首次渲染 LaTeX / Typst 公式要调用编译器，可能卡住一两秒。这时若已有**可见**窗口，RTM 会弹出一个置顶小窗，明确告诉你在等编译、不是卡住：
+
+- **只在有可见窗口时出现**：`fast_record_scene` / `FrameServer` 用隐藏窗口，不会弹；
+- **只在编译慢时出现**：有缓存时约 30ms 就编译完，弹窗来不及出现就被取消；
+- 带实时「已等待 N.Ns」计数与跑马灯进度条，一眼看出没死；
+- 文案跟随 **Windows 显示语言（用户 UI 语言）**：中文 / English / 日本語 / 한국어，其它语言回退英文。
+
+| 环境变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `RTM_WAIT_POPUP` | `1` | 设 `0` 完全关闭弹窗 |
+| `RTM_WAIT_POPUP_DELAY` | `0.35` | 编译超过多少秒才弹 |
+| `RTM_LANG` | 自动 | 强制弹窗语言：`zh` / `en` / `ja` / `ko` |
+| `RTM_WAIT_ICON` | 内置沙漏图标 | 换弹窗图标（给 `.ico` 路径） |
+
+> 提醒：弹窗只是「告知」，**不影响编译结果**（`fast_record_scene` 的成片与有没有弹窗逐字节相同）。想彻底不等待就先预热缓存（`save_tex_cache` / `restore_tex_cache`，仓库 `run.py` 就是这么做的），或先空跑一次；要反过来强制重编 / 清空间，用 `clear_tex_cache()`——它同时清 `<media>/Tex` 和持久缓存 `tex_cache/`，返回删除的文件数（`dry_run=True` 只预览，`only_ext=(".svg",)` 只清 SVG）。
+
 ## 示例
 
 RTM 最小程序模板：

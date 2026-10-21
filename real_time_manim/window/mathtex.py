@@ -397,20 +397,60 @@ _OrigMathTexInit = _OrigMathTex.__init__
 _USE_NATIVE_MATHTEX = False
 
 
+def _formula_label(args, kwargs):
+    """A short snippet of the formula, for the 'compiling' popup."""
+    parts = [a for a in args if isinstance(a, str)]
+    if not parts:
+        extra = kwargs.get("tex_strings") or kwargs.get("tex_string")
+        if isinstance(extra, str):
+            parts = [extra]
+        elif isinstance(extra, (list, tuple)):
+            parts = [s for s in extra if isinstance(s, str)]
+    return " ".join(parts)[:120]
+
+
 def _mathtex_init_dispatch(self, *args, **kwargs):
     if _USE_NATIVE_MATHTEX:
         _native_mathtex_init(self, *args, **kwargs)
         return
-    if _typst.ENABLED and not isinstance(self, _OrigTex):
-        try:
-            if _typst.typst_mathtex_init(self, *args, **kwargs):
-                return
-            _typst._debug(f"not convertible to Typst, using LaTeX: {args!r}")
-        except Exception as exc:
-            # Compile error inside Typst: fall back to LaTeX, same result
-            # the user asked for, just slower.  RTM_TYPST_DEBUG=1 shows why.
-            _typst._debug(f"{type(exc).__name__}: {exc}")
-    _OrigMathTexInit(self, *args, **kwargs)
+    # A cold cache makes this compile block for a second or two; on a live scene
+    # the window is already up, so show a small "compiling…" popup instead of
+    # letting it look frozen (see real_time_manim/render_wait.py).  The context
+    # manager is a no-op for a fast (cached) compile, an offline/hidden run, or
+    # off Windows.
+    from real_time_manim.render_wait import formula_compile_wait
+    with formula_compile_wait(_formula_label(args, kwargs)):
+        if _typst.ENABLED and not isinstance(self, _OrigTex):
+            try:
+                if _typst.typst_mathtex_init(self, *args, **kwargs):
+                    return
+                _typst._debug(f"not convertible to Typst, using LaTeX: {args!r}")
+            except Exception as exc:
+                # Compile error inside Typst: fall back to LaTeX, same result
+                # the user asked for, just slower.  RTM_TYPST_DEBUG=1 shows why.
+                _typst._debug(f"{type(exc).__name__}: {exc}")
+        _OrigMathTexInit(self, *args, **kwargs)
 
 
 _OrigMathTex.__init__ = _mathtex_init_dispatch
+
+
+# Plain ``Tex`` (LaTeX, not math) and the manim Typst mobjects compile in their
+# own ``__init__``s -- wrap those too so the popup covers every formula render.
+# Nesting is harmless: ``render_wait`` only shows the outermost popup.
+def _wrap_formula_init(cls):
+    if cls is None:
+        return
+    orig = cls.__init__
+
+    def _init(self, *args, **kwargs):
+        from real_time_manim.render_wait import formula_compile_wait
+        with formula_compile_wait(_formula_label(args, kwargs)):
+            orig(self, *args, **kwargs)
+
+    cls.__init__ = _init
+
+
+_wrap_formula_init(_OrigTex)
+_wrap_formula_init(getattr(_typst, "Typst", None))
+_wrap_formula_init(getattr(_typst, "MathTypst", None))

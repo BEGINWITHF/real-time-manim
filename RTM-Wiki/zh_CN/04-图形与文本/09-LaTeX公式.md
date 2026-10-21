@@ -3,6 +3,8 @@
 本节讲 `Tex` / `MathTex` / `SingleStringMathTex` 三个排版类：分别用于混排正文与公式、纯公式（可拆片段），以及最轻量的单串公式。三个类各配一条样例。
 
 > **RTM 与 ManimCE 都走 LaTeX**：`Tex` / `MathTex` 需要本机有可用的 LaTeX 发行版；不想装 LaTeX 就用 [Typst](10-Typst.md)（`Typst` / `TypstMath`，或直接写 `MathTex` 由 RTM 自动路由）。
+>
+> **首次渲染会等编译器**：冷缓存时 LaTeX 编译可能卡 1~2 秒；可见窗口下 RTM 会弹一个「正在编译公式」的提示小窗（见[实时窗口 MLWindow](../00-快速开始/03-实时窗口-MLWindow.md)），不是卡死。
 
 ## 参数
 

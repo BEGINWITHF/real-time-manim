@@ -3,6 +3,8 @@
 RTM 内置 **Typst** 渲染通道：不用装 LaTeX 也能排公式与文本。三个样例分别是 `Typst`（排整段内容）、`TypstMath`（只写数学表达式）、以及 `MathTex` 的**自动路由**（照常写 LaTeX，内部转 Typst 排版）。
 
 > **RTM 特有**：`Typst` / `TypstMath` 是 RTM 的排版类，ManimCE 0.21 **没有** `TypstMath`，所以本节三条样例都是 **RTM 单边成片**（没有 ManimCE 对照件）。
+>
+> **首次渲染会等编译器**：冷缓存时 Typst（或回退的 LaTeX）编译要几百毫秒到一两秒；可见窗口下 RTM 会弹一个「正在编译公式」的提示小窗（见[实时窗口 MLWindow](../00-快速开始/03-实时窗口-MLWindow.md)），不是卡死。
 
 ## 参数
 

@@ -80,6 +80,7 @@ include = ["real_time_manim*"]
 real_time_manim = [
     "vulkan_core.dll",
     "logo.ico",
+    "wait.ico",
     # data files of the bundled ManimCE copy
     "manim/py.typed",
     "manim/**/*.cfg",
