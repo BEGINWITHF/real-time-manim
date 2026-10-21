@@ -24,7 +24,9 @@ def animate(**play_kwargs) -> _AnimationBuilder
 
 #### 样例：平移、链式、play 参数与 `set`
 
-红方块普通平移、链式「放大+旋转」两步合一，再用 `animate(run_time=..., rate_func=there_and_back)` 传 play 参数；橙矩形演示 `set` 配合 `animate`。
+红方块普通平移、链式「放大+旋转」两步合一，再用 `animate(run_time=..., rate_func=there_and_back)` 传 play 参数。
+
+橙矩形则演示 `set` 配合 `animate`。
 
 ```python
 from real_time_manim import Scene, Square, Rectangle, \
@@ -47,11 +49,21 @@ class AnimateBasicDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：红方块走三步——`animate.shift` 最普通的用法平移；`animate.scale(1.5).rotate(PI / 6)` 把放大和旋转**链在一起**、由一个动画平滑完成（分成两次 play 会先转再放大，观感完全不同）；第三步 `animate(run_time=0.8, rate_func=there_and_back).shift(DOWN)` 在 `.animate` 后紧跟 play 参数——方块下去又回到原位。右边橙矩形演示 `rect.animate.set(width=5.0)`：按**目标尺寸**调（而不是倍数）的过渡动画。
+这段代码在做什么：红方块走了三步。
+
+- `animate.shift`：最普通的用法，平移。
+- `animate.scale(1.5).rotate(PI / 6)`：把放大和旋转**链在一起**，由一个动画平滑完成（分成两次 play 会先转再放大，观感完全不同）。
+- `animate(run_time=0.8, rate_func=there_and_back).shift(DOWN)`：在 `.animate` 后紧跟 play 参数，方块下去又回到原位。
+
+右边橙矩形演示 `rect.animate.set(width=5.0)`：按**目标尺寸**调（而不是倍数）的过渡动画。
 
 <video src="assets/RTM output/07-animate语法-animate.mp4" controls width="560"></video>
 
-> 提醒：`.animate(...)` 的括号参数**只认** `setattr` 到动画对象上有效的属性（`run_time` / `rate_func` / `lag_ratio` / `reverse_rate_function`…），写在方法参数的位置就变成了方法参数——`animate.shift(2)` 和 `animate(run_time=2)` 完全两回事。被链起来的方法按顺序执行，`run_time` 是**整条链**的总时长。`lag_ratio=0.3` 传在**没有子对象**的对象上无效，RTM 现在会打 `UserWarning` 显式提示而非静默。
+> 提醒：
+>
+> - `.animate(...)` 的括号参数**只认** `setattr` 到动画对象上有效的属性（`run_time` / `rate_func` / `lag_ratio` / `reverse_rate_function`…）；写在方法参数的位置就变成了方法参数——`animate.shift(2)` 和 `animate(run_time=2)` 完全两回事。
+> - 被链起来的方法按顺序执行，`run_time` 是**整条链**的总时长。
+> - `lag_ratio=0.3` 传在**没有子对象**的对象上无效，RTM 现在会打 `UserWarning` 显式提示而非静默。
 
 ### override_animate（模块级装饰器）
 
@@ -67,7 +79,9 @@ def override_animate(method: types.MethodType) -> Callable[[types.MethodType], t
 
 #### 样例：普通调用 vs `.animate` 调用
 
-`PulseSquare` 定义普通方法 `pulse`（直接放大、瞬时），并用 `@override_animate(pulse)` 给它配一个 `Transform` 动画——左块直接调用瞬间变大，右块 `.animate` 调用平滑变大。
+`PulseSquare` 定义普通方法 `pulse`（直接放大、瞬时），并用 `@override_animate(pulse)` 给它配一个 `Transform` 动画。
+
+左块直接调用，瞬间变大；右块 `.animate` 调用，平滑变大。
 
 ```python
 from real_time_manim import Scene, Square, \
@@ -100,11 +114,17 @@ class OverrideDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：`PulseSquare.pulse(1.4)` 平时就是「直接 `scale` 一下」——左块直接调用，一帧之内变大；同一个类上 `@override_animate(pulse)` 装饰的方法定义了「`.animate` 调用时该播什么」：右块 `ds2.animate.pulse(1.4)` 触发它，它返回一个 `Transform`（放大后快照），于是右块**平滑地**变大。同一个方法、两种调用方式、两种行为——这就是 override 的意义。
+这段代码在做什么：`PulseSquare.pulse(1.4)` 平时就是「直接 `scale` 一下」——左块直接调用，一帧之内变大。
+
+同一个类上 `@override_animate(pulse)` 装饰的方法，定义了「`.animate` 调用时该播什么」：右块 `ds2.animate.pulse(1.4)` 触发它，它返回一个 `Transform`（放大后快照），于是右块**平滑地**变大。同一个方法、两种调用方式、两种行为——这就是 override 的意义。
 
 <video src="assets/RTM output/07-animate语法-override.mp4" controls width="560"></video>
 
-> 提醒：装饰器方法（下划线开头的 `_xxx_animation`）的签名 = 原方法参数 + `anim_args`（`.animate(...)` 括号里的 play 参数）；返回值必须是 `Animation`。被覆盖的方法**不能**与其它方法混在同一条 `.animate` 链上（会报错/绕过覆盖）。直接调用永远走原始实现，想两种行为都留着就靠这个装饰器区分。
+> 提醒：
+>
+> - 装饰器方法（下划线开头的 `_xxx_animation`）的签名 = 原方法参数 + `anim_args`（`.animate(...)` 括号里的 play 参数）；返回值必须是 `Animation`。
+> - 被覆盖的方法**不能**与其它方法混在同一条 `.animate` 链上（会报错/绕过覆盖）。
+> - 直接调用永远走原始实现；想两种行为都留着，就靠这个装饰器区分。
 
 ### add_animation_override / animation_override_for（类方法）
 
@@ -148,11 +168,17 @@ class AddOverrideDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先给 `FlashSquare` 类注册一条规则——「这个类遇到 `FadeIn` 就换成返回 `FadeOut` 的函数」；`animation_override_for(FadeIn)` 查表拿回刚注册的函数、`animation_override_for(Transform)` 查不到返回 `None`；然后把一个**已经在画面里**的青色方块用 `win.play(FadeIn(sq))` 播放——注册表生效，实际执行的是 `FadeOut`，方块当场淡出消失。
+这段代码在做什么：整个过程分三步。
+
+- 先给 `FlashSquare` 类注册一条规则——「这个类遇到 `FadeIn` 就换成返回 `FadeOut` 的函数」。
+- `animation_override_for(FadeIn)` 查表拿回刚注册的函数，`animation_override_for(Transform)` 查不到，返回 `None`。
+- 然后把一个**已经在画面里**的青色方块用 `win.play(FadeIn(sq))` 播放——注册表生效，实际执行的是 `FadeOut`，方块当场淡出消失。
 
 <video src="assets/RTM output/07-animate语法-add_override.mp4" controls width="560"></video>
 
-> 提醒：注册是**类级别**且**不继承到子类**；重复注册同一个动画类会抛 `MultiAnimationOverrideException`（要改先删旧的）。这个 API 比 `@override_animate` 更底层——它是「按动画类」替换，`@override_animate` 是「按方法」替换，日常自定义动画优先用后者。
+> 提醒：注册是**类级别**且**不继承到子类**；重复注册同一个动画类会抛 `MultiAnimationOverrideException`（要改先删旧的）。
+>
+> 这个 API 比 `@override_animate` 更底层——它是「按动画类」替换，`@override_animate` 是「按方法」替换，日常自定义动画优先用后者。
 
 ---
 

@@ -1,6 +1,6 @@
 # 数轴 NumberLine
 
-一根带刻度的直线：`NumberLine` 是 `Axes` / `NumberPlane` / `BarChart` 每根轴的底层实现，也可单独拿来当时间轴、数轴点移动动画；本页讲构造参数，方法（`n2p`、`add_numbers`、`add_labels`…）在[数轴方法进阶](01b-数轴方法进阶.md)。
+`NumberLine` 是一根带刻度的直线，也是 `Axes` / `NumberPlane` / `BarChart` 每根轴的底层实现，还能单独拿来当时间轴、做数轴点移动动画。本页讲构造参数；方法（`n2p`、`add_numbers`、`add_labels`…）在[数轴方法进阶](01b-数轴方法进阶.md)。
 
 ## 参数
 
@@ -81,11 +81,17 @@ class NumberLineBasicDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先画一条从 -4 到 4、总长 8 个 Manim 单位的数轴——`x_range` 定数据范围和刻度步长，`length` 定屏幕长度（两者共同决定比例尺），`include_numbers=True` 在轴下方自动挂数字，`include_tip=True` 在右端补箭头。然后红点用 `n2p(2)` 落在数值 2 上，再依次平移到 -3 和 3.5——`n2p` 就是"数值 → 场景点"的换算器。
+这段代码在做什么：先画一条从 -4 到 4、总长 8 个 Manim 单位的数轴。`x_range` 定数据范围和刻度步长，`length` 定屏幕长度，两者共同决定比例尺；`include_numbers=True` 在轴下方自动挂数字，`include_tip=True` 在右端补箭头。
+
+然后红点用 `n2p(2)` 落在数值 2 上，再依次平移到 -3 和 3.5——`n2p` 就是"数值 → 场景点"的换算器。
 
 <video src="assets/RTM output/01-NumberLine-basic.mp4" controls width="560"></video>
 
-> 提醒：给了 `length` 就别再纠结 `unit_size`——它会被反推覆盖。箭头会画在 `x_max` 之外，所以别把红点/标签正好放在 `x_max` 上，会和箭头叠住。数轴数字默认走 `MathTex`：**已安装 `real-time-manim[typst]` extra（且未设 `RTM_TYPST=0`）时由 Typst 后端编译，否则为真实 LaTeX**；要纯文本观感可以传 `label_constructor=Text`。
+> 提醒：
+>
+> - 给了 `length` 就别再纠结 `unit_size`，它会被反推覆盖。
+> - 箭头画在 `x_max` 之外，所以别把红点/标签正好放在 `x_max` 上，会和箭头叠住。
+> - 数轴数字默认走 `MathTex`：**已安装 `real-time-manim[typst]` extra（且未设 `RTM_TYPST=0`）时由 Typst 后端编译，否则为真实 LaTeX**；要纯文本观感可以传 `label_constructor=Text`。
 
 ### UnitInterval
 
@@ -94,7 +100,7 @@ def __init__(self, unit_size: float = 10, numbers_with_elongated_ticks: list[flo
              decimal_number_config: dict | None = None, **kwargs: Any) -> None:
 ```
 
-`[0, 1]` 区间专用数轴（`NumberLine` 子类，拥有其全部方法）：步长 0.1、一位小数、0 和 1 处刻度加长，画概率区间、贝叶斯图的基础件。
+`[0, 1]` 区间专用数轴，是 `NumberLine` 子类，拥有其全部方法。默认步长 0.1、一位小数，0 和 1 处刻度加长，是画概率区间、贝叶斯图的基础件。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -135,7 +141,10 @@ class UnitIntervalDemo(Scene):
 
 <video src="assets/RTM output/01-NumberLine-unitinterval.mp4" controls width="560"></video>
 
-> 提醒：`UnitInterval` 的 `x_range` 依然可以被 `**kwargs` 覆盖，但覆盖后它就不是"单位区间"了，不如直接用 `NumberLine`。轴上数字走 `MathTex`（**装了 `real-time-manim[typst]` extra 且未设 `RTM_TYPST=0` 时由 Typst 后端编译，否则为真实 LaTeX**），与 CE 的 LaTeX 字形略有差异属正常。
+> 提醒：
+>
+> - `UnitInterval` 的 `x_range` 依然可以被 `**kwargs` 覆盖，但覆盖后它就不是"单位区间"了，不如直接用 `NumberLine`。
+> - 轴上数字走 `MathTex`（**装了 `real-time-manim[typst]` extra 且未设 `RTM_TYPST=0` 时由 Typst 后端编译，否则为真实 LaTeX**），与 CE 的 LaTeX 字形略有差异属正常。
 
 ---
 

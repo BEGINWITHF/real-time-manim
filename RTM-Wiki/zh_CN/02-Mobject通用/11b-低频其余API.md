@@ -19,7 +19,9 @@ def save_image(name: str | None = None) -> None
 
 > **返回**：`get_image` 返回 PIL `Image`；`show` 弹出图片查看器；`save_image(name)` 保存到当前 `video_dir` 下的 `name.png`。按文档设计适合调试「这东西到底长什么样」。
 
-**为什么没有视频**：manim 0.21 的实现里这三个方法内部引用了**没有导入**的 `Camera`（上游 bug），调用直接抛 `NameError: name 'Camera' is not defined`——RTM 与原版引擎实测**一致地崩**，无画面可渲，因此本小节不贴视频。绕法：想要位图请直接用渲染管线的输出（RTM 录屏帧 / `manim` 的 `-s` 存帧），或自己拿点数组画。
+**为什么没有视频**：manim 0.21 的实现里这三个方法内部引用了**没有导入**的 `Camera`（上游 bug），调用直接抛 `NameError: name 'Camera' is not defined`——RTM 与原版引擎实测**一致地崩**，无画面可渲，因此本小节不贴视频。
+
+绕法：想要位图请直接用渲染管线的输出（RTM 录屏帧 / `manim` 的 `-s` 存帧），或自己拿点数组画。
 
 ```python
 from real_time_manim import Square
@@ -76,11 +78,18 @@ class SortShuffleInvertDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：五个彩色方块先散乱摆在九宫格里；`sort()` 按当前**中心 x** 改列表顺序，`arrange` 后颜色从左到右=位置从左到右；`invert()` 把列表整个倒过来，重排后顺序镜像；`shuffle()` 随机打乱（样例先 `random.seed(7)` 固定随机序列，两引擎/两次运行才一致）；最后 `sort(submob_func=lambda m: str(m.color))` 用**优先级更高**的子对象键——按颜色名的字母序排成 BLUE→GREEN→PURPLE→RED→YELLOW。
+这段代码在做什么：五个彩色方块先散乱摆在九宫格里，随后列表顺序连变四次。
+
+- `sort()` 按当前**中心 x** 改列表顺序，`arrange` 后颜色从左到右=位置从左到右。
+- `invert()` 把列表整个倒过来，重排后顺序镜像。
+- `shuffle()` 随机打乱（样例先 `random.seed(7)` 固定随机序列，两引擎/两次运行才一致）。
+- 最后 `sort(submob_func=lambda m: str(m.color))` 用**优先级更高**的子对象键——按颜色名的字母序排成 BLUE→GREEN→PURPLE→RED→YELLOW。
 
 <video src="assets/RTM output/11b-低频其余API-sort_shuffle_invert.mp4" controls width="560"></video>
 
-> 提醒：三个方法改的是**列表顺序**（同时影响叠放和 `arrange`），不动坐标；`shuffle` 不设种子每次结果都不同。`recursive=True` 会递归处理子对象内部的列表。
+> 提醒：三个方法改的是**列表顺序**（同时影响叠放和 `arrange`），不动坐标；`shuffle` 不设种子每次结果都不同。
+>
+> `recursive=True` 会递归处理子对象内部的列表。
 
 ### apply_to_family
 
@@ -124,7 +133,9 @@ class ApplyFamilyDemo(Scene):
 
 <video src="assets/RTM output/11b-低频其余API-apply_family.mp4" controls width="560"></video>
 
-> 提醒：回调收到的是家族里**每个有顶点的成员**——包含自身（有顶点时）。它不返回新对象，改的是原地状态；想要「每帧批量改」请改用 updater。
+> 提醒：回调收到的是家族里**每个有顶点的成员**——包含自身（有顶点时）。它不返回新对象，改的是原地状态。
+>
+> 想要「每帧批量改」请改用 updater。
 
 ### get_start / get_end / get_start_and_end / get_pieces / point_from_proportion / proportion_from_point
 
@@ -177,11 +188,15 @@ class PathDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：黄色直线的 `get_start` / `get_end` 打印出首尾顶点坐标；`point_from_proportion(0.25)` 取路径 25% 处并打红点（在线上偏左 1/4 处）；`get_pieces(4)` 把线切成四段、用渐变色染色后淡入——四段颜色各不相同。右下的圆演示曲线上的取点与**反算**：`point_from_proportion(0.25)` 取一个点，`proportion_from_point(q)` 把比例 `0.25` 精确算回来。
+这段代码在做什么：黄色直线的 `get_start` / `get_end` 打印出首尾顶点坐标；`point_from_proportion(0.25)` 取路径 25% 处并打红点（在线上偏左 1/4 处）；`get_pieces(4)` 把线切成四段、用渐变色染色后淡入——四段颜色各不相同。
+
+右下的圆演示曲线上的取点与**反算**：`point_from_proportion(0.25)` 取一个点，`proportion_from_point(q)` 把比例 `0.25` 精确算回来。
 
 <video src="assets/RTM output/11b-低频其余API-path.mp4" controls width="560"></video>
 
-> 提醒：`get_start` / `get_end` 对无顶点对象（空 `Group`）会抛异常，先 `has_points()` 判一下。`point_from_proportion` 的实现按**累计弧长**取点，对 `Line` / `Arc` / `Circle` 这类均匀路径直觉正确；`proportion_from_point` 要求点**确实在路径上**（`Circle` 上实测返回0.25，偏一点就 `ValueError: does not lie on this curve`）。
+> 提醒：`get_start` / `get_end` 对无顶点对象（空 `Group`）会抛异常，先 `has_points()` 判一下。
+>
+> `point_from_proportion` 的实现按**累计弧长**取点，对 `Line` / `Arc` / `Circle` 这类均匀路径直觉正确；`proportion_from_point` 要求点**确实在路径上**（`Circle` 上实测返回0.25，偏一点就 `ValueError: does not lie on this curve`）。
 
 ### mobject/utils.py 渲染器基类工厂 —— 无画面
 

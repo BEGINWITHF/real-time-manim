@@ -70,7 +70,9 @@ if __name__ == "__main__" and ("scene_forms" in sys.argv[1:] or not sys.argv[1:]
     fast_record_scene(run_callable, out_path="scene_callable.mp4", verbose=True)   #无参可调用：流程完全自己写
 ```
 
-这段代码在做什么：三个子类只是把标签换成了 `scene = class` / `scene = instance` / `scene = callable`，场景内容一模一样；然后用三条 `fast_record_scene` 调用分别以**类、实例、无参可调用**三种形态录制，出来的三段画面对应视频里的三格。传类时 RTM 会替你建实例并跑 `setup()`+`construct()`；传实例就跑你给的那个；传函数则只调用它，跑什么全由函数自己写（样例里就是 `SceneFormCallable().construct()`）。
+这段代码在做什么：三个子类只是把标签换成了 `scene = class` / `scene = instance` / `scene = callable`，场景内容一模一样；然后用三条 `fast_record_scene` 调用分别以**类、实例、无参可调用**三种形态录制，出来的三段画面对应视频里的三格。
+
+传类时 RTM 会替你建实例并跑 `setup()`+`construct()`；传实例就跑你给的那个；传函数则只调用它，跑什么全由函数自己写（样例里就是 `SceneFormCallable().construct()`）。
 
 <video src="assets/RTM output/05-RTM的录制与窗口参数-scene_forms.mp4" controls width="560"></video>
 
@@ -105,11 +107,16 @@ if __name__ == "__main__" and ("out_path" in sys.argv[1:] or not sys.argv[1:]):
     fast_record_scene(OutPathDemo, out_path="clips/demo.mp4", verbose=True)   #out_path 直接给文件路径，子目录自动创建
 ```
 
-这段代码在做什么：场景内容和上一个样例一样，只是调用里 `out_path="clips/demo.mp4"` ——输出直接落到 `clips/` 子目录下的 `demo.mp4`，`clips/` 不存在会自动建。页面里嵌的这条视频就是这个文件本身（最终按命名规范发布为 `assets/RTM output/05-RTM的录制与窗口参数-out_path.mp4`）。
+这段代码在做什么：场景内容和上一个样例一样，只是调用里 `out_path="clips/demo.mp4"` ——输出直接落到 `clips/` 子目录下的 `demo.mp4`，`clips/` 不存在会自动建。
+
+页面里嵌的这条视频就是这个文件本身（最终按命名规范发布为 `assets/RTM output/05-RTM的录制与窗口参数-out_path.mp4`）。
 
 <video src="assets/RTM output/05-RTM的录制与窗口参数-out_path.mp4" controls width="560"></video>
 
-> 提醒：不传 `out_path` 时默认写到 `~/Downloads/output.mp4`，一不小心就把桌面下载目录塞满了——建议每次都显式给路径。多窗口场景第二个窗口会写 `xxx_part2.mp4`，别和自己给的文件名打架。
+> 提醒：
+>
+> - 不传 `out_path` 时默认写到 `~/Downloads/output.mp4`，一不小心就把桌面下载目录塞满了——建议每次都显式给路径。
+> - 多窗口场景第二个窗口会写 `xxx_part2.mp4`，别和自己给的文件名打架。
 
 #### 样例：`fps`（帧率，只能 60）
 
@@ -146,7 +153,9 @@ if __name__ == "__main__" and ("fps" in sys.argv[1:] or not sys.argv[1:]):
     fast_record_scene(FpsDemo60, out_path="fps_60.mp4", fps=60, verbose=True)   #fps=60：不触发提示
 ```
 
-这段代码在做什么：两段的唯一区别是调用里的 `fps=30` / `fps=60`（场景里只是把数字打到标签上）。`fps=30` 那次控制台会打印 `[rtm] forcing 60 fps: RTM supports high quality only (asked for 30)`，然后照样按 60fps 出片——所以视频里两段各 114 帧、1.90s，逐帧对齐，只有标签文字不同。
+这段代码在做什么：两段的唯一区别是调用里的 `fps=30` / `fps=60`（场景里只是把数字打到标签上）。
+
+`fps=30` 那次控制台会打印 `[rtm] forcing 60 fps: RTM supports high quality only (asked for 30)`，然后照样按 60fps 出片——所以视频里两段各 114 帧、1.90s，逐帧对齐，只有标签文字不同。
 
 <video src="assets/RTM output/05-RTM的录制与窗口参数-fps.mp4" controls width="560"></video>
 
@@ -179,7 +188,10 @@ if __name__ == "__main__" and "probes" in sys.argv[1:]:
 | `overwrite=False` | 目标已存在时抛 `FileExistsError: target already exists: ... (pass overwrite=True to replace it)` |
 | `verbose=False` | 不打 `[record] window #1 -> ...` / `[FastRecord] ...` 这些进度行 |
 
-> 提醒：`segment` 导出的是**BMP 序列**（未压缩，很占盘），拿它对接逐帧工具链；只想知道「这段动画有多少帧」就用 `count_only=True`，最快。`overwrite=False` 的保护只看文件存不存在，不比内容——批量脚本里很适合用来防覆盖。
+> 提醒：
+>
+> - `segment` 导出的是**BMP 序列**（未压缩，很占盘），拿它对接逐帧工具链；只想知道「这段动画有多少帧」就用 `count_only=True`，最快。
+> - `overwrite=False` 的保护只看文件存不存在，不比内容——批量脚本里很适合用来防覆盖。
 
 ### `record_scene(...)`（实时可见窗口录制）
 
@@ -228,11 +240,15 @@ if __name__ == "__main__" and ("record_scene" in sys.argv[1:] or not sys.argv[1:
     record_scene(RecordSceneDemo, out_path="record_scene.mp4", fps=60, verbose=True)   #实时可见窗口录制：弹窗、按真实时间跑
 ```
 
-这段代码在做什么：场景内容和前面一样（标签换成 `record_scene = live window`），但录制走的是 `record_scene`——你会看到窗口真的弹出来把动画播完，控制台打印 `[Record] Recording to ... at 60 fps`，收尾时报告 `Captured N frames in X.Xs (... fps), encoding ...`。输出视频的时间和真实播放一致。
+这段代码在做什么：场景内容和前面一样（标签换成 `record_scene = live window`），但录制走的是 `record_scene`——你会看到窗口真的弹出来把动画播完，控制台打印 `[Record] Recording to ... at 60 fps`，收尾时报告 `Captured N frames in X.Xs (... fps), encoding ...`。
+
+输出视频的时间和真实播放一致。
 
 <video src="assets/RTM output/05-RTM的录制与窗口参数-record_scene.mp4" controls width="560"></video>
 
-> 提醒：实时录制的**帧数不保证和离线渲染对齐**——它按墙钟走（含窗口启动/收尾时间），抓屏速度还受机器性能限制（本机实测约 6.5 帧/秒抓屏，成片按实际时长重排到 60fps，画面略卡但节奏正确：130 帧 / 2.17s，对比离线的 114 帧 / 1.90s）。要帧级可复现的输出，用 `fast_record_scene`。
+> 提醒：实时录制的**帧数不保证和离线渲染对齐**——它按墙钟走（含窗口启动/收尾时间），抓屏速度还受机器性能限制（本机实测约 6.5 帧/秒抓屏，成片按实际时长重排到 60fps，画面略卡但节奏正确：130 帧 / 2.17s，对比离线的 114 帧 / 1.90s）。
+>
+> 要帧级可复现的输出，用 `fast_record_scene`。
 
 ### `MLWindow(w, h, hidden)`（窗口与画幅）
 
@@ -246,7 +262,9 @@ def __init__(self, w=1920, h=1080, hidden=None):
 | `h` | `int` | `1080` | 窗口/帧缓冲高度，同上 |
 | `hidden` | `bool \| None` | `None` → 跟随类属性 `_hidden_default` | **能填** `True`（构建为隐藏窗口）/ `False` / `None`（跟随默认）。一般不直接传：`fast_record_scene(hidden=...)` 已经替你设好 |
 
-**强制规格**：画幅只支持 `1920×1080`（`MLWindow.SUPPORTED_WIDTH/HEIGHT`），帧率只支持 `60`（`SUPPORTED_FPS`）。传别的值不报错，而是强制纠正并打印提示——所以 `MLWindow(960, 540)` 打印 `[rtm] forcing 1920x1080` 是**正常现象**，不用改。窗口建好后 `win.scene = self` 把 manim 场景绑上去，`win.play(...)` 驱动播放，`win.close()` 收尾（**经录制助手包装**时顺带结束编码：`record._AutoRecord` 会在真正的 `MLWindow.close()` 之前先跑 `_finish_fast_record()` / `stop_record()`，见本页 `enable_fast_record` 小节）。
+**强制规格**：画幅只支持 `1920×1080`（`MLWindow.SUPPORTED_WIDTH/HEIGHT`），帧率只支持 `60`（`SUPPORTED_FPS`）。传别的值不报错，而是强制纠正并打印提示——所以 `MLWindow(960, 540)` 打印 `[rtm] forcing 1920x1080` 是**正常现象**，不用改。
+
+窗口建好后 `win.scene = self` 把 manim 场景绑上去，`win.play(...)` 驱动播放，`win.close()` 收尾（**经录制助手包装**时顺带结束编码：`record._AutoRecord` 会在真正的 `MLWindow.close()` 之前先跑 `_finish_fast_record()` / `stop_record()`，见本页 `enable_fast_record` 小节）。
 
 #### 样例：`w` / `h` / `hidden`（一组强相关参数）
 
@@ -285,11 +303,16 @@ if __name__ == "__main__" and ("mlwindow" in sys.argv[1:] or not sys.argv[1:]):
     fast_record_scene(MLWindowBig, out_path="mlwin_big.mp4", hidden=False, verbose=True)   #hidden=False：边渲边弹窗
 ```
 
-这段代码在做什么：`MLWindowDemo` 把 `MLWindow(960, 540)` 的请求打在标签上、`MLWindowBig` 请求 `MLWindow(3840, 2160)`，两次录制一次 `hidden=True`（不弹窗）一次 `hidden=False`（会弹窗）。控制台各打一行强制纠正提示，视频里两段除了标签文字完全一样：请求 540p 得到的是 1080p，请求 4K 得到的还是 1080p，弹不弹窗不影响画面。
+这段代码在做什么：`MLWindowDemo` 把 `MLWindow(960, 540)` 的请求打在标签上、`MLWindowBig` 请求 `MLWindow(3840, 2160)`，两次录制一次 `hidden=True`（不弹窗）一次 `hidden=False`（会弹窗）。
+
+控制台各打一行强制纠正提示，视频里两段除了标签文字完全一样：请求 540p 得到的是 1080p，请求 4K 得到的还是 1080p，弹不弹窗不影响画面。
 
 <video src="assets/RTM output/05-RTM的录制与窗口参数-mlwindow.mp4" controls width="560"></video>
 
-> 提醒：别再琢磨调分辨率了——RTM 只有 1920×1080@60 这一种输出（源码里写死 `SUPPORTED_WIDTH/HEIGHT/FPS`，理由是小窗口会把分辨率相关 bug 藏起来）。想要低清就渲完用 ffmpeg 缩。`hidden=False` 时窗口会抢焦点，录完自动关。
+> 提醒：
+>
+> - 别再琢磨调分辨率了——RTM 只有 1920×1080@60 这一种输出（源码里写死 `SUPPORTED_WIDTH/HEIGHT/FPS`，理由是小窗口会把分辨率相关 bug 藏起来）。想要低清就渲完用 ffmpeg 缩。
+> - `hidden=False` 时窗口会抢焦点，录完自动关。
 
 ### `MLWindow.enable_fast_record(...)`（录制的底层入口）
 
@@ -305,13 +328,19 @@ def enable_fast_record(self, path, fps=60, segment=None, hidden=True, count_only
 | `hidden` | `bool` | `True` | 隐藏窗口（win32 下 `ShowWindow(SW_HIDE)`） |
 | `count_only` | `bool` | `False` | 只数帧：不采集、不做 GPU 渲染 |
 
-`fast_record_scene` 内部就是创建 `MLWindow` 后调它；**编码收尾由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 包装的 `close` 先调 `_finish_fast_record()`（或 `stop_record()`），再执行真正的 `MLWindow.close()`**（`record.py:181-186`、`window/recording.py:217-221`）。日常用 `fast_record_scene` 即可，需要直接控制窗口时才用这一层。实时录像对应的底层是 `win.start_record(path, fps=60)` … `win.stop_record()`（`record_scene` 用的就是这对）。
+`fast_record_scene` 内部就是创建 `MLWindow` 后调它；**编码收尾由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 包装的 `close` 先调 `_finish_fast_record()`（或 `stop_record()`），再执行真正的 `MLWindow.close()`**（`record.py:181-186`、`window/recording.py:217-221`）。
+
+日常用 `fast_record_scene` 即可，需要直接控制窗口时才用这一层。实时录像对应的底层是 `win.start_record(path, fps=60)` … `win.stop_record()`（`record_scene` 用的就是这对）。
 
 本小节不出片：它的每个参数都和 `fast_record_scene` 同名同义，画面效果见上面的对应样例。
 
-> 提醒：直接用这一层要自己负责收尾——`MLWindow.close()` 本身**不做录制编码收尾**，**直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾**，必须自己调 `win._finish_fast_record()`；忘调它（走 `fast_record_scene` 时即忘调 `win.close()`）ffmpeg 管道就不关，视频不完整/不存在。另外 `segment` 模式写出的 BMP 文件名是 `frame_000000.bmp` 起步，自己按需排序。
+> 提醒：直接用这一层要自己负责收尾——`MLWindow.close()` 本身**不做录制编码收尾**，**直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾**，必须自己调 `win._finish_fast_record()`；忘调它（走 `fast_record_scene` 时即忘调 `win.close()`）ffmpeg 管道就不关，视频不完整/不存在。
+>
+> 另外 `segment` 模式写出的 BMP 文件名是 `frame_000000.bmp` 起步，自己按需排序。
 
-**总结**：出片三件事——场景传给 `fast_record_scene`（或要可见窗口就 `record_scene`），文件给 `out_path`，画幅认 `MLWindow` 的 1920×1080；帧率只有 60，其余 `config`/命令行的习惯一律改掉。背景色是唯一接线的 config 键，见 [01-画质与输出](01-画质与输出.md)。
+**总结**：出片三件事——场景传给 `fast_record_scene`（或要可见窗口就 `record_scene`），文件给 `out_path`，画幅认 `MLWindow` 的 1920×1080；帧率只有 60，其余 `config`/命令行的习惯一律改掉。
+
+背景色是唯一接线的 config 键，见 [01-画质与输出](01-画质与输出.md)。
 
 出片情况：`scene_forms` 342 帧 / 5.70s、`out_path` 114 帧 / 1.90s、`fps` 228 帧 / 3.80s、`mlwindow` 228 帧 / 3.80s 逐帧对齐；`record_scene` 130 帧 / 2.17s。
 

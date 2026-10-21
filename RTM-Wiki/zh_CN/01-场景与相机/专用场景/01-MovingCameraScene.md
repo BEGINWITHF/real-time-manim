@@ -1,6 +1,6 @@
 # MovingCameraScene（推拉摇移场景）
 
-相机可移动的场景：取景框 `self.camera.frame` 是一个 `ScreenRectangle`，对它做 `animate` 即可平移/缩放镜头；只要 `frame` 在动，全场景都会被当作"运动中"逐帧重绘。
+相机可移动的场景：取景框 `self.camera.frame` 是一个 `ScreenRectangle`，对它做 `animate` 即可平移、缩放镜头。只要 `frame` 在动，全场景都会被当作"运动中"逐帧重绘。
 
 ## 参数
 
@@ -60,11 +60,17 @@ class CameraClassDemo(MovingCameraScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先开一个 RTM 窗口、把当前场景绑上去，然后在画面左右各放一个方块，并把「现在用的是哪个相机」和「这个相机有没有取景框」两行字放进左边的方块里。播放时先淡入左边的方块，接着判断 `self.camera` 有没有 `frame`：有就把取景框缩到 4 并移到左边方块（推近），再放大到 14 回到正中（拉回全景）；没有就什么都不做，直接等 0.5 秒收工。所以把 `CAM` 改成 `Camera` 再跑一次，推拉会整段不发生，两行字也从 `frame=True` 变成 `frame=False`。
+这段代码在做什么：先开一个 RTM 窗口、把当前场景绑上去，然后在画面左右各放一个方块，并把「现在用的是哪个相机」和「这个相机有没有取景框」两行字放进左边的方块里。
+
+播放时先淡入左边的方块，接着判断 `self.camera` 有没有 `frame`：有就把取景框缩到 4 并移到左边方块（推近），再放大到 14 回到正中（拉回全景）；没有就什么都不做，直接等 0.5 秒收工。所以把 `CAM` 改成 `Camera` 再跑一次，推拉会整段不发生，两行字也从 `frame=True` 变成 `frame=False`。
 
 <video src="assets/RTM output/01-MovingCameraScene-camera_class.mp4" controls width="560"></video>
 
-> 提醒：`MLWindow(960, 540)` 会被强制纠正成 1920×1080 并打印一行提示，不是报错，不用改尺寸。两行标签放在方块**里面**（世界坐标），镜头推近时它们会跟着一起放大，这正是“镜头确实在动”的证据。另外换成 `Camera` 后 `self.camera.frame` 不存在，样例靠 `hasattr` 分支兜底——你自己的代码如果直接写 `self.camera.frame`，会直接 `AttributeError`。
+> 提醒：`MLWindow(960, 540)` 会被强制纠正成 1920×1080 并打印一行提示，不是报错，不用改尺寸。
+>
+> 两行标签放在方块**里面**（世界坐标），镜头推近时它们会跟着一起放大，这正是“镜头确实在动”的证据。
+>
+> 另外换成 `Camera` 后 `self.camera.frame` 不存在，样例靠 `hasattr` 分支兜底——你自己的代码如果直接写 `self.camera.frame`，会直接 `AttributeError`。
 
 #### 样例：`**kwargs`改动
 
@@ -99,7 +105,9 @@ class RandomSeedDemo(MovingCameraScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：用 `random_seed` 决定的随机序列把 `[0, 1, 2, 3, 4]` 洗一次牌，再按洗好的顺序把五个颜色的方块从左到右排成一行淡入，屏幕顶端同时显示当前的种子值，控制台也打印洗牌结果。整个场景没有别的随机来源，所以这一排方块的颜色顺序完全由 `random_seed` 这一个数字决定。
+这段代码在做什么：用 `random_seed` 决定的随机序列把 `[0, 1, 2, 3, 4]` 洗一次牌，再按洗好的顺序把五个颜色的方块从左到右排成一行淡入，屏幕顶端同时显示当前的种子值，控制台也打印洗牌结果。
+
+整个场景没有别的随机来源，所以这一排方块的颜色顺序完全由 `random_seed` 这一个数字决定。
 
 <video src="assets/RTM output/01-MovingCameraScene-random_seed.mp4" controls width="560"></video>
 
@@ -165,11 +173,17 @@ class FrameDemo(MovingCameraScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先在左右各放一个方块、底部放一个跟着镜头走的宽度标签，打印取景框的初始尺寸（`height=8.0`、`width=14.222`），然后 `save_state()` 记住全景。之后依次走三步——只改 `width`（画面中心不动，只推拉）、只改 `move_to`（缩放比例不变，只摇移）、`Restore` 一次性回到最初的全景，最后等 0.5 秒收工。控制台会打印推拉前后的尺寸，能看到宽度变成了 `WIDTH`，高度按 16:9 自动跟着变。
+这段代码在做什么：先在左右各放一个方块、底部放一个跟着镜头走的宽度标签，打印取景框的初始尺寸（`height=8.0`、`width=14.222`），然后 `save_state()` 记住全景。
+
+之后依次走三步——只改 `width`（画面中心不动，只推拉）、只改 `move_to`（缩放比例不变，只摇移）、`Restore` 一次性回到最初的全景，最后等 0.5 秒收工。控制台会打印推拉前后的尺寸，能看到宽度变成了 `WIDTH`，高度按 16:9 自动跟着变。
 
 <video src="assets/RTM output/01-MovingCameraScene-camera_frame.mp4" controls width="560"></video>
 
-> 提醒：取景框是 16:9，`set(width=...)` 会自动算好 `height`（`width=4` → `height=2.25`），所以**不要**自己去改 `height`，否则画幅比例会乱。推近也别太狠——`width` 小到一个对象都装不下时，整屏就是黑的；样例把两个方块放在 `±1.5`，就是为了让 `width=2.0` 时画面里还有东西。宽度标签钉在取景框底部、并按取景框宽度缩放，所以无论怎么推拉，它在屏幕上看起来一样大。
+> 提醒：取景框是 16:9，`set(width=...)` 会自动算好 `height`（`width=4` → `height=2.25`），所以**不要**自己去改 `height`，否则画幅比例会乱。
+>
+> 推近也别太狠——`width` 小到一个对象都装不下时，整屏就是黑的；样例把两个方块放在 `±1.5`，就是为了让 `width=2.0` 时画面里还有东西。
+>
+> 宽度标签钉在取景框底部、并按取景框宽度缩放，所以无论怎么推拉，它在屏幕上看起来一样大。
 
 三种取景框宽度渲染出的画面内容各不相同；每段里 `move_to(a)` 只移动中心，`Restore` 再把缩放和中心一起复位。
 

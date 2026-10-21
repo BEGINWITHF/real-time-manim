@@ -67,11 +67,13 @@ class OpacityDemo(Scene):
 # ===== 样例 2：set_sheen / set_sheen_direction —— 光泽渐变 ==================
 ```
 
-这段代码在做什么：第一行三个方块分给 `opacity` 0.25 / 0.6 / 1.0，越右越实；下面两组 `VGroup`（方块 + 圆）都用 0.3，唯一区别是 `family`——左边 `True` 连子对象一起变淡，右边 `False` 只改容器本身，两个子对象保持各自的 0.9，所以看起来还是实心。
+这段代码在做什么：第一行三个方块分给 `opacity` 0.25 / 0.6 / 1.0，越右越实。
+
+下面两组 `VGroup`（方块 + 圆）都用 0.3，唯一区别是 `family`：左边 `True` 连子对象一起变淡；右边 `False` 只改容器本身，两个子对象保持各自的 0.9，所以看起来还是实心。
 
 <video src="assets/RTM output/07b-VMobject样式进阶-opacity.mp4" controls width="560"></video>
 
-> 提醒：`set_opacity` 会**同时**改填充和描边（这才是它和 `set_fill(BLUE, 0.3)` 的区别）；叶子对象上 `family` 没有可见差别，只有容器（`VGroup`/`Text`）上两种取值才看得出。
+> 提醒：`set_opacity` 会**同时**改填充和描边，这才是它和 `set_fill(BLUE, 0.3)` 的区别。叶子对象上 `family` 没有可见差别，只有容器（`VGroup`/`Text`）上两种取值才看得出。
 
 ### `VMobject.set_sheen`
 
@@ -137,11 +139,13 @@ class SheenDemo(Scene):
 # ===== 样例 3：make_smooth —— 折线变平滑曲线 ==============================
 ```
 
-这段代码在做什么：上面三个蓝方块只差 `factor`——0 是纯色、0.6 有淡淡的高光、1.5 几乎变成白到蓝的渐变；下面两个单独演示方向：青方块 `direction=RIGHT` 变成左右渐变，紫方块先 `set_sheen(1.0, UP)` 再用 `set_sheen_direction(DOWN)` 把方向翻过来，强度不用再传。
+这段代码在做什么：上面三个蓝方块只差 `factor`——0 是纯色、0.6 有淡淡的高光、1.5 几乎变成白到蓝的渐变。
+
+下面两个单独演示方向：青方块 `direction=RIGHT` 变成左右渐变；紫方块先 `set_sheen(1.0, UP)`，再用 `set_sheen_direction(DOWN)` 把方向翻过来，强度不用再传。
 
 <video src="assets/RTM output/07b-VMobject样式进阶-sheen.mp4" controls width="560"></video>
 
-> 提醒：光泽是**填充**的渐变，描边不参与；`direction` 给的是渐变指向（高光在**反方向**那一端），所以 `UP` 看起来是"顶上亮、往下暗"。多 stop 的自定义渐变色也能画（引擎取首尾两站走原生线性渐变）。
+> 提醒：光泽是**填充**的渐变，描边不参与。`direction` 给的是渐变指向（高光在**反方向**那一端），所以 `UP` 看起来是"顶上亮、往下暗"。多 stop 的自定义渐变色也能画（引擎取首尾两站走原生线性渐变）。
 
 ### `VMobject.make_smooth`
 
@@ -310,7 +314,7 @@ class PartialDemo(Scene):
 # ===== 样例 6：get_stroke_width —— 读出当前线宽 ============================
 ```
 
-这段代码在做什么：同一半径的圆当源，四个"接收对象"分别 `pointwise_become_partial(src, a, b)`，于是每个只拿到四分之一段弧（字幕标着各自的 `[a, b]`）；最后一条 `[0, 1]` 拿到整条路径，弧长与源对象一致——这就是 `ShowPassingFlash` 一类"只显现一段"效果的底层方法。
+这段代码在做什么：同一半径的圆当源，四个"接收对象"分别 `pointwise_become_partial(src, a, b)`，于是每个只拿到四分之一段弧，字幕标着各自的 `[a, b]`。最后一条 `[0, 1]` 拿到整条路径，弧长与源对象一致——这就是 `ShowPassingFlash` 一类"只显现一段"效果的底层方法。
 
 <video src="assets/RTM output/07b-VMobject样式进阶-partial.mp4" controls width="560"></video>
 
@@ -554,7 +558,14 @@ class ApplyFunctionDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：四个方块各给一个 `function`——正弦波把竖边扭成波浪；`p * 1.5` 整体放大；`p * 0.8 + UP * 0.4` 缩小并上移；`p * [1, 0.5, 1]` 只把 y 压到一半。四种都是"逐点写真坐标"的写法，所以方块会真的变形（不是整体位移），`function` 返回的必须是 `[x, y, z]` 三个数。
+这段代码在做什么：四个方块各给一个 `function`。
+
+- 正弦波把竖边扭成波浪；
+- `p * 1.5` 整体放大；
+- `p * 0.8 + UP * 0.4` 缩小并上移；
+- `p * [1, 0.5, 1]` 只把 y 压到一半。
+
+四种都是"逐点写真坐标"的写法，所以方块会真的变形（不是整体位移），`function` 返回的必须是 `[x, y, z]` 三个数。
 
 <video src="assets/RTM output/07b-VMobject样式进阶-applyfunc.mp4" controls width="560"></video>
 

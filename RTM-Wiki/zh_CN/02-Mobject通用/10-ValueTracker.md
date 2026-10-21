@@ -1,6 +1,8 @@
 # ValueTracker：可动画的数值
 
-一个**不可见**的「数值容器」，把数值编码在顶点坐标里，因此能被 `.animate` 动画、被 updater 读取——把参数变化接进动画的枢纽。
+`ValueTracker` 是一个**不可见**的「数值容器」，把数值编码在顶点坐标里，因此能被 `.animate` 动画、被 updater 读取。
+
+它是把参数变化接进动画的枢纽。
 
 ## 参数
 
@@ -15,7 +17,9 @@ def ValueTracker(value: float = 0, **kwargs: Any) -> None
 | `value` | `float` | `0` | 初始值 |
 | `**kwargs` | `Any` | — | 透传给 `Mobject.__init__` |
 
-> **返回**：新的 `ValueTracker` 实例。**用法要点**：用 updater 驱动它时**必须 `self.add(tracker)`**（否则场景不推进它）；播放式改值用 `win.play(tracker.animate.set_value(...))`；也可直接 `tracker += 1.5` 立即改值（无动画）。本身不显示，要画出数值用 `DecimalNumber` + updater 或 `always_redraw`。
+> **返回**：新的 `ValueTracker` 实例。
+>
+> **用法要点**：用 updater 驱动它时**必须 `self.add(tracker)`**（否则场景不推进它）；播放式改值用 `win.play(tracker.animate.set_value(...))`；也可直接 `tracker += 1.5` 立即改值（无动画）。本身不显示，要画出数值用 `DecimalNumber` + updater 或 `always_redraw`。
 
 ### get_value / set_value / increment_value
 
@@ -64,7 +68,9 @@ class BasicDemo(Scene):
 
 <video src="assets/RTM output/10-ValueTracker-basic.mp4" controls width="560"></video>
 
-> 提醒：`tracker += 1.5` 与 `tracker = tracker + 1.5` 语义完全不同：前者**原地**修改原对象（挂着的 updater 引用的还是它），后者换成新对象——旧引用继续读旧值，是最常见的「数字不动」事故。最常见写法是在时间型 updater 里 `tracker += dt`。
+> 提醒：`tracker += 1.5` 与 `tracker = tracker + 1.5` 语义完全不同：前者**原地**修改原对象（挂着的 updater 引用的还是它），后者换成新对象——旧引用继续读旧值，是最常见的「数字不动」事故。
+>
+> 最常见写法是在时间型 updater 里 `tracker += dt`。
 
 ### interpolate
 
@@ -105,11 +111,17 @@ class InterpolateDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：读数先随动画从 0 滚到 4.0；然后 `interpolate` 用两个临时 `ValueTracker`（0 和 2）在 `alpha=0.5` 处算出中点，**瞬间**把本体的值设为 1.0——数字一帧内从 4.0 跳到 1.0。这正是 `Transform` 两个 `ValueTracker` 时内部做的事；手动调用适合「直接摆一个中间值」的场合。
+这段代码在做什么：读数先随动画从 0 滚到 4.0。
+
+然后 `interpolate` 用两个临时 `ValueTracker`（0 和 2）在 `alpha=0.5` 处算出中点，**瞬间**把本体的值设为 1.0——数字一帧内从 4.0 跳到 1.0。
+
+这正是 `Transform` 两个 `ValueTracker` 时内部做的事；手动调用适合「直接摆一个中间值」的场合。
 
 <video src="assets/RTM output/10-ValueTracker-interpolate.mp4" controls width="560"></video>
 
-> 提醒：`interpolate` 是瞬间函数，想要连续过渡把 `animate` 交给 `Transform`。两个临时对象 `ValueTracker(0)` / `ValueTracker(2)` 造完就扔，只取它们的点数组。
+> 提醒：`interpolate` 是瞬间函数，想要连续过渡把 `animate` 交给 `Transform`。
+>
+> 两个临时对象 `ValueTracker(0)` / `ValueTracker(2)` 造完就扔，只取它们的点数组。
 
 ### ComplexValueTracker
 
@@ -121,7 +133,9 @@ def ComplexValueTracker(value: float = 0, **kwargs: Any) -> None
 | --- | --- | --- | --- |
 | `value` | `complex` / `float` | `0` | 初始复数值 |
 
-> **返回**：新的 `ComplexValueTracker`。跟踪**复数**参数，值内部存成 `[实部, 虚部, 0]`，可 `dot.move_to(ct.points)` 当几何位置用。覆写 `get_value -> complex`、`set_value(value) -> Self`。继承的算术运算符在 0.21 上**实测不可用**（`tracker * 1j` / `tracker + 1` 都抛 `TypeError: float argument must be a string or a real number, not 'complex'`），两引擎一致的上游行为。
+> **返回**：新的 `ComplexValueTracker`。跟踪**复数**参数，值内部存成 `[实部, 虚部, 0]`，可 `dot.move_to(ct.points)` 当几何位置用。覆写 `get_value -> complex`、`set_value(value) -> Self`。
+>
+> 继承的算术运算符在 0.21 上**实测不可用**（`tracker * 1j` / `tracker + 1` 都抛 `TypeError: float argument must be a string or a real number, not 'complex'`），两引擎一致的上游行为。
 
 #### 样例：复数即坐标
 
@@ -149,11 +163,15 @@ class ComplexDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：`ComplexValueTracker(-2 + 1j)` 的值以 `[实部, 虚部, 0]` 存在点坐标里，蓝点的 updater 直接 `move_to(ct.points)`——复数就是画面坐标。`ct.animate.set_value(3 + 2j)` 在 1 秒里把实部从 -2 拖到 3、虚部从 1 拖到 2，蓝点沿直线平滑飞到右上；改值完成后停掉跟随、打印 `ct.get_value()`（`3+2j`）。
+这段代码在做什么：`ComplexValueTracker(-2 + 1j)` 的值以 `[实部, 虚部, 0]` 存在点坐标里，蓝点的 updater 直接 `move_to(ct.points)`——复数就是画面坐标。
+
+`ct.animate.set_value(3 + 2j)` 在 1 秒里把实部从 -2 拖到 3、虚部从 1 拖到 2，蓝点沿直线平滑飞到右上；改值完成后停掉跟随、打印 `ct.get_value()`（`3+2j`）。
 
 <video src="assets/RTM output/10-ValueTracker-complex.mp4" controls width="560"></video>
 
-> 无法演示：`ComplexValueTracker` 的算术运算 `ct * 1j` / `ct + 1` / `ct * 2`——**上游行为**：`TypeError: float argument must be a string or a real number, not 'complex'`（复数标量存进实数点坐标后按 float 取值）。`set_value` / `get_value` / `.animate` 均正常，本页其余参数均已渲染；需要复数运算请自己拿 `get_value` 算完再 `set_value` 回去。
+> 无法演示：`ComplexValueTracker` 的算术运算 `ct * 1j` / `ct + 1` / `ct * 2`——**上游行为**：`TypeError: float argument must be a string or a real number, not 'complex'`（复数标量存进实数点坐标后按 float 取值）。
+>
+> `set_value` / `get_value` / `.animate` 均正常，本页其余参数均已渲染；需要复数运算请自己拿 `get_value` 算完再 `set_value` 回去。
 
 ---
 

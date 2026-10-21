@@ -1,6 +1,12 @@
 # Transform 核心：把 A 变成 B
 
-把一个对象插值变形为另一个对象的三种核心写法：整段变形的 `Transform`、换人接管的 `ReplacementTransform`、以及「先改目标再动」的 `MoveToTarget`。不手写 target 的写法见[用方法 / 函数驱动的变换](02-方法与函数驱动.md)。
+把一个对象插值变形为另一个对象，有三种核心写法：
+
+- 整段变形的 `Transform`
+- 换人接管的 `ReplacementTransform`
+- 「先改目标再动」的 `MoveToTarget`
+
+不手写 target 的写法见[用方法 / 函数驱动的变换](02-方法与函数驱动.md)。
 
 ## 参数
 
@@ -11,7 +17,7 @@ Transform(mobject, target_mobject, path_func=None, path_arc=0, path_arc_axis=Non
           path_arc_centers=None, replace_mobject_with_target_in_scene=False, **kwargs)
 ```
 
-把 `mobject` 的点集**插值变形**成 `target_mobject`（必要时自动补齐点数/子对象），播完后 `mobject` 留在场景里且已经变成 target 的样子，`target_mobject` 默认不会被加入场景。
+把 `mobject` 的点集**插值变形**成 `target_mobject`（必要时自动补齐点数/子对象）。播完后 `mobject` 留在场景里，且已经变成 target 的样子；`target_mobject` 默认不会被加入场景。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -48,7 +54,14 @@ ReplacementTransform(mobject, target_mobject, **kwargs)
 MoveToTarget(mobject, **kwargs)
 ```
 
-把 `mobject` 变形为 `mobject.target`，即 `generate_target` 之后你手工修改的那个副本；`.animate` 语法就是它的语法糖。**缺 `target` 时两版都出错，但错法不同**：ManimCE 版构造期抛 `ValueError`；RTM 自有版的判据是 `hasattr(mobject, "target")`，而 `Mobject` **自带一个值为 `None` 的 `.target` 属性**——没调 `generate_target` 时它取到 `None`，构造不报错、但 `begin` 时抛 `AttributeError: 'NoneType' object has no attribute 'copy'`。**先 `generate_target` 再播**，两版都稳。
+把 `mobject` 变形为 `mobject.target`，也就是 `generate_target` 之后你手工修改的那个副本；`.animate` 语法就是它的语法糖。
+
+**缺 `target` 时两版都出错，但错法不同**：
+
+- ManimCE 版在构造期抛 `ValueError`。
+- RTM 自有版的判据是 `hasattr(mobject, "target")`，而 `Mobject` **自带一个值为 `None` 的 `.target` 属性**。没调 `generate_target` 时它取到 `None`，构造不报错，但 `begin` 时抛 `AttributeError: 'NoneType' object has no attribute 'copy'`。
+
+**先 `generate_target` 再播**，两版都稳。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -61,7 +74,7 @@ MoveToTarget(mobject, **kwargs)
 
 #### 样例：Transform / ReplacementTransform / MoveToTarget
 
-本页专属样例（`assets/RTM code/01-Transform核心.py`）：`Transform` 的 `path_arc` 圆弧路径与自定义 `path_func`、`ReplacementTransform` 的「源消失目标接管」、`MoveToTarget` 的 `generate_target()` 流程各占一段；源与目标在形状 / 位置 / 颜色上都不一样，方便看清每一步变了什么。
+本页专属样例（`assets/RTM code/01-Transform核心.py`）：`Transform` 的 `path_arc` 圆弧路径与自定义 `path_func`、`ReplacementTransform` 的「源消失目标接管」、`MoveToTarget` 的 `generate_target()` 流程各占一段。源与目标在形状 / 位置 / 颜色上都不一样，方便看清每一步变了什么。
 
 ```python
 import os
@@ -182,10 +195,18 @@ class Page_01_Transform核心(Scene):
         win.close()                                 # 参数 win.close()
 ```
 
-这段代码在做什么：四段演示。第一段把蓝色方块沿 90° 圆弧变形成绿色圆（`path_arc=PI/2`，形状/位置/颜色全变，播完方块以圆的形态留在原位）；第二段换成自定义 `path_func=arc_up`，方块变三角时每个插值点先向上拱起再落下；第三段 `ReplacementTransform` 把左边的 `left` 文字变成右边的 `right`——源直接消失、目标接管；第四段先 `generate_target()` 把目标状态（右移三格、放大 1.6 倍、填绿）改好，再 `MoveToTarget` 一次播到位。
+这段代码在做什么：四段演示。
+
+- 第一段把蓝色方块沿 90° 圆弧变形成绿色圆（`path_arc=PI/2`，形状 / 位置 / 颜色全变，播完方块以圆的形态留在原位）。
+- 第二段换成自定义 `path_func=arc_up`，方块变三角时每个插值点先向上拱起再落下。
+- 第三段 `ReplacementTransform` 把左边的 `left` 文字变成右边的 `right`——源直接消失、目标接管。
+- 第四段先 `generate_target()` 把目标状态（右移三格、放大 1.6 倍、填绿）改好，再 `MoveToTarget` 一次播到位。
 
 <video src="assets/RTM output/01-Transform核心.mp4" controls width="560"></video>
 
-> 提醒：样例里的 `Transform` / `ReplacementTransform` / `MoveToTarget` / `Write` 从 `real_time_manim.vulkan_bind` 导入——RTM 对这组核心变换有自己的实现；`FadeIn` / `FadeOut` / `Create` 以及 `Wait`（RTM 版）同样从 `vulkan_bind` 导入，普通动画类从 `real_time_manim` 导入即可。`Transform` 播完源对象还在场景里（只是变成了目标的样子），想要「换掉」的效果要么显式 `replace_mobject_with_target_in_scene=True`，要么直接用 `ReplacementTransform`。
+> 提醒：样例里的 `Transform` / `ReplacementTransform` / `MoveToTarget` / `Write` 从 `real_time_manim.vulkan_bind` 导入——RTM 对这组核心变换有自己的实现；`FadeIn` / `FadeOut` / `Create` 以及 `Wait`（RTM 版）同样从 `vulkan_bind` 导入，普通动画类从 `real_time_manim` 导入即可。
+>
+> - `Transform` 播完源对象还在场景里，只是变成了目标的样子。
+> - 想要「换掉」的效果，要么显式 `replace_mobject_with_target_in_scene=True`，要么直接用 `ReplacementTransform`。
 
 相关：[用方法/函数驱动的变换](02-方法与函数驱动.md)、[位置互换 / 复制式变换](04-位置互换与复制式变换.md)、[淡出—淡入式变换](05-淡出淡入式变换.md)

@@ -1,6 +1,6 @@
 # LaTeX 公式
 
-`Tex` / `MathTex` / `SingleStringMathTex` 三个排版类：混排正文与公式、纯公式（可拆片段）、以及最轻量的单串公式。三个类各一条样例。
+本节讲 `Tex` / `MathTex` / `SingleStringMathTex` 三个排版类：分别用于混排正文与公式、纯公式（可拆片段），以及最轻量的单串公式。三个类各配一条样例。
 
 > **RTM 与 ManimCE 都走 LaTeX**：`Tex` / `MathTex` 需要本机有可用的 LaTeX 发行版；不想装 LaTeX 就用 [Typst](10-Typst.md)（`Typst` / `TypstMath`，或直接写 `MathTex` 由 RTM 自动路由）。
 
@@ -60,7 +60,11 @@ class TexDemo(Scene):
 # ===== 样例 2：MathTex —— 纯公式、可拆片段 =================================
 ```
 
-这段代码在做什么：第一段是正文混排（`$A = \pi r^2$` 是行内公式、字号 40）；第二段只放一个公式并整体染 `TEAL`；第三段把 `tex_environment` 换成 `"align*"`，看同一段内容在数学环境下的排版差异。
+这段代码在做什么：
+
+- 第一段是正文混排（`$A = \pi r^2$` 是行内公式、字号 40）。
+- 第二段只放一个公式并整体染 `TEAL`。
+- 第三段把 `tex_environment` 换成 `"align*"`，看同一段内容在数学环境下的排版差异。
 
 <video src="assets/RTM output/09-LaTeX公式-tex.mp4" controls width="560"></video>
 
@@ -179,7 +183,11 @@ class SingleStringDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：第一段是求和公式（44 号）；第二段给整串文字染 `TEAL`；第三段把 `font_size` 提到 64，看等比放大——三个都是"一整片"，没有可拆的子片段。
+这段代码在做什么：
+
+- 第一段是求和公式（44 号）。
+- 第二段给整串文字染 `TEAL`。
+- 第三段把 `font_size` 提到 64，看等比放大——三个都是"一整片"，没有可拆的子片段。
 
 <video src="assets/RTM output/09-LaTeX公式-singlestring.mp4" controls width="560"></video>
 

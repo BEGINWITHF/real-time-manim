@@ -1,6 +1,6 @@
 # 二维坐标系 Axes
 
-由两根 `NumberLine` 组合而成的直角坐标系：`x_range`/`y_range` 定数据范围、`x_length`/`y_length` 定屏幕长度，`c2p`/`p2c` 换算、`plot` 画曲线、`get_area` 求面积（换算见[坐标换算](03-坐标换算.md)，曲线见[05-函数曲线](05-函数曲线.md)）。
+`Axes` 是由两根 `NumberLine` 组合而成的直角坐标系：`x_range`/`y_range` 定数据范围，`x_length`/`y_length` 定屏幕长度。`c2p`/`p2c` 负责换算，`plot` 画曲线，`get_area` 求面积（换算见[坐标换算](03-坐标换算.md)，曲线见[05-函数曲线](05-函数曲线.md)）。
 
 ## 参数
 
@@ -27,7 +27,7 @@ def __init__(self, x_range: Sequence[float] | None = None, y_range: Sequence[flo
 | `tips` | `bool` | `True` | 两轴是否带箭头 |
 | `**kwargs` | — | — | 透传 `VGroup`/`CoordinateSystem`（`color`、`stroke_width`…） |
 
-> **返回**：`Axes` 实例。关键语义：0 不在 `[min, max]` 内时坐标系自动平移，使 0 点（或最近端点）落在屏幕中心，`c2p` 依旧正确；常用属性 `x_axis`、`y_axis`、`axes`、`x_range`、`y_range`、`dimension=2`。
+> **返回**：`Axes` 实例。关键语义：0 不在 `[min, max]` 内时坐标系自动平移，使 0 点（或最近端点）落在屏幕中心，`c2p` 依旧正确。常用属性：`x_axis`、`y_axis`、`axes`、`x_range`、`y_range`、`dimension=2`。
 
 #### 样例：`x_range`/`length`/`tips`/`axis_config` 基本构造
 
@@ -60,11 +60,16 @@ class AxesCtorDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：先按"数据范围 [-4,4]×[-3,3]、屏幕 8×5"建坐标系——比例尺由此确定（x 方向每数据单位 1 个 Manim 单位，y 方向约 0.83）；`tips=False` 去掉轴端箭头，`axis_config={"font_size": 24}` 把两轴数字统一缩小。`add_coordinates()` 挂刻度数字（0 处默认排除），`get_axis_labels("x", "y")` 生成两个轴名（返回值要自己加进场景），最后 `plot` 画一条抛物线演示"坐标系上直接画函数"。
+这段代码在做什么：先按"数据范围 [-4,4]×[-3,3]、屏幕 8×5"建坐标系，比例尺由此确定（x 方向每数据单位 1 个 Manim 单位，y 方向约 0.83）。`tips=False` 去掉轴端箭头，`axis_config={"font_size": 24}` 把两轴数字统一缩小。
+
+`add_coordinates()` 挂刻度数字（0 处默认排除），`get_axis_labels("x", "y")` 生成两个轴名（返回值要自己加进场景），最后 `plot` 画一条抛物线演示"坐标系上直接画函数"。
 
 <video src="assets/RTM output/02-Axes-ctor.mp4" controls width="560"></video>
 
-> 提醒：`get_axis_labels(...)` 的返回值**不会自动进场景**，忘了 `self.add`/`FadeIn` 就是空的；0 被排除在刻度数字外是 `axis_config` 默认值 `numbers_to_exclude=[0]` 干的，想显示 0 就显式传 `axis_config={"numbers_to_exclude": []}`。
+> 提醒：
+>
+> - `get_axis_labels(...)` 的返回值**不会自动进场景**，忘了 `self.add`/`FadeIn` 就是空的。
+> - 0 被排除在刻度数字外是 `axis_config` 默认值 `numbers_to_exclude=[0]` 干的，想显示 0 就显式传 `axis_config={"numbers_to_exclude": []}`。
 
 ### add_coordinates
 
@@ -72,7 +77,14 @@ class AxesCtorDemo(Scene):
 def add_coordinates(self, *axes_numbers: Iterable[float] | None | dict, **kwargs) -> Self
 ```
 
-给坐标轴加刻度数字或自定义标签：不传参数 = 全部轴默认数字；传 `None` = 该轴保持默认；传 `list` = 只显示这些数值；传 `dict` = 数值映射成任意标签。标签用 `ax.coordinate_labels`（`VGroup`）取回。
+给坐标轴加刻度数字或自定义标签，按轴顺序逐个接收参数：
+
+- 不传参数：全部轴用默认数字
+- `None`：该轴保持默认
+- `list`：只显示这些数值
+- `dict`：数值映射成任意标签
+
+标签用 `ax.coordinate_labels`（`VGroup`）取回。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -112,7 +124,10 @@ class AxesAddCoordDemo(Scene):
 
 <video src="assets/RTM output/02-Axes-addcoordinates.mp4" controls width="560"></video>
 
-> 提醒：dict 的 `str` 值走 `MathTex`（数学斜体），要正体可以传 `Tex`/`Text` 对象；`add_coordinates` 会**覆盖**同轴已有的数字，重复调用前先把 `ax.coordinate_labels` 移除，否则新旧标签叠在一起。
+> 提醒：
+>
+> - dict 的 `str` 值走 `MathTex`（数学斜体），要正体可以传 `Tex`/`Text` 对象。
+> - `add_coordinates` 会**覆盖**同轴已有的数字，重复调用前先把 `ax.coordinate_labels` 移除，否则新旧标签叠在一起。
 
 ### 取轴：get_axis / get_axes / get_x_axis / get_y_axis / get_origin / get_*_unit_size（只留表格）
 

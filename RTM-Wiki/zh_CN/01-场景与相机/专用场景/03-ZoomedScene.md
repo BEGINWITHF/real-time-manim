@@ -1,6 +1,8 @@
 # ZoomedScene（局部放大场景）
 
-画中画放大场景：`MovingCameraScene` 的子类，内置一台"放大相机"（`self.zoomed_camera`，本身是 `MovingCamera`）和一个显示放大结果的小窗（`self.zoomed_display`），`setup()` 阶段自动创建这两个对象。开启放大后，小窗里持续显示放大相机拍到的画面——把取景框套到哪个小目标上，哪个目标就在小窗里变大。RTM 实测整条画中画链路可用（含 `animate=True` 的入场动画与手动编排）。
+画中画放大场景：`MovingCameraScene` 的子类，内置一台"放大相机"（`self.zoomed_camera`，本身是 `MovingCamera`）和一个显示放大结果的小窗（`self.zoomed_display`），`setup()` 阶段自动创建这两个对象。
+
+开启放大后，小窗里持续显示放大相机拍到的画面——把取景框套到哪个小目标上，哪个目标就在小窗里变大。RTM 实测整条画中画链路可用（含 `animate=True` 的入场动画与手动编排）。
 
 ## 参数
 
@@ -81,11 +83,17 @@ class ZoomB(ZoomBase):
           "zoomed_display_corner": DOWN + LEFT, "zoomed_display_corner_buff": 0.3}
 ```
 
-这段代码在做什么：两段各放一个小到看不清的目标（小字 + 两个小圆点），`activate_zooming(animate=False)` 让小窗瞬间出现，再把放大取景框 `move_to` 套到目标上——小窗里立刻显示放大的画面。接着目标右移滑出取景框（小窗里变空白），取景框再 `animate.move_to` 追过去重新对准。两段唯一区别是构造参数：第一段默认档 `0.15` / `3×3` / 右上角，第二段 `0.08` / `4×2.5` / 左下角贴边 `0.3`，放大约 12 倍。
+这段代码在做什么：两段各放一个小到看不清的目标（小字 + 两个小圆点），`activate_zooming(animate=False)` 让小窗瞬间出现，再把放大取景框 `move_to` 套到目标上——小窗里立刻显示放大的画面。接着目标右移滑出取景框（小窗里变空白），取景框再 `animate.move_to` 追过去重新对准。
+
+两段唯一区别是构造参数：第一段默认档 `0.15` / `3×3` / 右上角，第二段 `0.08` / `4×2.5` / 左下角贴边 `0.3`，放大约 12 倍。
 
 <video src="assets/RTM output/03-ZoomedScene-zoom.mp4" controls width="560"></video>
 
-> 提醒：`zoom_factor` 是"取景框相对小窗"的比例，**越小放得越大**（`0.15` ≈ 6.7 倍、`0.08` ≈ 12.5 倍），不是"放大 0.15 倍"。取景框 `self.zoomed_camera.frame` 就是 `MovingCamera` 的取景框，对它 `.animate.move_to(...)` 就能让放大镜跟着目标走（先让目标滑出、再让框追上，就是取景框在动的证据）。小窗宽高跟主画幅没有任何比例关系，随便填；换角只改 `zoomed_display_corner`。
+> 提醒：`zoom_factor` 是"取景框相对小窗"的比例，**越小放得越大**（`0.15` ≈ 6.7 倍、`0.08` ≈ 12.5 倍），不是"放大 0.15 倍"。
+>
+> 取景框 `self.zoomed_camera.frame` 就是 `MovingCamera` 的取景框，对它 `.animate.move_to(...)` 就能让放大镜跟着目标走（先让目标滑出、再让框追上，就是取景框在动的证据）。
+>
+> 小窗宽高跟主画幅没有任何比例关系，随便填；换角只改 `zoomed_display_corner`。
 
 ### ZoomedScene.activate_zooming
 
@@ -148,11 +156,15 @@ class ZoomAnim(ZoomActivateBase):
     LABEL = "activate_zooming(animate=True)"
 ```
 
-这段代码在做什么：基类把 `zoom_factor` 固定在 `0.15`，只让子类切换 `ANIMATE`。第一段 `animate=False`：小窗一帧出现，直接把取景框套到目标上就开始放大；第二段 `animate=True`：先播"镜头推进"（取景框从全屏缩回放大尺寸），再播"小窗弹出"（小窗从角上展开出来），动画放完才对准目标。两段最终画面一致，差别只在小窗怎么登场。
+这段代码在做什么：基类把 `zoom_factor` 固定在 `0.15`，只让子类切换 `ANIMATE`。第一段 `animate=False`：小窗一帧出现，直接把取景框套到目标上就开始放大；第二段 `animate=True`：先播"镜头推进"（取景框从全屏缩回放大尺寸），再播"小窗弹出"（小窗从角上展开出来），动画放完才对准目标。
+
+两段最终画面一致，差别只在小窗怎么登场。
 
 <video src="assets/RTM output/03-ZoomedScene-activate.mp4" controls width="560"></video>
 
-> 提醒：`animate=True` 时 `activate_zooming` 内部会连播两个动画，RTM 里必须先写 `self.play = win.play`，否则动画不播。`activate_zooming` 之前小窗还没注册进主相机，画面里根本看不到它，所以 `frame.move_to(target)` 一定要放在它**之后**。两个子类只差一个布尔值，可以对照着改 `ANIMATE` 重跑。
+> 提醒：`animate=True` 时 `activate_zooming` 内部会连播两个动画，RTM 里必须先写 `self.play = win.play`，否则动画不播。
+>
+> `activate_zooming` 之前小窗还没注册进主相机，画面里根本看不到它，所以 `frame.move_to(target)` 一定要放在它**之后**。两个子类只差一个布尔值，可以对照着改 `ANIMATE` 重跑。
 
 ### get_zoom_in_animation / get_zoomed_display_pop_out_animation / get_zoom_factor
 
@@ -214,11 +226,17 @@ class ManualZoomDemo(ZoomedScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：把 `activate_zooming(animate=True)` 拆开自己搭 —— ① `self.renderer.camera.add_image_mobject_from_camera(self.zoomed_display)` 把小窗注册进主相机（这就是 `activate_zooming` 内部的第一件事），② 播 `get_zoom_in_animation(run_time=1.2)` 让取景框从全屏缩回放大尺寸，③ 播 `get_zoomed_display_pop_out_animation(run_time=0.8)` 让小窗从角上弹出，再把取景框和小窗 `add_foreground_mobjects` 盖到最上层。然后 `get_zoom_factor()` 把缩放比同时打到控制台和屏幕顶部，最后对准目标看放大结果。
+这段代码在做什么：把 `activate_zooming(animate=True)` 拆开自己搭 —— ① `self.renderer.camera.add_image_mobject_from_camera(self.zoomed_display)` 把小窗注册进主相机（这就是 `activate_zooming` 内部的第一件事），② 播 `get_zoom_in_animation(run_time=1.2)` 让取景框从全屏缩回放大尺寸，③ 播 `get_zoomed_display_pop_out_animation(run_time=0.8)` 让小窗从角上弹出，再把取景框和小窗 `add_foreground_mobjects` 盖到最上层。
+
+然后 `get_zoom_factor()` 把缩放比同时打到控制台和屏幕顶部，最后对准目标看放大结果。
 
 <video src="assets/RTM output/03-ZoomedScene-manual.mp4" controls width="560"></video>
 
-> 提醒：三步顺序不能乱 —— 必须先注册小窗再播两个动画，且最后 `add_foreground_mobjects(...)` 把取景框与小窗盖到最上层，否则场景内容会压在小窗上面。`get_zoom_in_animation` 默认 `run_time=2`，手动编排时按节奏传自己的值。`get_zoom_factor()` 实测返回 `0.15`，正是构造参数 `zoom_factor` 的值（取景框高度 ÷ 小窗高度）。
+> 提醒：三步顺序不能乱 —— 必须先注册小窗再播两个动画，且最后 `add_foreground_mobjects(...)` 把取景框与小窗盖到最上层，否则场景内容会压在小窗上面。
+>
+> `get_zoom_in_animation` 默认 `run_time=2`，手动编排时按节奏传自己的值。
+>
+> `get_zoom_factor()` 实测返回 `0.15`，正是构造参数 `zoom_factor` 的值（取景框高度 ÷ 小窗高度）。
 
 ---
 

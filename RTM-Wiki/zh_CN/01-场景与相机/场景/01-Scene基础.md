@@ -1,5 +1,7 @@
 
-一个 RTM 脚本 = 一个继承 `Scene` 的类 + 覆写 `construct()`：`setup()` 先跑（准备公共对象），`construct()` 再跑（你的动画全写在这）。RTM 由 record 模块直接驱动这个过程，不走 `manim` 命令行，也不经过 `Scene.render`。
+一个 RTM 脚本 = 一个继承 `Scene` 的类 + 覆写 `construct()`。`setup()` 先跑，用来准备公共对象；`construct()` 再跑，你的动画全写在这里。
+
+RTM 由 record 模块直接驱动这个过程，不走 `manim` 命令行，也不经过 `Scene.render`。
 
 ## 参数
 
@@ -17,7 +19,7 @@ def __init__(self, renderer: CairoRenderer | OpenGLRenderer | None = None, camer
 | `random_seed` | `int \| None` | `None`（取 `config.seed`） | 随机种子，写死一个数便于复现。**能填**任意整数；画面会随种子改变（见样例） |
 | `skip_animations` | `bool` | `False` | **不建议改**：RTM 不走 manim 的跳过路径，`animate` 照常执行，实测画面无差异 |
 
-> **返回**：无（构造实例）。**不要**在自己的场景里乱覆写 `__init__`，要传构造参数（如 `random_seed`）时才覆写并转发 `super().__init__(...)`；其它预处理写在 `setup()` 里。
+> **返回**：无（构造实例）。**不要**在自己的场景里乱覆写 `__init__`：只有要传构造参数（如 `random_seed`）时才覆写，并转发 `super().__init__(...)`；其它预处理写在 `setup()` 里。
 
 #### 样例：`Scene.__init__` 构造参数
 
@@ -61,11 +63,15 @@ class CtorDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：覆写 `__init__` 把 `SEED` 传给 `Scene.__init__` 的 `random_seed`，然后在 `construct` 里用这个种子决定的随机序列给 `[0, 1, 2, 3, 4]` 洗牌，按洗好的顺序把五种颜色的方块排成一行淡入；屏幕顶端同时显示当前的 `random_seed`、`camera_class` 和另外两个布尔参数的取值。整个场景没有别的随机来源，所以这一行的颜色顺序完全由 `random_seed` 一个数字决定——视频前半段是 `SEED = 1`（绿黄白蓝红），后半段是 `SEED = 7`（白蓝黄红绿）。
+这段代码在做什么：覆写 `__init__`，把 `SEED` 传给 `Scene.__init__` 的 `random_seed`；然后在 `construct` 里用这个种子决定的随机序列给 `[0, 1, 2, 3, 4]` 洗牌，按洗好的顺序把五种颜色的方块排成一行淡入。屏幕顶端同时显示当前的 `random_seed`、`camera_class` 和另外两个布尔参数的取值。
+
+整个场景没有别的随机来源，所以这一行的颜色顺序完全由 `random_seed` 一个数字决定——视频前半段是 `SEED = 1`（绿黄白蓝红），后半段是 `SEED = 7`（白蓝黄红绿）。
 
 <video src="assets/RTM output/01-Scene基础-ctor.mp4" controls width="560"></video>
 
-> 提醒：`random.seed` / `np.random.seed` 在 `Scene.__init__` 里就播好了，之后你代码里的任何随机调用都吃这个种子；想每次跑出来一模一样就把 `SEED` 写死。默认 `camera_class=Camera` 就是屏幕上显示的 `Camera`，换成 `MovingCamera` 之类的专用相机见 [MovingCamera](../相机/02-MovingCamera.md)。
+> 提醒：`random.seed` / `np.random.seed` 在 `Scene.__init__` 里就播好了，之后你代码里的任何随机调用都吃这个种子；想每次跑出来一模一样，就把 `SEED` 写死。
+>
+> 默认 `camera_class=Camera`，就是屏幕上显示的 `Camera`；换成 `MovingCamera` 之类的专用相机见 [MovingCamera](../相机/02-MovingCamera.md)。
 
 ### 场景生命周期：`Scene.setup` / `Scene.construct` / `Scene.tear_down`
 
@@ -106,11 +112,15 @@ class LifeDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：`setup()` 里创建一个蓝色方块挂在 `self.square` 上，`construct()` 里开一个 RTM 窗口、放一行标题，然后用 `Create` 把那个方块画出来，最后等 0.5 秒收工。方块能被画出来就说明 `setup()` 先于 `construct()` 执行；`tear_down()` 在场景收尾时跑，控制台会打出 `tear_down ran`——想验证，跑一次看控制台。
+这段代码在做什么：`setup()` 里创建一个蓝色方块，挂在 `self.square` 上；`construct()` 里开一个 RTM 窗口、放一行标题，然后用 `Create` 把那个方块画出来，最后等 0.5 秒收工。
+
+方块能被画出来，就说明 `setup()` 先于 `construct()` 执行。`tear_down()` 在场景收尾时跑，控制台会打出 `tear_down ran`——想验证，跑一次看控制台。
 
 <video src="assets/RTM output/01-Scene基础-life.mp4" controls width="560"></video>
 
-> 提醒：`MLWindow(960, 540)` 会被强制纠正成 1920×1080 并打印一行提示，不是报错，不用改尺寸。多个场景共用的准备工作一律放 `setup()`——RTM 专门为它补了生命周期调用，`MovingCameraScene` 的取景框 `self.camera.frame` 就是在 `setup()` 里创建的。
+> 提醒：`MLWindow(960, 540)` 会被强制纠正成 1920×1080 并打印一行提示，不是报错，不用改尺寸。
+>
+> 多个场景共用的准备工作一律放 `setup()`——RTM 专门为它补了生命周期调用，`MovingCameraScene` 的取景框 `self.camera.frame` 就是在 `setup()` 里创建的。
 
 ### `Scene.render`
 
@@ -122,7 +132,9 @@ def render(self, preview: bool = False) -> bool:
 | --- | --- | --- | --- |
 | `preview` | `bool` | `False` | 为 `True` 时渲染完打开文件查看器 |
 
-返回 `bool`（`True` 表示场景需要重跑）。**RTM 不走 `Scene.render`**：record 模块（`fast_record_scene` / `record_scene`）直接按 `setup` → `construct` 驱动场景并接管录制，`render` 里的收尾（文件写入器 `finish`、"打开文件查看器"）都不会发生——`tear_down` 现在改由 record 生命周期在收尾时调用（见上一节）。不出视频；要出片请用 [录制视频](../../00-快速开始/04-录制视频.md) 里的 `fast_record_scene(...)`。
+返回 `bool`（`True` 表示场景需要重跑）。
+
+**RTM 不走 `Scene.render`**：record 模块（`fast_record_scene` / `record_scene`）直接按 `setup` → `construct` 驱动场景并接管录制，`render` 里的收尾（文件写入器 `finish`、"打开文件查看器"）都不会发生——`tear_down` 现在改由 record 生命周期在收尾时调用（见上一节）。不出视频；要出片请用 [录制视频](../../00-快速开始/04-录制视频.md) 里的 `fast_record_scene(...)`。
 
 ### `Scene.camera` / `Scene.time`
 
@@ -163,11 +175,15 @@ class TimeDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：给标签挂一个 mobject 级 updater，每帧把 `self.time` 的值刷成文字；方块同时匀速右移 0.8 秒，画面里时间在走、标签也跟着往上跳。`self.time` 读的是渲染器的累加时钟：Timeline 每画出一帧就把 `renderer.time` 加一帧的 `dt`（没画出的帧不计），与 manim 的 `add_frame` 同一套语义。
+这段代码在做什么：给标签挂一个 mobject 级 updater，每帧把 `self.time` 的值刷成文字；方块同时匀速右移 0.8 秒，画面里时间在走、标签也跟着往上跳。
+
+`self.time` 读的是渲染器的累加时钟：Timeline 每画出一帧就把 `renderer.time` 加一帧的 `dt`（没画出的帧不计），与 manim 的 `add_frame` 同一套语义。
 
 <video src="assets/RTM output/01-Scene基础-time.mp4" controls width="560"></video>
 
-> 提醒：需要"当前播到第几秒"时直接读 `self.time`（每画出一帧累加一次，帧没画出就不走）；想把它显示在画面里，照样例用一个 updater 刷 `Text`，或用 `ValueTracker` 把时间也变成一个可见的值。`self.camera` 则完全可用：它就是普通的相机对象，改 `frame`、`set(width=...)` 这些操作 RTM 都认。
+> 提醒：需要"当前播到第几秒"时直接读 `self.time`（每画出一帧累加一次，帧没画出就不走）；想把它显示在画面里，照样例用一个 updater 刷 `Text`，或用 `ValueTracker` 把时间也变成一个可见的值。
+>
+> `self.camera` 则完全可用：它就是普通的相机对象，改 `frame`、`set(width=...)` 这些操作 RTM 都认。
 ---
 
 相关：[内容上屏](02-内容上屏.md) · [播放与等待](03-播放与等待.md) · [第一个场景](../../00-快速开始/02-第一个场景.md) · [录制视频](../../00-快速开始/04-录制视频.md)

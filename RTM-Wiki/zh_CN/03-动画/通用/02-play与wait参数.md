@@ -54,7 +54,7 @@ def wait_until(stop_condition, max_time=60) -> None:
 
 #### 样例：win.play 的并行/覆盖参数与 Wait 等待
 
-一次 `play` 播多个动画、play 级 `run_time=1.6` / `rate_func=linear` 逐个 setattr 到每个动画、列表展开 `win.play(*[FadeIn(m) for m in dots])`，最后 `win.play(Wait(1.2))` 静止 1.2 秒。
+一次 `play` 播多个动画，play 级 `run_time=1.6` / `rate_func=linear` 会逐个 setattr 到每个动画；再用列表展开 `win.play(*[FadeIn(m) for m in dots])`。最后 `win.play(Wait(1.2))` 静止 1.2 秒。
 
 ```python
 import os
@@ -143,15 +143,29 @@ if __name__ == "__main__":
                       fps=60, hidden=True, overwrite=True, cleanup=True, verbose=True)
 ```
 
-这段代码在做什么：三步走——① 一条 `win.play` 同时 `Create(sq)` 和 `FadeIn(ci, scale=0.5)`，并用 play 级 `run_time=1.6, rate_func=linear` 把两个动画都拉成 1.6 秒匀速（逐个 setattr 的效果）；② 用列表展开一次性 `FadeIn` 六个彩色圆点（`*anims` 接受生成器/列表）；③ 放一个三角和"静止 1.2 秒"的说明，用 `win.play(Wait(1.2))` 完整等 1.2 秒，画面纹丝不动。
+这段代码在做什么：三步走——
+
+- ① 一条 `win.play` 同时 `Create(sq)` 和 `FadeIn(ci, scale=0.5)`，并用 play 级 `run_time=1.6, rate_func=linear` 把两个动画都拉成 1.6 秒匀速（逐个 setattr 的效果）；
+- ② 用列表展开一次性 `FadeIn` 六个彩色圆点（`*anims` 接受生成器/列表）；
+- ③ 放一个三角和"静止 1.2 秒"的说明，用 `win.play(Wait(1.2))` 完整等 1.2 秒，画面纹丝不动。
 
 <video src="assets/RTM output/02-play与wait参数.mp4" controls width="560"></video>
 
-> 提醒：`win.play(...)` 的关键字里 `run_time` / `rate_func` 生效，`path_arc` / `path_arc_axis` / `path_arc_centers` / `path_func` 也生效（2026-10-17 起，manim 的 `apply_*` 靠这条把弧转角传进来），其余会打印"RTM 不支持该参数"的明确警告（不再静默吞掉）——看到警告就检查是不是误写在了 play 级。`Wait` 用 `real_time_manim.vulkan_bind` 里的那一个，别导 manim 的 `Wait`。
+> 提醒：`win.play(...)` 的关键字里，`run_time` / `rate_func` 生效，`path_arc` / `path_arc_axis` / `path_arc_centers` / `path_func` 也生效（2026-10-17 起，manim 的 `apply_*` 靠这条把弧转角传进来）。其余关键字会打印"RTM 不支持该参数"的明确警告（不再静默吞掉）——看到警告就检查是不是误写在了 play 级。
+>
+> `Wait` 用 `real_time_manim.vulkan_bind` 里的那一个，别导 manim 的 `Wait`。
 
-> **2026-10-16 更新**：play 级 `subcaption` 三形参已接线（内存收集 + `export_srt()`，录制结束在 mp4 旁自动落盘 `.srt`；`Scene.add_subcaption` 直调写入同一个 store，2026-10-19 复核）；play 级未识别关键字现在打印明确警告而非静默忽略；`Scene.pause`（= `wait(..., frozen_frame=True)`，真静帧）与 `Scene.wait_until`（条件每帧求值、为真即截断）均已实装。
+> **2026-10-16 更新**：
+>
+> - play 级 `subcaption` 三形参已接线（内存收集 + `export_srt()`，录制结束在 mp4 旁自动落盘 `.srt`；`Scene.add_subcaption` 直调写入同一个 store，2026-10-19 复核）；
+> - play 级未识别关键字现在打印明确警告而非静默忽略；
+> - `Scene.pause`（= `wait(..., frozen_frame=True)`，真静帧）与 `Scene.wait_until`（条件每帧求值、为真即截断）均已实装。
 
-无法演示：`subcaption` / `subcaption_duration` / `subcaption_offset` —— play 级三形参已支持（内存收集 + `export_srt`，录制结束在 mp4 旁自动落盘 `.srt`），本页不演示，见[分段字幕与声音](../../01-场景与相机/场景/04-分段字幕与声音.md)；`Scene.add_subcaption` 直调也写同一个 store（2026-10-19 复核）；`Scene.pause` / `Scene.wait_until` 与 `Wait` 的 `stop_condition` / `frozen_frame` —— 已支持，本页不演示，见[播放与等待（场景篇）](../../01-场景与相机/场景/03-播放与等待.md)；play 级 `lag_ratio` —— 无视频：RTM 的 `win.play` 覆盖 `run_time` / `rate_func`（以及 2026-10-17 起的 `path_arc` / `path_arc_axis` / `path_arc_centers` / `path_func`）这几个关键字，误传会打印"RTM 不支持该参数"警告（不再静默），错峰要写在动画构造器或 `AnimationGroup` 上。
+无法演示：
+
+- `subcaption` / `subcaption_duration` / `subcaption_offset` —— play 级三形参已支持（内存收集 + `export_srt`，录制结束在 mp4 旁自动落盘 `.srt`），本页不演示，见[分段字幕与声音](../../01-场景与相机/场景/04-分段字幕与声音.md)；`Scene.add_subcaption` 直调也写同一个 store（2026-10-19 复核）；
+- `Scene.pause` / `Scene.wait_until` 与 `Wait` 的 `stop_condition` / `frozen_frame` —— 已支持，本页不演示，见[播放与等待（场景篇）](../../01-场景与相机/场景/03-播放与等待.md)；
+- play 级 `lag_ratio` —— 无视频：RTM 的 `win.play` 覆盖 `run_time` / `rate_func`（以及 2026-10-17 起的 `path_arc` / `path_arc_axis` / `path_arc_centers` / `path_func`）这几个关键字，误传会打印"RTM 不支持该参数"警告（不再静默），错峰要写在动画构造器或 `AnimationGroup` 上。
 
 ---
 

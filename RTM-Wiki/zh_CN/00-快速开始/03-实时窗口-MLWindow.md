@@ -18,7 +18,13 @@ def __init__(self, w=1920, h=1080, hidden=None):
 | `h`      | `int`          | `1080` （强制）                   | 窗口高度（像素）；同上                     |
 | `hidden` | `bool \| None` | `None`（取类级 `_hidden_default`） | 为 `True` 时窗口构建后从不显示（离线录制用）      |
 
-> **强制规格**：`MLWindow` 目前**只支持 `1920×1080`**（类属性 `SUPPORTED_WIDTH` / `SUPPORTED_HEIGHT`），录制帧率只**支持 `60`**（`SUPPORTED_FPS`）。传别的值不会报错，而是被**强制纠正**并打印一行 `[rtm] forcing 1920x1080: ...`——所以上面写 `MLWindow(960, 540)` 与 `MLWindow()` 实际渲染出的都是 1080p；**任何非 1920×1080 的尺寸都会被强制成 1080p60 并打印 `[rtm] forcing`，属正常**。*其他尺寸未来可能会提供支持。*
+> **强制规格**：
+>
+> - `MLWindow` 目前**只支持 `1920×1080`**（类属性 `SUPPORTED_WIDTH` / `SUPPORTED_HEIGHT`）。
+> - 录制帧率只**支持 `60`**（`SUPPORTED_FPS`）。
+> - 传别的值不会报错，而是被**强制纠正**并打印一行 `[rtm] forcing 1920x1080: ...`。所以上面写 `MLWindow(960, 540)` 与 `MLWindow()` 实际渲染出的都是 1080p。
+>
+> **任何非 1920×1080 的尺寸都会被强制成 1080p60 并打印 `[rtm] forcing`，属正常**。*其他尺寸未来可能会提供支持。*
 
 ### `win.scene`（属性）
 
@@ -43,7 +49,9 @@ def play(self, *animations, **kwargs):
 def close(self):
 ```
 
-无参数。关闭窗口、结束渲染（`_unregister()` + `Vulkan_Shutdown()`）。**录制的编码收尾不在 `MLWindow.close` 里**——它由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 在调用 `close()` 前先执行 `_finish_fast_record()` / `stop_record()`（`record.py:181-186`、`window/recording.py:217-221`）；直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾，必须自己调 `win._finish_fast_record()`。
+无参数。关闭窗口、结束渲染（`_unregister()` + `Vulkan_Shutdown()`）。
+
+**录制的编码收尾不在 `MLWindow.close` 里**：它由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 在调用 `close()` 前先执行 `_finish_fast_record()` / `stop_record()`（`record.py:181-186`、`window/recording.py:217-221`）。直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾，必须自己调 `win._finish_fast_record()`。
 
 ## 示例
 

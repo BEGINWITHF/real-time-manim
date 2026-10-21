@@ -72,7 +72,12 @@ class TypstDemo(Scene):
 # ===== 样例 2：TypstMath —— 只写数学表达式 =================================
 ```
 
-这段代码在做什么：第一段最普通的 Typst 文本（`$pi r^2$` 是数学）；第二段加 `color=TEAL` 与 `stroke_width=1`；第三段用 `typst_preamble` 先写 `#set text(size: 12pt)` 再让正文里的 `#text(fill: hot)[hot]` 生效；右上把 `should_center=False` 且 `height=1.2`，只看缩放结果、不回到原点。
+这段代码在做什么：四个 `Typst` 对象各演示一组参数。
+
+- 第一段最普通的 Typst 文本（`$pi r^2$` 是数学）。
+- 第二段加 `color=TEAL` 与 `stroke_width=1`。
+- 第三段用 `typst_preamble` 先写 `#set text(size: 12pt)`，再让正文里的 `#text(fill: hot)[hot]` 生效。
+- 右上把 `should_center=False` 且 `height=1.2`，只看缩放结果、不回到原点。
 
 <video src="assets/RTM output/10-Typst-typst.mp4" controls width="560"></video>
 
@@ -132,7 +137,11 @@ class TypstMathDemo(Scene):
 # ===== 样例 3：自动路由 —— MathTex 在 RTM 下走 Typst ======================
 ```
 
-这段代码在做什么：上面是求和公式（默认字号 44）；中间是定积分并给 `color=ORANGE`（参数透传）；下面一行左边 `mat(1, 2; 3, 4)` 排矩阵、右边 `sqrt(2) approx 1.414`，说明 Typst 的数学函数写法（`mat` / `sqrt` / `integral` / `approx`）。
+这段代码在做什么：
+
+- 上面是求和公式（默认字号 44）。
+- 中间是定积分并给 `color=ORANGE`（参数透传）。
+- 下面一行左边 `mat(1, 2; 3, 4)` 排矩阵、右边 `sqrt(2) approx 1.414`，说明 Typst 的数学函数写法（`mat` / `sqrt` / `integral` / `approx`）。
 
 <video src="assets/RTM output/10-Typst-typstmath.mp4" controls width="560"></video>
 

@@ -20,7 +20,9 @@ def __init__(self, frame: Mobject | None = None, fixed_dimension: int = 0, defau
 
 **返回**：无（构造实例）。常用属性（均读写，见下节）：`frame_height`、`frame_width`、`frame_center`；`frame` 本身是取景框 mobject（推拉摇移改它，详见 MovingCameraScene 页）。
 
-为什么这节不出视频：`frame` 会被 `Camera.__init__` 拉回默认、`fixed_dimension` 存而不用（两个引擎都一样）；描边两个参数要显式把 `self.camera.frame` add 进场景才画得出取景框，而默认描边宽 `0`、填充 `0` 的 frame 在两个引擎里都没有像素输出，按默认值渲一段看不出差别。顺带一提 `Scene` 的 `camera_class` 只收**类**，渲染器建相机用的是 `camera_class()` 无参调用，真要塞构造参数得用 `functools.partial(MovingCamera, ...)` 或子类覆盖默认值——在上面这些参数身上不值得费这个劲。
+为什么这节不出视频：`frame` 会被 `Camera.__init__` 拉回默认、`fixed_dimension` 存而不用（两个引擎都一样）；描边两个参数要显式把 `self.camera.frame` add 进场景才画得出取景框，而默认描边宽 `0`、填充 `0` 的 frame 在两个引擎里都没有像素输出，按默认值渲一段看不出差别。
+
+顺带一提，`Scene` 的 `camera_class` 只收**类**，渲染器建相机用的是 `camera_class()` 无参调用。真要塞构造参数，得用 `functools.partial(MovingCamera, ...)` 或子类覆盖默认值——在上面这些参数身上不值得费这个劲。
 ### MovingCamera.frame_height / frame_width / frame_center（property）
 
 ```python
@@ -89,11 +91,17 @@ class FrameCenterDemo(MovingCameraScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：第一段先按默认画幅（`8.00 × 14.22`）显示两个相距 5 单位的方块，然后把 `frame_height` 设成 4.0、`frame_width` 按 16:9 配成 7.11——两个都赋值才是一次干净的等比放大，画面瞬间变成 2 倍近景，读数同步刷新。第二段演示摇移：`cam.frame_center = b` 把取景框中心整个挪到红方块上（这一行也接受坐标数组，如 `cam.frame_center = [4, 0, 0]`），画面平移到右边，红方块居中、蓝方块退出视野。
+这段代码在做什么：第一段先按默认画幅（`8.00 × 14.22`）显示两个相距 5 单位的方块，然后把 `frame_height` 设成 4.0、`frame_width` 按 16:9 配成 7.11——两个都赋值才是一次干净的等比放大，画面瞬间变成 2 倍近景，读数同步刷新。
+
+第二段演示摇移：`cam.frame_center = b` 把取景框中心整个挪到红方块上（这一行也接受坐标数组，如 `cam.frame_center = [4, 0, 0]`），画面平移到右边，红方块居中、蓝方块退出视野。
 
 <video src="assets/RTM output/02-MovingCamera-frame_props.mp4" controls width="560"></video>
 
-> 提醒：`frame_height`/`frame_width` 是两个**独立**的 setter——**单独**改一个会把取景框拉成非 16:9：CE 按横竖两个方向各自缩放（画面变形），RTM 只按高度做等比缩放、根本不看宽度，两引擎画面不一致。想要安全的等比推拉：成对按 16:9 赋值（如样例），或用 `frame.animate.set(width=...)`（自动锁 16:9，见 MovingCameraScene 页）。读数文本放在画面里侧（`move_to(UP * 1.6)`）也是个小坑：推近后贴边的 `to_edge(UP)` 文本会直接出画。
+> 提醒：
+>
+> - `frame_height`/`frame_width` 是两个**独立**的 setter——**单独**改一个会把取景框拉成非 16:9：CE 按横竖两个方向各自缩放（画面变形），RTM 只按高度做等比缩放、根本不看宽度，两引擎画面不一致。
+> - 想要安全的等比推拉：成对按 16:9 赋值（如样例），或用 `frame.animate.set(width=...)`（自动锁 16:9，见 MovingCameraScene 页）。
+> - 读数文本放在画面里侧（`move_to(UP * 1.6)`）也是个小坑：推近后贴边的 `to_edge(UP)` 文本会直接出画。
 
 ### MovingCamera.auto_zoom(mobjects, margin, only_mobjects_in_frame, animate)
 
@@ -170,11 +178,19 @@ class AutoZoomOnlyDemo(MovingCameraScene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：视频依次是三段。第一段把三个对象（方块、圆、小点）打包成一组，`cam.auto_zoom(group, margin=0.5)` 返回一个「把取景框套上去」的动画，`win.play` 播出来就是平滑推近、外加半单位留白。第二段同一组对象、同一 margin，但 `animate=False`——不返回动画，调用瞬间画面直接跳到目标取景。第三段讲 `only_mobjects_in_frame`：先推近右边的圆（左边的方块被挤出画面），再对 `[圆, 方块]` 调 `only_mobjects_in_frame=True`——方块在画面外被忽略，镜头纹丝不动；最后同样的调用去掉这个限制，方块也算上，镜头拉远到两者都装下。
+这段代码在做什么：视频依次是三段。
+
+- 第一段把三个对象（方块、圆、小点）打包成一组，`cam.auto_zoom(group, margin=0.5)` 返回一个「把取景框套上去」的动画，`win.play` 播出来就是平滑推近、外加半单位留白。
+- 第二段同一组对象、同一 margin，但 `animate=False`——不返回动画，调用瞬间画面直接跳到目标取景。
+- 第三段讲 `only_mobjects_in_frame`：先推近右边的圆（左边的方块被挤出画面），再对 `[圆, 方块]` 调 `only_mobjects_in_frame=True`——方块在画面外被忽略，镜头纹丝不动；最后同样的调用去掉这个限制，方块也算上，镜头拉远到两者都装下。
 
 <video src="assets/RTM output/02-MovingCamera-auto_zoom.mp4" controls width="560"></video>
 
-> 提醒：`auto_zoom` 返回的是 `frame.animate` 动画构造器，**必须**交给 `win.play` 播放才会动（`animate=False` 时它直接改好取景框就返回，别再套 play）。`margin` 不是四边各加一半——它整体加在按比例更挤的那条边的尺寸上。`only_mobjects_in_frame=True` 的典型用法是「聚焦当前镜头里已有的东西，别为了够到画面外的对象乱拉镜头」。
+> 提醒：
+>
+> - `auto_zoom` 返回的是 `frame.animate` 动画构造器，**必须**交给 `win.play` 播放才会动（`animate=False` 时它直接改好取景框就返回，别再套 play）。
+> - `margin` 不是四边各加一半——它整体加在按比例更挤的那条边的尺寸上。
+> - `only_mobjects_in_frame=True` 的典型用法是「聚焦当前镜头里已有的东西，别为了够到画面外的对象乱拉镜头」。
 
 ---
 

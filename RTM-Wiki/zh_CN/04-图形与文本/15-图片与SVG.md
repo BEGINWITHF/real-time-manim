@@ -85,7 +85,13 @@ class ImageDemo(Scene):
 # ===== 样例 2：ImageMobjectFromCamera —— 把相机画面当图片 ==================
 ```
 
-这段代码在做什么：同一个文件渲染五遍——第一张默认（`scale_to_resolution=1080`）；第二张把分辨率压到 120 并把重采样算法换成 `NEAREST`，放大看就是马赛克；第三张 `invert=True`，颜色整体反转；第四张 `image_mode='RGB'` 并 `set_opacity(0.5)`，半透明地叠在另一张同图上（能看到下面那张透出来）；最后把 `get_pixel_array()` 的形状与 dtype 打成读数。
+这段代码在做什么：同一个文件渲染五遍。
+
+- 第一张默认（`scale_to_resolution=1080`）。
+- 第二张把分辨率压到 120，并把重采样算法换成 `NEAREST`，放大看就是马赛克。
+- 第三张 `invert=True`，颜色整体反转。
+- 第四张 `image_mode='RGB'` 并 `set_opacity(0.5)`，半透明地叠在另一张同图上，能看到下面那张透出来。
+- 最后把 `get_pixel_array()` 的形状与 dtype 打成读数。
 
 <video src="assets/RTM output/15-图片与SVG-image.mp4" controls width="560"></video>
 
@@ -153,7 +159,7 @@ class ImageFromCameraDemo(Scene):
 # ===== 样例 3：AbstractImageMobject —— 像素数组三个方法 ====================
 ```
 
-这段代码在做什么：先在场景里摆三个对象（方、三角、点）并用 `self.camera.capture_mobject(...)` 把它们"拍"进相机；然后用同一张相机画面做两个图片对象——左边那个在构造时就给了粗黄外框（`default_display_frame_config`），右边那个用默认外框并在事后 `add_display_frame(stroke_color=TEAL, buff=0.1)` 换成青色框。
+这段代码在做什么：先在场景里摆三个对象（方、三角、点），并用 `self.camera.capture_mobject(...)` 把它们"拍"进相机。然后用同一张相机画面做两个图片对象——左边那个在构造时就给了粗黄外框（`default_display_frame_config`），右边那个用默认外框，并在事后 `add_display_frame(stroke_color=TEAL, buff=0.1)` 换成青色框。
 
 <video src="assets/RTM output/15-图片与SVG-imagefromcamera.mp4" controls width="560"></video>
 
@@ -224,7 +230,11 @@ class AbstractImageDemo(Scene):
 # ===== 样例 4：SVGMobject —— 矢量文件 ======================================
 ```
 
-这段代码在做什么：拿一个 `ImageMobject` 实例来演示基类接口——先给 `scale_to_resolution=200`、`pixel_array_dtype="uint8"` 并用 `NEAREST` 重采样，读一次 `get_pixel_array()` 的 dtype/形状打在下面；再调用 `set_color(RED)` 把整张图染色；右侧放同一张图但用 `resampling_algorithm=BICUBIC`，边缘比左侧平滑。
+这段代码在做什么：拿一个 `ImageMobject` 实例来演示基类接口。
+
+- 先给 `scale_to_resolution=200`、`pixel_array_dtype="uint8"` 并用 `NEAREST` 重采样，读一次 `get_pixel_array()` 的 dtype/形状打在下面。
+- 再调用 `set_color(RED)` 把整张图染色。
+- 右侧放同一张图，但用 `resampling_algorithm=BICUBIC`，边缘比左侧平滑。
 
 <video src="assets/RTM output/15-图片与SVG-abstractimage.mp4" controls width="560"></video>
 
@@ -323,7 +333,15 @@ class SVGDemo(Scene):
 # ===== 样例 5：VMobjectFromSVGPath —— 手头的 path 数据 =====================
 ```
 
-这段代码在做什么：同一个图标七连拍——默认（高 2、居中）；`height=1.1` 加 `color=WHITE`；`width=2.2`；`should_center=False`（能看到它没被搬回原点）；`opacity` + `fill_color/fill_opacity` + `stroke_color/stroke_opacity/stroke_width` 一起给，并 `use_svg_cache=False`；`svg_default` 给一整份样式表（红填充黄描边）并配 `path_string_config`；最后把 `i7[0]`（星形）和 `i7[1]`（圆）分别染成紫色和绿色，证明子对象就是一条条路径。
+这段代码在做什么：同一个图标七连拍。
+
+- 默认：高 2、居中。
+- `height=1.1` 加 `color=WHITE`。
+- `width=2.2`。
+- `should_center=False`：能看到它没被搬回原点。
+- `opacity` + `fill_color/fill_opacity` + `stroke_color/stroke_opacity/stroke_width` 一起给，并 `use_svg_cache=False`。
+- `svg_default` 给一整份样式表（红填充黄描边），并配 `path_string_config`。
+- 最后把 `i7[0]`（星形）和 `i7[1]`（圆）分别染成紫色和绿色，证明子对象就是一条条路径。
 
 <video src="assets/RTM output/15-图片与SVG-svg.mp4" controls width="560"></video>
 
@@ -395,7 +413,14 @@ class SVGPathDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：把四个 `d` 字符串交给 `se.Path(...)` 解析后再喂给 `VMobjectFromSVGPath`——三角形（最基本用法）、带曲线的路径配 `long_lines=True`、正方形配 `should_subdivide_sharp_curves=True`、带重复点的路径配 `should_remove_null_curves=True`；最后从 `demo_icon.svg` 里抄出星形的 `d`，用同样的方式画出来。
+这段代码在做什么：把四个 `d` 字符串交给 `se.Path(...)` 解析后，再喂给 `VMobjectFromSVGPath`。
+
+- 三角形：最基本用法。
+- 带曲线的路径：配 `long_lines=True`。
+- 正方形：配 `should_subdivide_sharp_curves=True`。
+- 带重复点的路径：配 `should_remove_null_curves=True`。
+
+最后从 `demo_icon.svg` 里抄出星形的 `d`，用同样的方式画出来。
 
 <video src="assets/RTM output/15-图片与SVG-svgpath.mp4" controls width="560"></video>
 
