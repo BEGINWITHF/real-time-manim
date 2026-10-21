@@ -45,3 +45,5 @@ Thumbs.db
 /tools/
 /docs/
 /examples/
+/run.py
+/run_all.py
