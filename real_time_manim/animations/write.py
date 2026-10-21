@@ -1,11 +1,13 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
 from real_time_manim.animations.draw_border_then_fill import DrawBorderThenFill
+from real_time_manim.animations.base import resolve_mobject
 from real_time_manim.rate_functions import _linear
 
 
 class Write(DrawBorderThenFill):
-    def __init__(self, mobject, rate_func=_linear, reverse=False, run_time=None,
+    def __init__(self, mobject=None, rate_func=_linear, reverse=False, run_time=None,
                  lag_ratio=None, **kwargs):
+        mobject = resolve_mobject(mobject, kwargs, "Write")
         self.reverse = reverse
         if "remover" not in kwargs:
             kwargs["remover"] = reverse

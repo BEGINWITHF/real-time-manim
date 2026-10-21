@@ -261,7 +261,16 @@ def _parallel_plan(scene, jobs, fps: int, hidden: bool, count_only: bool,
     from real_time_manim.frames import FrameServer, _LAST_WINDOWS
     server = FrameServer(scene, hidden=True)
     try:
-        n_frames = max(1, int(round(server.duration * fps)))
+        # Play-by-play frame count (per-play grids, frozen waits via int()),
+        # not round(duration * fps): the two disagree whenever a play's
+        # duration is not a frame multiple, which made a split record write a
+        # different number of frames than the single-pass one.  The fallback
+        # keeps a stand-in server (tests, older wrappers) working.
+        frame_times = getattr(server, "frame_times", None)
+        if callable(frame_times):
+            n_frames = len(frame_times(fps))
+        else:
+            n_frames = max(1, int(round(server.duration * fps)))
         n_windows = len(_LAST_WINDOWS)
     finally:
         server.close()
@@ -304,6 +313,28 @@ def _worker_sounds(segments: List[str]):
         if data.get("sounds"):
             return ([tuple(s) for s in data["sounds"]],
                     [dict(k) for k in data.get("kwargs", [])])
+    return None
+
+
+def _worker_subcaptions(segments: List[str]):
+    """The first worker's collected subcaption cues (they are identical).
+
+    Workers run ``construct`` in schedule mode, so ``play(subcaption=...)``
+    lands in the worker's in-memory store; worker 0 persists it next to its
+    segment.  Without this the parent's ``audio_track.reset()`` (below) left
+    the flat store empty and no ``.srt`` was ever written for a split record.
+    """
+    for seg in segments:
+        side = seg + ".subcaptions.json"
+        if not os.path.exists(side):
+            continue
+        try:
+            with open(side, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:
+            return None
+        if data:
+            return [dict(entry) for entry in data]
     return None
 
 
@@ -371,6 +402,18 @@ def _fast_record_parallel(scene, out_path: str, *, fps: int, jobs: int,
             audio_track.reset()
             audio_track._sounds.extend(sounds[0])
             audio_track._sound_kwargs.extend(sounds[1])
+        # Restore the cues AFTER the reset(s) above: `reset()` also empties the
+        # subcaption store, so merging earlier would throw them away again.
+        captions = _worker_subcaptions(good)
+        if captions:
+            from real_time_manim.window.play import record_subcaption
+            for entry in captions:
+                try:
+                    record_subcaption(None, entry.get("content", ""),
+                                      entry.get("start", 0.0),
+                                      entry.get("duration", 0.0))
+                except Exception:
+                    continue
         if verbose:
             total = sum(_frame_count(s) for s in good)
             print("[FastRecord] Parallel: %d workers x %d frames -> %d frames -> %s"
@@ -446,6 +489,7 @@ class _AutoRecord:
         self._orig_init = vb.MLWindow.__init__
         self._orig_close = vb.MLWindow.close
         self._n_windows = 0
+        self._n_closed = 0
         self.windows: List[str] = []  # output path assigned to each opened window
 
     def __enter__(self) -> "_AutoRecord":
@@ -462,6 +506,7 @@ class _AutoRecord:
                 print(f"[record] window #{st._n_windows} -> {out}")
 
         def patched_close(self_):
+            st._n_closed += 1
             st._on_close(self_)
             st._orig_close(self_)
 
@@ -477,7 +522,8 @@ class _AutoRecord:
 
 def _run(scene, out_path: str, on_init, on_close,
          verbose: bool, overwrite: bool, count_only: bool,
-         cleanup: bool = True, hidden: Optional[bool] = None) -> Dict[str, Any]:
+         cleanup: bool = True, hidden: Optional[bool] = None,
+         expect_files: bool = True) -> Dict[str, Any]:
     runner = _as_runner(scene)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -496,6 +542,18 @@ def _run(scene, out_path: str, on_init, on_close,
             runner()
     finally:
         MLWindow._hidden_default = prev_hidden
+    # A window that was opened but never closed never ran the encoder finish
+    # hook (``_finish_fast_record`` / ``stop_record``): the ffmpeg pipe stays
+    # open and the file on disk is a 48-byte header.  That used to be reported
+    # as success (audit ``forget_close_fast_record``); fail with an actionable
+    # message instead of handing back a broken video.
+    if expect_files and rec._n_windows and rec._n_closed < rec._n_windows:
+        raise RuntimeError(
+            "recorded %d window(s) but MLWindow.close() was only called %d "
+            "time(s): the encoder was never finished, so the output is "
+            "incomplete. Call win.close() at the end of construct()."
+            % (rec._n_windows, rec._n_closed)
+        )
     # Rendering leaves transient manim media/Tex output behind; clear it for the
     # caller so they never have to remember to.  Opt out via cleanup=False.
     if cleanup:
@@ -503,6 +561,21 @@ def _run(scene, out_path: str, on_init, on_close,
         clear_media(verbose=verbose)
     files = [f for f in (rec.windows if rec.windows else _produced_files(out_path))
              if os.path.exists(f)]
+    # A 262-byte "video" is what an unbound scene leaves behind (no frame was
+    # ever drawn) -- see audit ``unbound_window_fast_record``.  Anything below
+    # one kilobyte cannot contain a frame.
+    if expect_files:
+        for f in files:
+            try:
+                size = os.path.getsize(f)
+            except OSError:
+                size = 0
+            if size < 1024:
+                raise RuntimeError(
+                    "recorded file looks empty/incomplete (%d bytes): %s -- "
+                    "did the scene forget `win.scene = self`, or forget "
+                    "win.close()?" % (size, f)
+                )
     # Phase 6: attach the sounds the scene registered (copy the video stream).
     muxed = audio_track.apply_sounds(files, verbose=verbose)
     return {
@@ -642,4 +715,5 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
 
     return _run(scene, out_path if out_path is not None else _default_out_path(),
                 on_init, on_close, verbose, overwrite, count_only=count_only,
-                cleanup=cleanup, hidden=hidden)
+                cleanup=cleanup, hidden=hidden,
+                expect_files=(not count_only) and segment is None)

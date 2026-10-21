@@ -17,6 +17,14 @@ class FadeIn(Animation):
         self.target_position = target_position
         self.fade_scale = scale
         self._start_positions = []
+        # CE accepts the single-mobject spelling; ``*mobjects`` holds the
+        # positional form.  RTM used to feed ``mobject=`` into ``**kwargs``,
+        # together with ``mobjects[0] if mobjects else None``, producing
+        # "got multiple values for argument 'mobject'".
+        if not mobjects and "mobject" in kwargs:
+            mobjects = (kwargs.pop("mobject"),)
+        elif mobjects and "mobject" in kwargs:
+            raise TypeError("FadeIn() got multiple values for argument 'mobject'")
         super().__init__(mobjects[0] if mobjects else None, run_time=run_time, **kwargs)
         self.mobjects = list(mobjects)
 

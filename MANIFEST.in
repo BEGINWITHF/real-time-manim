@@ -7,6 +7,7 @@ include LICENSE
 include README.md
 include PYPI_README.md
 include logo.jpg
+include banner.jpg
 
 # Keep build artifacts out of the source distribution
 exclude build

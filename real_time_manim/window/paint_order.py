@@ -212,6 +212,12 @@ def release_split(mob):
         family = mob.get_family()
     except Exception:
         return
+    # The lag ratio ``Create``/``Uncreate`` stamped for this split is only
+    # meaningful while that animation runs; clear it or a later animation on
+    # the same container would inherit the stale split.
+    d0 = getattr(mob, '__dict__', None)
+    if d0 is not None:
+        d0.pop('_vulkan_lag_ratio', None)
     for sub in family:
         d = getattr(sub, '__dict__', None)
         if d is None or '_vsplit_progress' not in d:

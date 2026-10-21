@@ -250,6 +250,15 @@ class Timeline:
         self._prepared = False
         self.duration = 0.0
         self._last_t = None        # last rendered time, for updater dt re-anchoring
+        # Animations whose ``finish()`` side effects have already been applied
+        # (play does this after the final frame; forward Timeline walks do it as
+        # soon as an entry's span ends, see ``_finish_ended``).
+        self._finished = set()
+        # Opt-in: FrameServer / render_mp4 walks set this so a forward render
+        # applies the same terminal finish() hooks play() does.  Raw
+        # ``Timeline.render_at`` calls keep manim's pure ``update_to_time``
+        # semantics (tests/test_timeline_animation_updaters.py pins that).
+        self.finish_hooks = False
         # [start, end) spans whose wait CE renders with freeze_current_frame --
         # computed in finalize(); inside them render_at holds the picture
         # instead of driving updaters (see _frozen_at).
@@ -294,6 +303,12 @@ class Timeline:
                 evaluate_animation(prior["anim"],
                                    entry["start"] - prior["start"])
             anim = entry["anim"]
+            # A lone Wait's frozen-vs-stepped verdict normally comes from
+            # manim's renderer, which RTM replaces.  `play()` resolves it
+            # before building the Timeline; doing it here too makes a
+            # hand-built Timeline (the module docstring's example) count and
+            # evaluate its waits exactly like `win.play(Wait(...))`.
+            resolve_static_wait(self.scene, [anim])
             if _is_manim_animation(anim):
                 # manim's Scene.play() gives every animation its scene before
                 # begin(): introducers register their mobject and .scene is
@@ -403,6 +418,11 @@ class Timeline:
                             reverse=True):
             if entry["start"] > t:
                 evaluate_animation(entry["anim"], -1.0)   # clamps to alpha 0
+                # A backwards seek into (or before) an entry that had already
+                # finished must let it animate again; its finish() side effects
+                # will be re-applied when the walk crosses its end again.
+                if self.finish_hooks and t < entry["start"] + entry["run_time"]:
+                    self._finished.discard(id(entry["anim"]))
         # Apply pass: the entries that have started, earliest first, so the one
         # that started last wins -- exactly manim's play-a-sequence semantics.
         # manim runs each animation's own updater pass BEFORE interpolating it
@@ -410,9 +430,51 @@ class Timeline:
         # and the interpolation then derives the mobject from that fresh state.
         for entry in sorted(self._entries, key=lambda e: e["start"]):
             if entry["start"] <= t:
+                ended = entry["start"] + entry["run_time"] <= t + 1e-9
+                if ended and self.finish_hooks and id(entry["anim"]) in self._finished:
+                    # Already finished: leave its terminal state alone instead
+                    # of re-interpolating it back to the last frame (Blink would
+                    # re-hide the mobject that finish() just restored).
+                    continue
+                if self.finish_hooks and not ended:
+                    # Inside the span again (a backwards seek): let the finish
+                    # hook run once more when the walk crosses the end.
+                    self._finished.discard(id(entry["anim"]))
                 if drive:
                     drive_animation_updaters(entry["anim"], dt)
                 evaluate_animation(entry["anim"], t - entry["start"])
+        # Plays run ``finish()`` after their last frame; a Timeline that walks
+        # forward must do the same at each entry's end, or finish-only side
+        # effects (Blink restoring visibility, TypeWithCursor hiding the
+        # cursor, Write dropping ``_write_active``) never happen.  Without this,
+        # `fast_record_scene(jobs=2)` (timeline workers) silently rendered a
+        # different picture from the single-pass recorder for the same scene
+        # (measured: Blink scene max 252/255, mean 0.62).
+        if self.finish_hooks:
+            self._finish_ended(t)
+
+    def _finish_one(self, anim):
+        key = id(anim)
+        if key in self._finished:
+            return
+        self._finished.add(key)
+        finish = getattr(anim, "finish", None)
+        if callable(finish):
+            try:
+                finish()
+            except Exception:
+                pass
+
+    def _finish_ended(self, t):
+        eps = 1e-9
+        for entry in self._entries:
+            if entry["start"] + entry["run_time"] <= t + eps:
+                self._finish_one(entry["anim"])
+
+    def finish_all(self):
+        """Apply every entry's ``finish()`` once (end of a forward walk)."""
+        for entry in self._entries:
+            self._finish_one(entry["anim"])
 
     def _frame_duration(self):
         """Nominal seconds-per-frame of the walk currently rendering ``self``.
@@ -488,6 +550,40 @@ class Timeline:
             except Exception:
                 return True
         return False
+
+    def frame_times(self, fps=60):
+        """Evaluation time of every frame a play-by-play forward render writes.
+
+        ``play()`` writes each play on its OWN local grid (``k / fps`` from
+        that play's start) and counts its frames with
+        :func:`ce_frame_count` -- a lone static ``Wait`` counts ``int()``
+        while everything else steps ``arange``.  Sampling one global
+        ``k / fps`` grid over the whole schedule instead (what
+        ``render_mp4`` used to do) makes the frame COUNT depend on the total
+        duration and shifts every play after a frozen wait off its own grid:
+        e.g. ``FadeIn(1.0)`` + ``Wait(0.11)`` is 66 frames when played but
+        67 on a global grid.
+
+        Entries that share a ``start`` belong to one play --
+        ``_schedule_play`` stamps every animation of a play with the same
+        cursor -- so they are grouped, counted with that play's max
+        ``run_time`` and sampled from the shared start.  This is exactly the
+        sequence ``play()`` would write, which is what parallel workers and
+        ``render_mp4`` must reproduce.
+
+        An empty schedule still yields one frame (``play()`` writes one).
+        """
+        step = 1.0 / float(fps)
+        groups = {}
+        for entry in self._entries:
+            groups.setdefault(entry["start"], []).append(entry)
+        times = []
+        for start in sorted(groups):
+            entries = groups[start]
+            duration = max(e["run_time"] for e in entries)
+            n = ce_frame_count([e["anim"] for e in entries], duration, fps)
+            times.extend(start + k * step for k in range(n))
+        return times or [0.0]
 
     def render_at(self, t, readback=False, frame_dt=None):
         """Evaluate at ``t``, draw that state, and present it.  O(1) in ``t``.
@@ -574,9 +670,14 @@ class Timeline:
         import tempfile
         import time
 
-        duration = float(self.duration if duration is None else duration)
-        anims = [e.get("anim") for e in getattr(self, "_entries", [])]
-        n_frames = ce_frame_count(anims, duration, fps)
+        self.finish_hooks = True
+        # Sample the schedule exactly the way `play()` writes it: each play
+        # on its own local grid, with `ce_frame_count`'s frozen-vs-stepped
+        # rule.  (`duration` is only an optional upper bound now.)
+        times = self.frame_times(fps)
+        if duration is not None:
+            limit = float(duration)
+            times = [t for t in times if t < limit] or times[:1]
         frame_dt = 1.0 / float(fps)
         tmpdir = tempfile.mkdtemp(prefix="rtm_timeline_")
         # Only frames that were actually drawn may go to ffmpeg: a closed
@@ -586,8 +687,7 @@ class Timeline:
         live = native_dll_is_live(self.window.dll)
         written = 0
         try:
-            for k in range(n_frames):
-                t = k / float(fps)
+            for k, t in enumerate(times):
                 frame_start = time.perf_counter()
                 if not self.render_at(t, readback=True, frame_dt=frame_dt) and live:
                     break
@@ -601,6 +701,9 @@ class Timeline:
                     left = (1.0 / fps) - (time.perf_counter() - frame_start)
                     if left > 0:
                         time.sleep(left)
+            # Match play(): run the terminal finish hooks after the last frame
+            # (a timeline walk's exclusive arange never reaches run_time).
+            self.finish_all()
             subprocess.run(
                 ["ffmpeg", "-y", "-loglevel", "error",
                  "-framerate", str(fps),

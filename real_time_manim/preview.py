@@ -676,7 +676,11 @@ class FramePreview:
 
         self.window = self.server.window
         self.duration = float(self.server.duration)
-        self.n_frames = max(1, int(round(self.duration * self.fps)))
+        # Frame indices follow the play-by-play grid (`Timeline.frame_times`),
+        # so frame N is the same picture a recording writes at N -- a frozen
+        # wait's int() frames included.
+        self._times = self.server.frame_times(self.fps)
+        self.n_frames = max(1, len(self._times))
         self.current = 0
         self.running = False
         self.saved = []
@@ -690,6 +694,10 @@ class FramePreview:
         return self.n_frames - 1
 
     def time_of(self, frame):
+        frame = clamp_frame(frame, self.n_frames)
+        times = getattr(self, "_times", None)
+        if times and frame < len(times):
+            return float(times[frame])
         return time_of_frame(frame, self.fps)
 
     def frame_of(self, t):

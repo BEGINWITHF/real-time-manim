@@ -22,6 +22,13 @@ The shims
    behave like ``Create``.
 5. ``SplitScreenCamera.__init__`` calls ``Camera.__init__`` first, which runs
    ``init_background`` -> reads ``self.shifted_cameras`` before it exists.
+6. ``Scene.add_subcaption`` writes to a file writer RTM does not run; the cue
+   is stored in RTM's own table instead.
+7. ``Scene.play`` renders through the Cairo renderer; with an ``MLWindow``
+   bound to the scene it is forwarded to ``win.play`` (``wait`` too).
+8. ``Transform.begin`` aligns only the top level, so nested families with
+   different point counts crash in ``bezier.interpolate``.
+9. ``TransformAnimations`` zips start/end families of different lengths.
 """
 from __future__ import annotations
 
@@ -65,6 +72,41 @@ def _shim_scene_add_subcaption() -> bool:
 
     add_subcaption._rtm_shimmed = True
     Scene.add_subcaption = add_subcaption
+    return True
+
+
+def _shim_scene_play_uses_window() -> bool:
+    """Forward ``Scene.play`` to the MLWindow bound to this scene.
+
+    manim's ``Scene.play`` renders through ``self.renderer`` -- the Cairo
+    renderer -- and RTM never takes that renderer over.  A CE-style
+    ``self.play(Create(sq))`` in a scene that already opened an ``MLWindow``
+    therefore draws nowhere the user can see (and may write a manim video
+    under ``media/``), with no warning.  ``Scene.wait`` / ``wait_until`` /
+    ``pause`` all delegate to ``play``, so they follow automatically.
+
+    With no window bound (plain manim usage, or a play before the window is
+    created) the original method runs untouched -- including the manim
+    "Unexpected argument" / run_time validation it performs.
+    """
+    from manim import Scene
+
+    if getattr(Scene.play, "_rtm_window_shim", False):
+        return True
+    original = Scene.play
+
+    def play(self, *args, **kwargs):
+        try:
+            from real_time_manim import audio_track
+            window = audio_track._scene_window(self)
+        except Exception:                       # pragma: no cover - defensive
+            window = None
+        if window is None:
+            return original(self, *args, **kwargs)
+        return window.play(*args, **kwargs)
+
+    play._rtm_window_shim = True
+    Scene.play = play
     return True
 
 
@@ -242,6 +284,7 @@ def apply_manim_shims(force: bool = False) -> dict:
     results = {}
     for fn in (
         _shim_scene_add_subcaption,
+        _shim_scene_play_uses_window,
         _shim_apply_pointwise_function_to_center,
         _shim_movement_vmobject,
         _shim_transform_animations_target_copy,

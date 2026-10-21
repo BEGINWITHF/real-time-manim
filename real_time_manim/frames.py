@@ -73,6 +73,9 @@ class FrameServer:
         self.window = _LAST_WINDOWS[-1]
         self._bind_raw_readback()
         self.timeline = self.window.build_timeline()
+        # Forward walks (worker parallel record, frame export, preview scrub)
+        # run the same terminal finish() hooks play() does.
+        self.timeline.finish_hooks = True
         self.duration = self.window._cursor
 
         # background encode/write pipeline (bounded to cap memory)
@@ -181,6 +184,15 @@ class FrameServer:
         return bytes(buf), w, h, row_bytes
 
     # -- frames -------------------------------------------------------------
+    def frame_times(self, fps=60):
+        """Every frame's evaluation time, exactly as ``play()`` would write it.
+
+        The list comes from ``Timeline.frame_times`` (per-play local grids,
+        frozen waits counted like CE), so a frame index means the same thing
+        to the preview, the exporter, ``render_mp4`` and the parallel workers.
+        """
+        return self.timeline.frame_times(fps)
+
     def render_frame(self, t, readback=False):
         """Draw frame at ``t`` into the window.  ~10 ms, O(1) in t.
 

@@ -483,4 +483,37 @@ class ArrowMixin:
         # the quad from (ShowPartial at sub_alpha 0 is the common case).
         if abs(ex - sx1) < 1e-6 and abs(ey - sy1) < 1e-6:
             return
-        self._emit_stroke(sx1, sy1, ex, ey, px, r, g, b, a)
+        cap = getattr(mob, 'cap_style', None)
+        cap_name = getattr(cap, 'name', '')
+        if not cap_name and isinstance(cap, int):
+            cap_name = {1: 'ROUND', 3: 'SQUARE'}.get(cap, '')
+        if not cap_name and cap is not None:
+            cap_name = str(cap)
+        cap_name = str(cap_name).upper()
+        half = float(px) * 0.5
+        dx, dy = ex - sx1, ey - sy1
+        ln = math.hypot(dx, dy)
+        line_start = (sx1, sy1)
+        line_end = (ex, ey)
+        if ln > 1e-6 and cap_name in ('ROUND', 'BUTT'):
+            # Native's line quad extends `half_thick` past BOTH endpoints
+            # (draw_line.c), i.e. it already paints a square cap.  A round cap
+            # therefore has to shorten the shaft by half a width and put a disc
+            # on each end; a butt cap has to shorten it and stop.  AUTO/default
+            # keeps the historical behaviour for every calibrated scene.
+            ux, uy = dx / ln, dy / ln
+            if ln > 2.0 * half:
+                line_start = (sx1 + ux * half, sy1 + uy * half)
+                line_end = (ex - ux * half, ey - uy * half)
+            else:
+                line_start = line_end = ((sx1 + ex) * 0.5, (sy1 + ey) * 0.5)
+        self._emit_stroke(line_start[0], line_start[1],
+                          line_end[0], line_end[1], px, r, g, b, a)
+        if cap_name == 'ROUND':
+            try:
+                for cx, cy in ((sx1, sy1), (ex, ey)):
+                    self.dll.AddCircle(float(cx), float(cy), half,
+                                       int(r), int(g), int(b),
+                                       0, 0, 0, 0.0, 1.0, a)
+            except Exception:
+                pass

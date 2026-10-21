@@ -355,6 +355,12 @@ class VMobjectMixin:
                     sw_manim = float(raw[0])
             except Exception:
                 pass
+            if sw_manim <= 0:
+                # CE's `Camera.apply_stroke` returns immediately when the width
+                # is 0, so a zero-width TracedPath leaves no trace at all.  The
+                # `max(1, ...)` below used to paint a 1 px line instead (same
+                # "0 means unset" trap as ThreeDCamera's frame-center Point).
+                return
             # manim units -> pixels uses the *visible* frame height, the same
             # rule as `ShapeMixin._stroke_width`; `h / 8.0` pinned the outline
             # to the default frame under a zooming camera.

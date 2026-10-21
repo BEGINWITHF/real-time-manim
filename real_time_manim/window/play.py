@@ -563,9 +563,30 @@ class PlayMixin:
         warning instead of vanishing (gap A34).
         """
         if not self.scene:
-            return
+            # Silently returning here produced a 0-frame / 262-byte video when
+            # the user forgot ``win.scene = self``: no exception, no warning,
+            # just an empty file after a full render (audit
+            # ``unbound_window_fast_record``).  Fail loudly instead.
+            raise RuntimeError(
+                "win.play() called before the scene was bound: run "
+                "`win.scene = self` inside construct(), or pass the scene "
+                "explicitly; without it RTM has nothing to draw or record."
+            )
 
         _warn_unsupported_play_kwargs(kwargs)
+
+        # CE's ``Scene.play`` rejects a bare Mobject ("Unexpected argument X
+        # passed to Scene.play()"): only animations and ``.animate`` builders are
+        # accepted.  Check before schedule mode too, so FrameServer recordings
+        # fail the same way instead of silently scheduling nothing.
+        from manim.mobject.mobject import Mobject as _Mobject
+        for _a in animations:
+            if isinstance(_a, _Mobject):
+                raise TypeError(
+                    "Unexpected argument %s passed to MLWindow.play(): pass an "
+                    "Animation or a .animate(...) builder (or Scene.add() the "
+                    "mobject first)." % type(_a).__name__
+                )
 
         # Position of this play on the recorded timeline: the clock a subcaption
         # is stamped with (recorded before anything advances it below).
@@ -671,15 +692,21 @@ class PlayMixin:
         elapsed = self._run_timeline(tl, real_anims)
         # `_cursor` is "the current end of the recorded timeline" and the
         # playhead audio_track uses for Scene.add_sound placement.  Schedule
-        # mode advances it in _schedule_play; this timeline path never did, so
-        # the cursor stayed 0.0 and every mid-scene add_sound piled up at its
-        # bare time_offset instead of at the moment it was called.  Keep it in
-        # step here (schedule mode returns early above, so no double count).
-        # A ``wait_until`` that stopped early reports its real elapsed time so
-        # the cursor lands where the wait actually ended, not at its full
-        # ``max_time``.
-        self._cursor += float(elapsed if elapsed is not None
-                              else (getattr(tl, "duration", 0.0) or 0.0))
+        # mode advances it in _schedule_play; this timeline path used to leave
+        # it at 0.0, so every mid-scene add_sound piled up at its bare
+        # time_offset instead of at the moment it was called.
+        #
+        # Advance by the MEDIA time (frames actually written / fps), not the
+        # nominal `tl.duration`: the two differ whenever a play's duration is
+        # not a frame multiple (frozen waits round down, animations round up),
+        # and using the nominal value made audio/subtitles drift against the
+        # video by the remainder of every play.
+        advance = elapsed
+        if advance is None:
+            advance = getattr(self, "_last_run_media_time", None)
+        if advance is None:
+            advance = getattr(tl, "duration", 0.0) or 0.0
+        self._cursor += float(advance)
 
         # manim adds the subcaption AFTER the play has run, deriving its start
         # from the time the play began -- mirrored here (cursor already
@@ -863,6 +890,23 @@ class PlayMixin:
                         anim, float(getattr(anim, "run_time", 1.0) or 1.0))
                 except Exception:
                     pass
+                # ...and then run the class's own clean-up side effects.
+                # manim's play_internal does ``animation.finish()`` for EVERY
+                # animation; RTM only did it for manim-native ones, so every
+                # finish-only behaviour vanished: Blink left the mobject hidden
+                # for the rest of the scene (A06 missing circle),
+                # TypeWithCursor/UntypeWithCursor ignored
+                # ``leave_cursor_on=False``, SpinInFromNothing kept
+                # ``_grow_rot`` forever and Write kept ``_write_active`` on
+                # every glyph.  RTM's ``Animation.finish`` only flags the
+                # animation, so calling it here is safe; the /GrowFrom*/ crash
+                # that would otherwise surface is fixed in grow_from_center.py.
+                finish = getattr(anim, "finish", None)
+                if callable(finish):
+                    try:
+                        finish()
+                    except Exception:
+                        pass
             if hasattr(anim, 'clean_up_from_scene'):
                 try:
                     anim.clean_up_from_scene(self.scene)
@@ -898,6 +942,13 @@ class PlayMixin:
         # the caller advances the audio playhead by what actually played, not
         # the full ``max_time`` schedule; every other play returns None and the
         # caller keeps using the Timeline's own duration (no behavior change).
+        #
+        # The produced picture lasts `n_frames * dt`, not the nominal
+        # `run_time`: a frozen wait writes int() frames and an animation
+        # arange() frames.  `play()` advances `_cursor` by this media time so
+        # `add_sound` / subtitles stay aligned with the frames on disk.
+        self._last_run_media_time = (stop_elapsed if stop_elapsed is not None
+                                     else n_frames * dt)
         return stop_elapsed
 
     def _schedule_play(self, animations, kwargs):
@@ -961,7 +1012,17 @@ class PlayMixin:
                        default=0.0)
         for a in real:
             self._sched.append((self._cursor, a))
-        self._cursor += duration
+        # Advance by what a render would actually produce (frames / fps), not
+        # the nominal `run_time`: a frozen Wait counts int() frames and an
+        # animation arange() frames, so a nominal cursor would put subtitle
+        # durations (and the next play's start) 0.11 s apart where the video
+        # has 0.10 s.  This mirrors `play()`'s `_last_run_media_time` advance,
+        # so a FrameServer / parallel recording and a single-pass one produce
+        # the same `.srt` and the same total duration.
+        from real_time_manim.timeline import ce_frame_count
+        fps = (getattr(self, "_fast_record_fps", TARGET_FPS)
+               if getattr(self, "_fast_record", False) else TARGET_FPS)
+        self._cursor += ce_frame_count(real, duration, fps) / float(fps or 1.0)
 
     def build_timeline(self):
         """Turn the recorded schedule into a Timeline (begin() once)."""
