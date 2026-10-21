@@ -1,17 +1,12 @@
 # 08-工具
 
-颜色解析与调色、速率函数、方向与数学常量、向量与几何工具函数。
+> 功能目录 · 6 页。
 
-[首页](../README.md) ｜ [功能状态总览](../99-功能状态总览.md)
-
-> 状态列与 [98-功能清单](../98-功能清单.md) 第 9 节一致（2026-10-11 实渲染，2026-10-16 复跑全绿）：6 页全部。
-
-| 页面 | 内容 | 状态 |
-| --- | --- | --- |
-| [01b-颜色进阶](01b-颜色进阶.md) | 颜色（二）：插值与模块级工具 | （已渲染） |
-| [01-颜色](01-颜色.md) | 颜色（一）：ManimColor 对象与颜色变换 | （已渲染） |
-| [02-速率函数](02-速率函数.md) | 速率函数 rate functions | （已渲染）：顶层可直接用 **17 个**（12 常用 + 5 特殊/工厂，与页面"常用 12 + 特殊 5"分节一致）；manim 0.21 共 **47 个 rate function**（`__all__` 显式列 17 + `ease_*` 全家族 30 个按模块属性取），`rate_functions` 模块级对外 50 个名字（另 2 装饰器 + 1 `Protocol`）；RTM 的 `rate_func` 当普通 callable 透传、全部可用；RTM `rate_functions.py` 内置 12 个私有实现仅供其动画类默认值 |
-| [03-方向与常量](03-方向与常量.md) | 方向与数学常量 | RTM 直接复用 manim 的常量与 numpy 工具 |
-| [04b-路径与序列工具](04b-路径与序列工具.md) | 变换路径与序列工具：paths、simple_functions、iterables | RTM 直接复用 manim 的常量与 numpy 工具 |
-| [04-向量与几何工具](04-向量与几何工具.md) | 向量与几何工具（一）：space_ops | RTM 直接复用 manim 的常量与 numpy 工具 |
-
+| 页面 | 功能 |
+| --- | --- |
+| [01-颜色](01-颜色.md) | ManimColor(value, alpha) · ManimColor.to_hex(with_alpha) · ManimColor.darker · color_gradient(reference_colors, length_of_output) |
+| [01b-颜色进阶](01b-颜色进阶.md) | ManimColor.interpolate · ManimColor · interpolate_color · 颜色模块其余工具 |
+| [02-速率函数](02-速率函数.md) | 速率函数 rate functions |
+| [03-方向与常量](03-方向与常量.md) | 方向与数学常量 |
+| [04-向量与几何工具](04-向量与几何工具.md) | rotate_vector · angle_between_vectors · regular_vertices |
+| [04b-路径与序列工具](04b-路径与序列工具.md) | path_along_arc · iterables · simple_functions |
