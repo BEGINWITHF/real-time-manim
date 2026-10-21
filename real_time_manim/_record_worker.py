@@ -103,6 +103,17 @@ def _dump_sounds(out_path):
         json.dump(data, fh)
 
 
+def _dump_subcaptions(out_path):
+    """Persist ``play(subcaption=...)`` cues for the parent's ``.srt``."""
+    from real_time_manim.window.play import collect_subcaptions
+
+    entries = collect_subcaptions(None)
+    if not entries:
+        return
+    with open(out_path + ".subcaptions.json", "w", encoding="utf-8") as fh:
+        json.dump(entries, fh, ensure_ascii=False)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     kind, target, qual, index, jobs, n_frames, out_path, fps = (
@@ -130,7 +141,15 @@ def main(argv=None):
                 # done; every worker hears the same cues, so one report is
                 # enough.
                 _dump_sounds(out_path)
-            start, end = frame_block(n_frames, jobs, index)
+                _dump_subcaptions(out_path)
+            # Same play-by-play grid the single-pass recorder uses (see
+            # `Timeline.frame_times`); slicing it keeps the workers' frames
+            # aligned with that recording.
+            times = server.timeline.frame_times(fps)
+            # The parent's n_frames came from the same function; use it so a
+            # non-deterministic scene can never shift the block boundaries.
+            count = len(times) if int(n_frames) <= 0 else min(int(n_frames), len(times))
+            start, end = frame_block(count, jobs, index)
             if end <= start:                    # more workers than frames
                 return 0
             width, height = server.frame_size
@@ -140,10 +159,9 @@ def main(argv=None):
                 segment_ffmpeg(width, height, fps, fmt, out_path,
                                threads=encoder_threads(jobs)),
                 stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            dt = 1.0 / fps
             with proc.stdin as pipe:
-                for k in range(start, end):
-                    pipe.write(server.grab_pixels(k * dt))
+                for t in times[start:end]:
+                    pipe.write(server.grab_pixels(t))
             return proc.wait()
         finally:
             server.close()

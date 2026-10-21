@@ -273,17 +273,24 @@ class PointMixin:
         its 216 spiral points into a solid disc where CE shows a separated
         lattice (measured PointCloudMobjects: 2103 px of excess ink, all of it
         inside the cloud's own box, against CE's dotted spiral).
+
+        A width of **0** is meaningful, not "missing": `ThreeDCamera`'s
+        `_frame_center` is `Point(..., stroke_width=0)` and CE renders it as a
+        single pixel (Cairo's `adjusted_thickness(0)` leaves one nudge).
+        Defaulting to the 4 px calibration made RTM paint a 6 px black dot at
+        the screen centre during `move_camera(frame_center=...)` -- visible on
+        wiki `02-ThreeDScene-camera.mp4` frames 270-317.
         """
         width = 4.0
         try:
             raw = mob.get_stroke_width()
-            if isinstance(raw, (int, float)) and raw > 0:
-                width = float(raw)
-            elif hasattr(raw, "__len__") and len(raw) > 0 and float(raw[0]) > 0:
+            if isinstance(raw, (int, float)):
+                width = float(raw)          # 0 stays 0: one-pixel point
+            elif hasattr(raw, "__len__") and len(raw) > 0:
                 width = float(raw[0])
         except Exception:
             pass
-        return width / 4.0
+        return max(0.0, width / 4.0)
 
     def _send_point_cloud(self, mob, a, w, h, rot=0.0, parent_offset=None):
         """PMobject 家族：每个点画成一个点，而不是一条填充路径。

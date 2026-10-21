@@ -37,6 +37,24 @@ from real_time_manim.window.paint_order import (
 )
 
 
+def _gradient_flat_shape(mob):
+    """True for a Square/Rectangle/Circle/Ellipse whose fill is a ramp.
+
+    Those four kinds take dedicated senders that hand native ONE fill colour,
+    so a multi-row ``fill_rgbas`` (``set_sheen``, ``set_color((A, B))``,
+    ``Axes.get_area``'s band) was painted flat.  CE paints a linear gradient
+    across ``get_gradient_start_and_end_points()``; route these shapes through
+    ``_send_vmobject``, whose ``shaded_fill_gradient`` already builds the
+    two-stop native gradient.
+    """
+    if not isinstance(mob, (Square, Rectangle, Circle, Ellipse)):
+        return False
+    try:
+        return fill_gradient_stops(mob) is not None
+    except Exception:
+        return False
+
+
 class PaintMixin:
 
     def _root_paint(self, cam, roots, idx, mob, angle, fixed_ids, cam_images):
@@ -484,13 +502,49 @@ class PaintMixin:
         if a <= 0:
             return
 
+        # `VMobject.set_background_stroke` paints a wider stroke BEHIND the
+        # normal one (manim's cairo renderer strokes background_stroke_rgbas
+        # first).  RTM ignored the background_* arrays completely: a red
+        # 24-px background stroke on a blue Square looked identical to no
+        # background stroke, while CE differs by 196/255.  Draw the same
+        # mobject once with the background stroke arrays (fill suppressed)
+        # before the normal pass.  Leaf-only, so a container's children still
+        # get their own background pass and nothing is painted twice.
+        _bg_w = getattr(mob, 'background_stroke_width', 0) or 0
+        _bg_rgbas = getattr(mob, 'background_stroke_rgbas', None)
+        if (_bg_w > 0 and _bg_rgbas is not None and len(_bg_rgbas) > 0
+                and not getattr(self, '_rtm_in_bg_stroke', False)
+                and not getattr(mob, 'submobjects', None)):
+            _saved = (mob.stroke_width, mob.stroke_rgbas, mob.fill_rgbas)
+            try:
+                mob.stroke_width = _bg_w
+                mob.stroke_rgbas = _bg_rgbas
+                try:
+                    _f = mob.fill_rgbas
+                    if _f is not None and len(_f) > 0:
+                        _f = _f.copy()
+                        _f[:, 3] = 0.0
+                        mob.fill_rgbas = _f
+                except Exception:
+                    pass
+                self._rtm_in_bg_stroke = True
+                self._send_impl(mob, angle, parent_alpha=parent_alpha,
+                                parent_offset=parent_offset,
+                                parent_transforming=parent_transforming,
+                                parent_is_text=parent_is_text,
+                                _skip_children=True)
+            finally:
+                self._rtm_in_bg_stroke = False
+                mob.stroke_width, mob.stroke_rgbas, mob.fill_rgbas = _saved
+
         # Collection pass (see _PaintQueue): record what this subtree would
         # paint, in its own depth order, instead of painting it now.  Only the
         # nodes that paint themselves as a unit land here; a VGroup container
         # falls through to its branch below and is walked, so its leaves are
         # queued individually and can interleave with the other roots'.
         collect = getattr(self, '_paint_queue', None)
-        if collect is not None and self._paint_as_unit(mob):
+        if (collect is not None and self._paint_as_unit(mob)
+                and not _gradient_flat_shape(mob)):
             if (mob.submobjects
                     and not isinstance(mob, (Arrow, DashedLine, Text))
                     and not getattr(mob, '_is_text', False)
@@ -549,6 +603,12 @@ class PaintMixin:
         rot += grow_rot
 
         is_text = isinstance(mob, Text) or getattr(mob, '_is_text', False) or parent_is_text
+
+        if _gradient_flat_shape(mob):
+            self._send_vmobject(mob, a, w, h,
+                                None if is_text else parent_offset, rot,
+                                is_text=is_text)
+            return
 
         if isinstance(mob, Text) and hasattr(mob, 'submobjects') and mob.submobjects:
             # Tag all text characters so they're recognized as text even
@@ -689,9 +749,17 @@ class PaintMixin:
                     new_center = np.array(about, dtype=float) + np.array([rx, ry, 0.0])
                     sub_offset = sub_offset + (new_center - sub_center)
                 if vgroup_progress < 1.0 and num_subs > 1:
-                    full_length = (num_subs - 1) * 1.0 + 1
+                    # CE's ``Animation.get_sub_alpha``:
+                    #   full_length = (num - 1) * lag_ratio + 1
+                    #   value       = alpha * full_length
+                    #   lower       = index * lag_ratio
+                    # ``Create``/``Uncreate`` stamp their own ``lag_ratio`` on
+                    # the mobject; anything else keeps the historical
+                    # lag_ratio == 1.0 split.
+                    lag = float(getattr(mob, '_vulkan_lag_ratio', 1.0) or 0.0)
+                    full_length = (num_subs - 1) * lag + 1
                     value = vgroup_progress * full_length
-                    lower = i * 1.0
+                    lower = i * lag
                     sub_progress = max(0.0, min(1.0, value - lower))
                     sub._vulkan_progress = sub_progress
                     # What *we* put there, so release_split() can take it back
