@@ -348,6 +348,48 @@ class PaintMixin:
         mob._baseline_dy = dy
         return dy
 
+    def _path_is_a_straight_cubic(self, mob):
+        """True when the path is still ONE straight cubic.
+
+        `_send_line` / `_send_dashed_line` / `_send_arrow` all assume that: they
+        stroke ``points[0] -> points[-1]`` (plus, for an Arrow, the tip).  But
+        ``become()`` swaps a mobject's points without changing its class, so a
+        ``Line`` or ``Arrow`` that became a closed curve kept its branch -- and
+        on a closed path the two endpoints coincide, so ``Line.become(Circle())``
+        drew NOTHING at all while CE drew the circle (measured against CE:
+        mean|diff| 0.67, RTM's frame blank; ``Arrow.become(Circle())`` left a
+        stray shaft fragment, 0.75).  A ``Line(path_arc=...)`` is curved for the
+        same reason and belongs on the point path too.
+        """
+        try:
+            pts = mob.get_points()
+        except Exception:
+            return False
+        return (pts is not None and len(pts) == 4
+                and self._edges_are_straight(pts))
+
+    def _dot_path_is_round(self, mob):
+        """True when a Dot's points still form one circle.
+
+        `_send_dot` strokes a filled disc from the mobject's own point box, so a
+        ``Dot`` that ``become``-ed a Square kept its branch and drew nothing at
+        all -- the Square's style is stroke-only and the disc sender is
+        fill-only (measured against CE: mean|diff| 0.97, RTM's frame blank).
+        """
+        try:
+            pts = mob.get_points()
+        except Exception:
+            return False
+        if pts is None or len(pts) < 4:
+            return False
+        anchors = np.asarray(pts, dtype=float)[0::4]
+        lo, hi = anchors.min(axis=0), anchors.max(axis=0)
+        c = (lo + hi) / 2.0
+        d = np.linalg.norm(anchors[:, :2] - c[:2], axis=1)
+        if len(d) == 0 or float(d.min()) <= 0.0 or float(d.max()) > float(d.min()) * 1.001:
+            return False
+        return self._points_hug_circle(pts, c[:2], float(d.min()))
+
     @staticmethod
     def _edges_are_straight(pts):
         """True when every closed cubic-bezier edge keeps its two control
@@ -837,7 +879,7 @@ class PaintMixin:
                 # Arrow: during Rotating/transforms, _send_vmobject only
                 # renders the shaft bezier — the tip polygon is a submobject
                 # that never gets drawn. Route through _send_arrow instead.
-                if isinstance(mob, Arrow):
+                if isinstance(mob, Arrow) and self._path_is_a_straight_cubic(mob):
                     screen_rot = -rot
                     self._dbg_arrow(mob, "transforming", parent_transforming)
                     self._send_arrow(mob, a, w, h, screen_rot, None if is_text else parent_offset)
@@ -998,7 +1040,8 @@ class PaintMixin:
             # the fill array to the drawn prefix, which is exactly CE's
             # `pointwise_become_partial` on a fill-only shape.
             _d_progress = getattr(mob, '_vulkan_progress', 1.0)
-            if hasattr(mob, "_vulkan_progress_upper") or _d_progress < 1.0:
+            if (hasattr(mob, "_vulkan_progress_upper") or _d_progress < 1.0
+                    or not self._dot_path_is_round(mob)):
                 self._send_vmobject(mob, a, w, h,
                                     None if is_text else parent_offset, rot,
                                     is_text=is_text)
@@ -1056,8 +1099,15 @@ class PaintMixin:
             else:
                 self._send_circle(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Arrow):
-            self._dbg_arrow(mob, "main", parent_transforming)
-            self._send_arrow(mob, a, w, h, screen_rot, parent_offset)
+            # Same rule as Line: `_send_arrow` strokes the shaft between the
+            # path's endpoints plus `mob.tip`, which is only the arrow's shape
+            # while the shaft is still one straight cubic.
+            if self._path_is_a_straight_cubic(mob):
+                self._dbg_arrow(mob, "main", parent_transforming)
+                self._send_arrow(mob, a, w, h, screen_rot, parent_offset)
+            else:
+                self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
+                                    rot, is_text=is_text)
             # `_send_arrow` draws the shaft AND `mob.tip`, which is why Arrow
             # is left out of the family walk below ("Arrow is already fully
             # handled by _send_arrow").  True for `tip`, false for anything
@@ -1085,7 +1135,13 @@ class PaintMixin:
         elif isinstance(mob, DashedLine):
             self._send_dashed_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Line):
-            self._send_line(mob, a, w, h, screen_rot, parent_offset)
+            # `_send_line` strokes points[0] -> points[-1] only, so a Line that
+            # became a closed curve (or a Line(path_arc=...)) must tessellate.
+            if self._path_is_a_straight_cubic(mob):
+                self._send_line(mob, a, w, h, screen_rot, parent_offset)
+            else:
+                self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
+                                    rot, is_text=is_text)
         elif isinstance(mob, Arc):
             # `_send_arc` reads mob.radius / start_angle -- construction-time
             # attributes that a partial draw (`Create`) or a scale does not
