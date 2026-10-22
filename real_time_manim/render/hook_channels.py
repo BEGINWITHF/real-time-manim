@@ -503,8 +503,6 @@ def _write_indicate(anim, mob, alpha):
     on the first frame of its own Indicate instead of swelling (measured:
     IndicationAnimations frame 46 mean|d| 8.38, OptionalDependencyFallback
     2.74, PolygramsAndMatchers 1.60 -- all reported as "grows from no size").
-    ``Flash`` and ``Circumscribe`` do not morph points, so they keep the grow
-    channel.
 
     One exception: ``Blink`` is a ``Succession`` of ``UpdateFromFunc`` children
     that only step the mobject's opacity on and off -- nothing in CE resizes
