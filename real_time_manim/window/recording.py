@@ -160,7 +160,10 @@ class RecordingMixin:
 
         # Hide window for faster rendering (no compositing)
         if hidden and sys.platform == "win32":
-            import ctypes.wintypes
+            # `as _wintypes`: a bare `import ctypes.wintypes` would bind the
+            # local name ``ctypes`` for this whole function and shadow the
+            # module import above on platforms that skip this branch.
+            import ctypes.wintypes as _wintypes  # noqa: F401
             user32 = ctypes.windll.user32
             hwnd = user32.FindWindowW(None, "Real Time Manim")
             if hwnd:

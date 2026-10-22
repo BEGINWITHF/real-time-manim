@@ -214,12 +214,21 @@ class CoreMixin:
             _set_background.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self._set_background = _set_background
 
-        self.dll.Vulkan_SetWindowVisible.restype = None
-        self.dll.Vulkan_SetWindowVisible.argtypes = [ctypes.c_int]
-        self.dll.Vulkan_InitEx.restype = ctypes.c_int
-        self.dll.Vulkan_InitEx.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        # Hidden-window init and show/hide are Windows-only exports (mac builds
+        # the window through Vulkan_Init and hides it via orderOut on shutdown).
+        # Bind them the way SetBackgroundColor is bound above: the call sites
+        # already getattr-guard, but these bind lines must not touch a missing
+        # symbol.
+        _set_visible = getattr(self.dll, 'Vulkan_SetWindowVisible', None)
+        if _set_visible is not None:
+            _set_visible.restype = None
+            _set_visible.argtypes = [ctypes.c_int]
+        _init_ex = getattr(self.dll, 'Vulkan_InitEx', None)
+        if _init_ex is not None:
+            _init_ex.restype = ctypes.c_int
+            _init_ex.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
 
-        init_ex = getattr(self.dll, 'Vulkan_InitEx', None)
+        init_ex = _init_ex
         if self.hidden and init_ex is not None:
             # Create the window without ever showing it: offline work (frame
             # export, fast record) must not pop a window onto the desktop.
