@@ -171,9 +171,6 @@ class TransformMatchingAbstractBase(Animation):
         ftc = getattr(self, '_fade_target_copy', None)
         if ftc is not None:
             mobs.append(ftc)
-        kmc = getattr(self, '_key_mapped_copies', None)
-        if kmc is not None:
-            mobs.append(kmc)
         return mobs
 
     def clean_up_from_scene(self, scene):
@@ -193,13 +190,6 @@ class TransformMatchingAbstractBase(Animation):
         ftc = getattr(self, '_fade_target_copy', None)
         if ftc is not None and ftc in scene.mobjects:
             scene.remove(ftc)
-        kmc = getattr(self, '_key_mapped_copies', None)
-        if kmc is not None:
-            if kmc in scene.mobjects:
-                scene.remove(kmc)
-            for part in kmc.submobjects:
-                if part in scene.mobjects:
-                    scene.remove(part)
         # Remove sub-anims' transform_source/transform_target VGroups
         for sub_anim in getattr(self, '_anims', []):
             if hasattr(sub_anim, 'mobject') and sub_anim.mobject in scene.mobjects:

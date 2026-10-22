@@ -466,13 +466,11 @@ class PlayMixin:
             ftc = getattr(anim, '_fade_target_copy', None)
             if ftc is not None:
                 extras.append(ftc)
-            # TransformMatchingAbstractBase's key_map branch builds one
-            # crossfade copy per paired piece (CE: FadeTransformPieces).  They
-            # live in a detached VGroup, so the scene tree never reached them
-            # and the incoming glyphs stayed invisible until clean-up.
-            kmc = getattr(anim, '_key_mapped_copies', None)
-            if kmc is not None:
-                extras.append(kmc)
+            # The key_map branch needs no entry of its own: it builds CE's
+            # FadeTransformPieces, and `visit` recurses into the group's
+            # children below, so each piece's `_ghost` is presented by the
+            # `_ghost` lookup above (it used to build a detached VGroup of
+            # copies instead, which is what `_key_mapped_copies` was for).
             for mob in extras:
                 if mob not in curr_mobjects:
                     # Scene.add, so CE's absorb + foreground-to-front apply.
