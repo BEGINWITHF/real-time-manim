@@ -24,6 +24,7 @@
 #include "vulkan_core.h"
 #include "shared_types.h"
 #include "draw_common.h"
+#include "vulkan_texture.h"
 #undef Rect
 #undef Circle
 
@@ -106,7 +107,26 @@ static MLWindowDelegate *g_delegate = nil;
 
 // ── Exported API (mirrors platform.c) ───────────────────────────────────
 
+static int Mac_InitWindow(int w, int h, int hidden);
+
 int Vulkan_Init(int w, int h) {
+    return Mac_InitWindow(w, h, 0);
+}
+
+// Hidden-window init (mirrors platform.c): the window is created but never
+// ordered on screen, at the EXACT requested size with a 1x layer -- the 2.0
+// record pipeline (ffmpeg -video_size, fast-record buffers) assumes the
+// framebuffer is w x h, and a screen-clamped 2x Retina window breaks that.
+// Offline work never shows a window anyway, so nothing is lost.
+int Vulkan_InitEx(int w, int h, int hidden) {
+    return Mac_InitWindow(w, h, hidden);
+}
+
+static int g_init_hidden = 0;
+
+static int Mac_InitWindow(int w, int h, int hidden) {
+    g_init_hidden = hidden;
+
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -120,18 +140,21 @@ int Vulkan_Init(int w, int h) {
     // requested aspect ratio.  Compute the largest rect with the REQUESTED
     // aspect that fits the visible frame and use it for both the window
     // and the swapchain, so scene layout matches Windows exactly.
-    NSRect screenFrame = [[NSScreen mainScreen] visibleFrame];
-    double screen_aspect = screenFrame.size.width / screenFrame.size.height;
-    int cw, ch;
-    if (screen_aspect > g_aspect_ratio) {
-        ch = (h < (int)screenFrame.size.height) ? h : (int)screenFrame.size.height;
-        cw = (int)(ch * g_aspect_ratio + 0.5);
-    } else {
-        cw = (w < (int)screenFrame.size.width) ? w : (int)screenFrame.size.width;
-        ch = (int)(cw / g_aspect_ratio + 0.5);
+    // (Hidden windows are never seen: keep the exact requested size.)
+    int cw = w, ch = h;
+    if (!hidden) {
+        NSRect screenFrame = [[NSScreen mainScreen] visibleFrame];
+        double screen_aspect = screenFrame.size.width / screenFrame.size.height;
+        if (screen_aspect > g_aspect_ratio) {
+            ch = (h < (int)screenFrame.size.height) ? h : (int)screenFrame.size.height;
+            cw = (int)(ch * g_aspect_ratio + 0.5);
+        } else {
+            cw = (w < (int)screenFrame.size.width) ? w : (int)screenFrame.size.width;
+            ch = (int)(cw / g_aspect_ratio + 0.5);
+        }
+        if (cw < 16) cw = 16;
+        if (ch < 16) ch = 16;
     }
-    if (cw < 16) cw = 16;
-    if (ch < 16) ch = 16;
 
     NSRect contentRect = NSMakeRect(0, 0, cw, ch);
     g_window = [[NSWindow alloc]
@@ -163,21 +186,24 @@ int Vulkan_Init(int w, int h) {
     [g_view setLayer:g_layer];
     [g_window setContentView:g_view];
 
-    // Place the window on the MAIN screen (menu-bar screen) instead of
-    // letting AppKit pick a screen from keyboard focus — batch renders
-    // otherwise jump between displays and change size run-to-run.
-    NSRect mv = [[NSScreen mainScreen] visibleFrame];
-    [g_window setFrameOrigin:NSMakePoint(NSMidX(mv) - cw / 2.0,
-                                         NSMidY(mv) - ch / 2.0)];
-    [g_window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
+    if (!hidden) {
+        // Place the window on the MAIN screen (menu-bar screen) instead of
+        // letting AppKit pick a screen from keyboard focus — batch renders
+        // otherwise jump between displays and change size run-to-run.
+        NSRect mv = [[NSScreen mainScreen] visibleFrame];
+        [g_window setFrameOrigin:NSMakePoint(NSMidX(mv) - cw / 2.0,
+                                             NSMidY(mv) - ch / 2.0)];
+        [g_window makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+    }
 
     // Match the window's REAL backing scale (2x on Retina, 1x on non-Retina)
     // and size the drawable in PHYSICAL pixels.  Read the scale AFTER the
     // window is ordered on screen: before that the window has no screen and
     // the scale can report 1, producing a swapchain that gets rebuilt on the
-    // first ticks (and, pre-lock, a race with the readback worker).
-    g_layer.contentsScale = [g_window backingScaleFactor];
+    // first ticks (and, pre-lock, a race with the readback worker).  Hidden
+    // windows force 1x so the framebuffer is exactly w x h physical pixels.
+    g_layer.contentsScale = hidden ? 1.0 : [g_window backingScaleFactor];
     if (g_layer.contentsScale < 1.0) g_layer.contentsScale = 1.0;
     g_layer.drawableSize = CGSizeMake(cw * g_layer.contentsScale,
                                       ch * g_layer.contentsScale);
@@ -215,7 +241,7 @@ int Vulkan_Tick(void) {
         // contentsScale every tick — AppKit can reset it if the window moves
         // to a display with a different backing scale.
         NSRect vb = [g_view bounds];
-        g_layer.contentsScale = [g_window backingScaleFactor];
+        g_layer.contentsScale = g_init_hidden ? 1.0 : [g_window backingScaleFactor];
         if (g_layer.contentsScale < 1.0) g_layer.contentsScale = 1.0;
         int dw = (int)(vb.size.width * g_layer.contentsScale + 0.5);
         int dh = (int)(vb.size.height * g_layer.contentsScale + 0.5);
@@ -293,11 +319,26 @@ void AddPolygon(float x, float y, int r, int g, int b, int border_r, int border_
     }
 }
 
+// Textured quad — copied verbatim from platform.c (pure bookkeeping: pool
+// checks, texture upload, draw-cmd append; no Win32 calls, so it ports as-is).
+void AddImageQuad(unsigned long long token, unsigned long long digest, const unsigned char *rgba, int w, int h, const float *xy8, float opacity) {
+    if (g_image_quad_count >= MAX_IMAGE_QUADS || g_draw_cmd_count >= MAX_DRAW_CMDS) return;
+    if (rgba == NULL || xy8 == NULL || w <= 0 || h <= 0) return;
+    if (Tex_Ensure(token, digest, rgba, w, h) < 0) return;         // upload failed / table full
+    ImageQuad *q = &g_image_quads[g_image_quad_count];
+    q->token = token;
+    q->opacity = opacity;
+    for (int i = 0; i < 8; i++) q->xy[i] = xy8[i];
+    g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_IMAGE, g_image_quad_count };
+    g_image_quad_count++;
+}
+
 #define RESET_POOL(type, pool, count, cmd, ...) count = 0;
 
 void ClearShapes(void) {
     FOR_EACH_SHAPE(RESET_POOL)
     g_polygon_count = 0;
+    g_image_quad_count = 0;
     g_draw_cmd_count = 0;
 }
 
@@ -513,4 +554,82 @@ int SaveScreenshot(const char *path) {
     int ok = WriteBMP(path, w, h, bgr);
     free(bgr);
     return ok;
+}
+
+// ── Raw readback (mirrors platform.c's exports) ─────────────────────────
+// The Windows main line added these after the original port: the 2.0 frame
+// server and the record pipe call them unconditionally.  They ride the same
+// two-phase machinery as SaveScreenshot above -- arm before the tick, the
+// frame's own command buffer copies before present, then wait on the copy
+// frame's fence and read the mapped staging buffer.
+
+int Vulkan_GetReadbackSize(int *w, int *h) {
+    if (!g_is_ready || !g_swapchain) return 0;
+    if (w) *w = (int)g_swapchain_ext.width;
+    if (h) *h = (int)g_swapchain_ext.height;
+    return 1;
+}
+
+int Vulkan_RequestReadback(void) {
+    if (!g_is_ready || !g_swapchain) return -1;
+    int w = (int)g_swapchain_ext.width;
+    int h = (int)g_swapchain_ext.height;
+    if (w <= 0 || h <= 0) return -1;
+    g_readback_requested = 1;  // next drawn frame copies before present
+    return 0;                  // slot 0: the single mac staging buffer
+}
+
+int SaveScreenshotRaw(unsigned char *out, int out_cap, int *out_size) {
+    if (!g_is_ready || !g_swapchain || !out) return 0;
+    if (g_readback_buf == VK_NULL_HANDLE) return 0;
+    int w = (int)g_swapchain_ext.width;
+    int h = (int)g_swapchain_ext.height;
+    if (w <= 0 || h <= 0) return 0;
+
+    int rowBytes = ((w * 3 + 3) & ~3);
+    VkDeviceSize need = (VkDeviceSize)rowBytes * (VkDeviceSize)h;
+    if (out_size) *out_size = (int)need;    // also the "retry with this" hint
+    if (out_cap <= 0 || (VkDeviceSize)out_cap < need) return 0;
+
+    unsigned char *bgr = NULL;
+    int rw = 0, rh = 0;
+    if (!ReadbackFrame(&bgr, &rw, &rh)) {
+        g_readback_requested = 1;
+        return 0;
+    }
+    // ReadbackFrame's copy and the extent it measured are a matched pair
+    // (a resize clears available and is observed inside the guard), so the
+    // current-extent size is exactly what it handed back.
+    memcpy(out, bgr, (size_t)need);
+    free(bgr);
+    if (out_size) *out_size = (int)need;
+    return 1;
+}
+
+int SaveScreenshotRawBGRA(unsigned char *out, int out_cap, int *out_size) {
+    if (!g_is_ready || !g_swapchain || !out) return 0;
+    if (g_readback_buf == VK_NULL_HANDLE) return 0;
+    int w = (int)g_swapchain_ext.width;
+    int h = (int)g_swapchain_ext.height;
+    if (w <= 0 || h <= 0) return 0;
+
+    VkDeviceSize need = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+    if (out_size) *out_size = (int)need;    // also the "retry with this" hint
+    if (out_cap <= 0 || (VkDeviceSize)out_cap < need) return 0;
+
+    // Same guarded section as ReadbackFrame, but no colour conversion: one
+    // bulk memcpy out of the mapped staging buffer (raw BGRA, tight-packed).
+    __atomic_store_n(&g_readback_busy, 1, __ATOMIC_SEQ_CST);
+    if (!__atomic_load_n(&g_readback_available, __ATOMIC_SEQ_CST)) {
+        __atomic_store_n(&g_readback_busy, 0, __ATOMIC_SEQ_CST);
+        g_readback_requested = 1;
+        return 0;
+    }
+    vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_readback_fence_idx],
+                    VK_TRUE, UINT64_MAX);
+    __atomic_store_n(&g_readback_available, 0, __ATOMIC_SEQ_CST);
+    memcpy(out, g_readback_map, (size_t)need);
+    __atomic_store_n(&g_readback_busy, 0, __ATOMIC_SEQ_CST);
+    if (out_size) *out_size = (int)need;
+    return 1;
 }

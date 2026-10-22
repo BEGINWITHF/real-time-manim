@@ -1,6 +1,10 @@
 #ifndef SHARED_TYPES_H
 #define SHARED_TYPES_H
 
+#ifndef _WIN32
+#include <math.h>  /* sqrtf/ceilf (curve tessellation); MSVC picks them up transitively */
+#endif
+
 #ifndef MAX_SHAPES
 #define MAX_SHAPES 4096
 #endif
@@ -15,7 +19,11 @@
    "13 scenes within |d|<2" bucket).  The swapchain image is the resolve
    target, so nothing downstream changes. */
 #ifndef MSAA_SAMPLE_COUNT
+#ifdef _WIN32
 #define MSAA_SAMPLE_COUNT 8
+#else
+#define MSAA_SAMPLE_COUNT 4  /* Metal ceiling: 8x asserts at MTLTexture creation */
+#endif
 #endif
 
 /* --- circle/arc/ellipse tessellation ------------------------------------
