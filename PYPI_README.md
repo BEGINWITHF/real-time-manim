@@ -160,6 +160,9 @@ clear_tex_cache()                # wipe <media>/Tex and tex_cache/ (dry_run=True
 - **Chinese manual** — 144 pages, one section per API, each with a rendered
   sample clip:
   [RTM-Wiki/zh_CN](https://github.com/BEGINWITHF/real-time-manim/blob/C-version-clean/RTM-Wiki/zh_CN/README.md)
+- **English manual** — the same content in English, with the sample clips
+  re-rendered so the on-screen labels are English too:
+  [RTM-Wiki/en_US](https://github.com/BEGINWITHF/real-time-manim/blob/C-version-clean/RTM-Wiki/en_US/README.md)
 - **Agent manual** — the same material condensed for AI agents:
   [RTM-Wiki/agent](https://github.com/BEGINWITHF/real-time-manim/blob/C-version-clean/RTM-Wiki/agent/README.md)
 

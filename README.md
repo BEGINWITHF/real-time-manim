@@ -108,11 +108,12 @@ flowchart LR
 
 - [`RTM-Wiki/zh_CN/`](RTM-Wiki/zh_CN/README.md) — the full Chinese manual: 144 pages, one section per
   API, each with a rendered sample clip.
+- [`RTM-Wiki/en_US/`](RTM-Wiki/en_US/README.md) — the same manual in English, with the sample clips
+  re-rendered so the on-screen labels are English too.
 - [`RTM-Wiki/agent/`](RTM-Wiki/agent/README.md) — the same material condensed for AI agents.
 - [**English wiki**](https://github.com/BEGINWITHF/real-time-manim/wiki) — a source-level walkthrough in
   eight chapters, from [01 Overview](https://github.com/BEGINWITHF/real-time-manim/wiki/01-Overview) to
   [08 Native Layer](https://github.com/BEGINWITHF/real-time-manim/wiki/08-Native-Layer).
-- [`docs/`](docs/) — design notes.
 
 ---
 
