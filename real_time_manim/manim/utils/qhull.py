@@ -14,7 +14,16 @@ class QuickHullPoint:
         self.coordinates = coordinates
 
     def __hash__(self) -> int:
-        return hash(self.coordinates.tobytes())
+        # `hash(bytes)` is salted with PYTHONHASHSEED, so every process put the
+        # same points in a different bucket order -- and everything downstream
+        # (frozenset of subfacets, set of facets, the QuickHull horizon sets)
+        # inherited that.  A ConvexHull3D's faces are TRANSLUCENT and overlap,
+        # so a different face order is a different picture: two renders of the
+        # wiki's 06-三维/03-多面体-hull clip (same script, same code) differed
+        # on 1.6% of their pixels, and no CE comparison of a hull sample could
+        # be stable.  Hash the coordinates by value instead: stable across
+        # processes and still consistent with __eq__ (exact array equality).
+        return hash(tuple(np.asarray(self.coordinates).ravel().tolist()))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, QuickHullPoint):
