@@ -896,6 +896,21 @@ class PaintMixin:
         if isinstance(mob, AbstractImageMobject) and not is_text:
             from real_time_manim.render.image import send_image
             if send_image(self, mob, a):
+                # CE paints the image's FAMILY, not just the bitmap:
+                # `ImageMobjectFromCamera.add_display_frame` (and the ctor's
+                # `default_display_frame_config`) put a `SurroundingRectangle`
+                # in `submobjects`, and the camera strokes it over the bitmap.
+                # Returning here skipped it, so the wiki's
+                # `04-图形与文本/15-图片与SVG-imagefromcamera` clip showed the
+                # captured image with NO border while CE draws a TEAL frame --
+                # end-state ink 24 % short, the largest end-state ink gap in
+                # the whole wiki sweep.  Paint the children AFTER the bitmap,
+                # which is the order CE's camera uses.
+                for sub in getattr(mob, "submobjects", None) or ():
+                    self._send(sub, angle, parent_alpha=parent_alpha,
+                               parent_offset=parent_offset,
+                               parent_transforming=parent_transforming,
+                               parent_is_text=parent_is_text)
                 return
 
         # For squares/rectangles whose points are already rotated (e.g. by
