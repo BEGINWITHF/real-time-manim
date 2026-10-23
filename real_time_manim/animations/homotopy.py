@@ -227,7 +227,15 @@ class Homotopy(Animation):
         super().finish()
         mob = self.mobject
         mob._transforming = False
-        if hasattr(mob, 'family_members_with_points'):
-            for fm in mob.family_members_with_points():
-                if id(fm) in self._orig_points:
-                    fm.points = self._orig_points[id(fm)].copy()
+        # CE leaves the mobject at its FINAL deformed state.  ``Homotopy`` is
+        # not a Transform -- there is no target copy to restore to -- and
+        # manim's ``Animation.finish`` touches no points.  RTM used to copy the
+        # begin-state points back here, so every homotopy visibly snapped back
+        # on its last frame: the wiki's
+        # ``03-动画/移动与旋转/02-沿路径与同态变换-homotopy`` clip ended on the
+        # UNDEFORMED rectangle while CE ends on the wave (measured at t=3.13 s:
+        # RTM's top edge back at y=148 where CE snakes 114..183, 3.03 % of the
+        # frame visibly different).  ``_orig_points`` has done its job by the
+        # last interpolate() -- every frame re-derives the deformation from it,
+        # so nothing needs restoring.
+        self._orig_points.clear()
