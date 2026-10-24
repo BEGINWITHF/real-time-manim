@@ -376,7 +376,7 @@ def __init__(self, scene_cls, fps=60, out_dir="frames", use_bar=True, width=None
 | `scene_cls` | `type \| Scene \| Callable` | — | scene to preview (same forms as `fast_record_scene`) |
 | `fps` | `int` | `60` | frame-number rate (`120` = frame 120 = `t = 120/fps`) |
 | `out_dir` | `str` | `"frames"` | directory `s` / `Save PNG` writes into |
-| `use_bar` | `bool` | `True` | `False` → terminal input (no GUI toolkit); auto-`False` off Windows |
+| `use_bar` | `bool` | `True` | `False` → terminal input (no GUI toolkit); auto-`False` where no native bar exists (Windows/macOS have one) |
 | `width` / `height` | `int \| None` | `None` | window size (forced to 1920×1080) |
 | `verbose` | `bool` | `True` | print prepare time and status lines |
 | `controls` | `str` | `"input"` | `"input"` (text field) or `"slider"` (scrubber); aliases `box`/`text`/`edit`, `bar`/`progress`/`progressbar`/`scrub` |
@@ -387,6 +387,8 @@ def __init__(self, scene_cls, fps=60, out_dir="frames", use_bar=True, width=None
 - `notes`:
   - Input syntax: `120`/`120f` frame, `1.5`/`1.5s` seconds, `+10`/`-1` step N frames, `s` save PNG, `p` play from here, `?` help, `q` quit. Out-of-range clamps; bad input prints e.g. `[rtm] cannot read '{x}' -- try 120, 2.5s, +1, s, q`.
   - Title bar shows `frame {i}/{last}   t={t:.3f}s`.
+  - Bar: `Win32Bar` (Windows) and `MacBar` (macOS) are native bar windows docked under the video. Both use the same widgets (`input`: text + Jump/Save PNG/Quit; `slider`: scrubber + Save PNG/Quit).
+  - macOS AppKit runs only on the main thread, so the native bar queues events and `FramePreview._pump_bar()` drains them into `_queue`; `_dispatch` remains the sole timeline owner. `FramePreview.run()` tells the platform layer to reserve room before revealing the hidden window (`Vulkan_SetPreviewBarReserve`), so the docked bar stays clear of an auto-hiding Dock. `MacBar` falls back to terminal input if the dylib lacks the preview-bar exports.
   - A seek replays **animation** state; custom-updater / `TracedPath`-only objects are exact forward, approximate backwards.
 - `errs`:
   - `ValueError: "controls must be 'input' or 'slider', got {value!r}"`.

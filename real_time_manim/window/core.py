@@ -229,11 +229,9 @@ class CoreMixin:
             _set_background.argtypes = [ctypes.c_float, ctypes.c_float, ctypes.c_float]
         self._set_background = _set_background
 
-        # Hidden-window init and show/hide are Windows-only exports (mac builds
-        # the window through Vulkan_Init and hides it via orderOut on shutdown).
-        # Bind them the way SetBackgroundColor is bound above: the call sites
-        # already getattr-guard, but these bind lines must not touch a missing
-        # symbol.
+        # Hidden-window init and show/hide.  Both platforms export them today,
+        # but bind them defensively: an older bundled library may lack them,
+        # and the call sites already getattr-guard.
         _set_visible = getattr(self.dll, 'Vulkan_SetWindowVisible', None)
         if _set_visible is not None:
             _set_visible.restype = None
