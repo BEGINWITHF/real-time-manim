@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING
 try:
     __version__ = version("real-time-manim")
 except PackageNotFoundError:          # running from a source tree
-    __version__ = "2.0.0"
+    __version__ = "2.0.1"
 
 #: The ManimCE release bundled in ``real_time_manim/manim/``.
 MANIM_BUNDLE_VERSION = "0.21.0"
