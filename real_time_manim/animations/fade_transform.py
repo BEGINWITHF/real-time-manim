@@ -28,6 +28,7 @@ class FadeTransform(Animation):
         self.dim_to_match = dim_to_match
         self._source_start_pos = None
         self._target_start_pos = None
+        self._source_start = None
         try:
             self._ghost = target_mobject.copy()
             self._ghost._transforming = True
@@ -67,6 +68,21 @@ class FadeTransform(Animation):
             self._source_copy = self._ghost.copy()
             self._target_copy = self.target_mobject.copy()
             self._source_copy.align_data(self._target_copy)
+            # CE's FadeTransform IS a Transform, so the OUTGOING piece morphs
+            # into the target while it fades: at every instant the fading source
+            # and the fading-in ghost are the SAME shape, which is why CE's
+            # crossfade reads as one letter.  RTM morphed only the ghost and
+            # faded the source in place, so the two shapes differed and the
+            # outgoing letter ghosted over the incoming one -- the wiki's
+            # key_map demo read "ħat" instead of a clean crossfade into "hat".
+            # Snapshot the source's own start (aligned like the ghost's) so
+            # `interpolate` can morph it too.
+            try:
+                self._source_start = self.mobject.copy()
+                self._source_start.align_data(self._target_copy)
+                self.mobject.align_data(self._target_copy)
+            except Exception:
+                self._source_start = None
             set_anim_opacity(self._ghost, 0.0)
         self._park_opacity(self.mobject, 1.0)
         set_anim_opacity(self.target_mobject, 0.0)
@@ -87,7 +103,22 @@ class FadeTransform(Animation):
             self._source_start_pos * (1.0 - alpha)
             + self._target_start_pos * alpha
         )
-        self.mobject.move_to(cur_pos)
+        if self._source_start is not None:
+            # Morph the source toward the target the way CE's Transform does, so
+            # the outgoing and the incoming shape coincide at every alpha (see
+            # begin()).  `_source_start` is aligned to `_target_copy`, and so is
+            # `self.mobject`, so the three families zip member for member.
+            try:
+                for m, s, tgt in zip(
+                    self.mobject.family_members_with_points(),
+                    self._source_start.family_members_with_points(),
+                    self._target_copy.family_members_with_points(),
+                ):
+                    m.interpolate(s, tgt, alpha)
+            except Exception:
+                self.mobject.move_to(cur_pos)
+        else:
+            self.mobject.move_to(cur_pos)
         if self._ghost is not None:
             # Morph the POINTED members of the whole family level by level,
             # the way Transform.interpolate_mobject does.  Interpolating only

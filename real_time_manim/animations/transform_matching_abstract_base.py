@@ -92,27 +92,19 @@ class TransformMatchingAbstractBase(Animation):
         if len(key_mapped_source.submobjects) > 0:
             # CE pairs these with FadeTransformPieces: each part fades out where
             # it stands while a COPY of its partner fades in at the partner's
-            # place -- a per-piece crossfade.  RTM used one whole-group
-            # FadeTransform, whose single ghost is stretched to the source's
-            # bounding box and moved to its centre, so during the transition the
-            # source stayed at full strength and the (wrongly sized) target ghost
-            # was painted on top of it: the wiki's key_map demo showed "c" and
-            # "h" at once ("⟅at" instead of a clean crossfade into "hat").
-            # Build the same per-piece crossfade the mismatch branch below uses.
-            key_mapped_copies = VGroup()
-            for src_part, tgt_part in zip(key_mapped_source.submobjects,
-                                          key_mapped_target.submobjects):
-                part_copy = tgt_part.copy()
-                key_mapped_copies.add(part_copy)
-                self._anims.append(
-                    _WrappedFadeOut(src_part, shift=None, target_position=tgt_part,
+            # place, AND the source part is stretched toward the partner's box
+            # on the way (FadeTransform is a Transform with a fade).  RTM's
+            # hand-rolled version below used _WrappedFadeOut + FadeIn, which
+            # moves the part to the partner's centre but never rescales it, so
+            # the outgoing "c" stayed its own size on top of the incoming "h"
+            # and read as "not fading out" (measured on the wiki's key_map demo:
+            # 16 % more ink in the first-letter box through the whole crossfade
+            # than CE; the code comment claimed the per-piece crossfade matched
+            # CE, but it only matched the fade, not the stretch).
+            self._anims.append(
+                FadeTransformPieces(key_mapped_source, key_mapped_target,
                                     run_time=self.run_time)
-                )
-                self._anims.append(
-                    FadeIn(part_copy, shift=None, target_position=part_copy,
-                           run_time=self.run_time)
-                )
-            self._key_mapped_copies = key_mapped_copies
+            )
 
         fade_source_parts = []
         fade_target_parts = []
@@ -179,9 +171,6 @@ class TransformMatchingAbstractBase(Animation):
         ftc = getattr(self, '_fade_target_copy', None)
         if ftc is not None:
             mobs.append(ftc)
-        kmc = getattr(self, '_key_mapped_copies', None)
-        if kmc is not None:
-            mobs.append(kmc)
         return mobs
 
     def clean_up_from_scene(self, scene):
@@ -201,13 +190,6 @@ class TransformMatchingAbstractBase(Animation):
         ftc = getattr(self, '_fade_target_copy', None)
         if ftc is not None and ftc in scene.mobjects:
             scene.remove(ftc)
-        kmc = getattr(self, '_key_mapped_copies', None)
-        if kmc is not None:
-            if kmc in scene.mobjects:
-                scene.remove(kmc)
-            for part in kmc.submobjects:
-                if part in scene.mobjects:
-                    scene.remove(part)
         # Remove sub-anims' transform_source/transform_target VGroups
         for sub_anim in getattr(self, '_anims', []):
             if hasattr(sub_anim, 'mobject') and sub_anim.mobject in scene.mobjects:

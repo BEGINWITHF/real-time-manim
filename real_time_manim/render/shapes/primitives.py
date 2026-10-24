@@ -265,6 +265,29 @@ class PrimitiveMixin:
         return mob.width / 2.0
 
     @staticmethod
+    def _points_hug_circle(pts, centre, radius, tol=0.01):
+        """True when every point sampled along the path sits on that circle.
+
+        A cubic bezier's control polygon hugs its circle to within 0.03 %; a
+        straight edge's midpoint sits at cos(45 deg) = 0.707 r, so a 1 % window
+        cleanly splits a real circle from a quad -- or from any other closed
+        path whose anchors merely happen to be equidistant.
+        """
+        pts = np.asarray(pts, dtype=float)
+        if len(pts) < 4 or radius <= 0.0:
+            return False
+        centre = np.asarray(centre, dtype=float)[:2]
+        for cubic in pts.reshape(-1, 4, 3):
+            p0, p1, p2, p3 = (cubic[0][:2], cubic[1][:2], cubic[2][:2], cubic[3][:2])
+            for t in (0.25, 0.5, 0.75):
+                u = 1.0 - t
+                b = (u * u * u * p0 + 3.0 * u * u * t * p1
+                     + 3.0 * u * t * t * p2 + t * t * t * p3)
+                if abs(float(np.linalg.norm(b - centre)) - radius) > radius * tol:
+                    return False
+        return True
+
+    @staticmethod
     def _circle_round_radius(mob):
         """The shared anchor radius while the path still IS one circle, else None.
 
@@ -287,12 +310,36 @@ class PrimitiveMixin:
         Returns the shared radius, or None when the anchors disagree; the
         caller then routes the shape through the point path, which tessellates
         the bezier that is actually there.
+
+        The sender also strokes a **complete** disc, so a path that is not
+        closed must never reach it -- and neither check below was here before
+        2.0.0's `pointwise_become_partial` support landed:
+
+        * two anchors are ALWAYS equidistant from their own bbox centre (it is
+          their midpoint), so an open single-quadrant arc passed the distance
+          test and `_send_circle` drew a full disc of radius
+          ``|get_start() - get_center()|``.  Measured on the wiki's
+          `07b-VMobject样式进阶` `partial` sample, panel `[0.75, 1.0]`: an 86 px
+          ring where CE strokes a 122 px quarter arc (RTM/CE mean|diff| 0.40 on
+          that clip against a 0.13-0.24 baseline).
+        * a >=3-anchor arc can also be equidistant by accident: `[0, 0.75]` of
+          the same circle returns 0.9, the *right* radius, and still drew the
+          whole circle instead of three quarters of it.
+
+        Requiring the path to close fixes both; a real `Circle` has
+        ``points[0] == points[-1]`` (`[0, 1]` above: 8 anchors, closed).
         """
         try:
             pts = getattr(mob, "points", None)
             if pts is None or len(pts) < 4:
                 return None
             anchors = np.asarray(pts[0::4], dtype=float)
+            if len(anchors) < 3:
+                return None
+            first = np.asarray(pts[0], dtype=float)
+            last = np.asarray(pts[-1], dtype=float)
+            if not (abs(first[0] - last[0]) < 1e-3 and abs(first[1] - last[1]) < 1e-3):
+                return None
             lo = anchors.min(axis=0)
             hi = anchors.max(axis=0)
             c = (lo + hi) / 2.0
@@ -304,6 +351,13 @@ class PrimitiveMixin:
             if r <= 0.0:
                 return None
             if float(d.max()) > r * 1.001:
+                return None
+            # ...and equidistant anchors are still not enough: a `Circle` that
+            # `become`-ed a Square keeps four corners whose bbox centre is the
+            # square's own centre, so every anchor sits at the same distance and
+            # the closed+round test above passes while the shape is a quad.
+            # Sample the cubics instead (see `_points_hug_circle`).
+            if not PrimitiveMixin._points_hug_circle(pts, c[:2], r):
                 return None
             return r
         except Exception:
