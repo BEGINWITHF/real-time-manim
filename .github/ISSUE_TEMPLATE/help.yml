@@ -1,0 +1,89 @@
+name: Help
+description: Ask for help with installation, usage, or debugging
+title: "[Help] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when you need help. If you have a reproducible bug, please use **Bug report** instead.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I checked the README and RTM-Wiki, and searched existing issues.
+          required: true
+        - label: I am lazy to check
+          required: false
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe your goal and what is blocking you.
+    validations:
+      required: true
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Minimal code or command
+      description: Share the smallest code or command that shows the problem.
+      render: python
+    validations:
+      required: false
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error or unexpected output
+      description: Paste the full traceback or output.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Include workarounds, documentation you read, or changes you tested.
+    validations:
+      required: true
+
+  - type: input
+    id: rtm-version
+    attributes:
+      label: real-time-manim version
+      placeholder: "2.0.1"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, logs, installation details, or anything else.
+    validations:
+      required: false

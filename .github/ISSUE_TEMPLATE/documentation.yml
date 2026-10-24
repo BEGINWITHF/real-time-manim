@@ -1,0 +1,88 @@
+name: Documentation error
+description: Report a typo, broken link, outdated example, or incorrect documentation
+title: "[Docs] "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the documentation. Please include the exact page, section, or link.
+
+  - type: input
+    id: location
+    attributes:
+      label: Affected page, section, or link
+      description: Provide a URL, or a precise file path and heading.
+      placeholder: "https://github.com/BEGINWITHF/real-time-manim/... or RTM-Wiki/.../page.md#section"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Documentation area
+      options:
+        - README
+        - RTM-Wiki (English)
+        - RTM-Wiki (Chinese)
+        - Python docstring
+        - PyPI page
+        - Examples
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: problem-type
+    attributes:
+      label: Type of problem
+      options:
+        - Typo or formatting
+        - Incorrect information
+        - Outdated example
+        - Broken link
+        - Missing documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong?
+      description: Quote the current text or describe the incorrect example.
+    validations:
+      required: true
+
+  - type: textarea
+    id: correction
+    attributes:
+      label: Suggested correction
+      description: If possible, provide the corrected text, code, or link.
+    validations:
+      required: false
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshot, logs, or reference
+      description: Add screenshots, tracebacks, or a source that shows the correct behavior.
+    validations:
+      required: false
+
+  - type: input
+    id: rtm-version
+    attributes:
+      label: real-time-manim version
+      description: Optional, but useful if the documentation changed between releases.
+      placeholder: "2.0.1"
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add anything else that helps locate or fix the issue.
+    validations:
+      required: false

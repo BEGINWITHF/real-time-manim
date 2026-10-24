@@ -1,0 +1,73 @@
+name: Feature request
+description: Request a new capability for real-time-manim
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for a **new capability**. If you want to improve something that already exists, use **Suggestion** instead.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I am lazy to check
+          required: false
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and use case
+      description: What are you trying to do, and what is missing today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: Proposed feature
+      description: Describe the behavior you would like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example API or usage
+      description: Show how the feature might look in user code.
+      render: python
+      placeholder: |
+        # What would you like to be able to write?
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: List existing workarounds or other designs you considered.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Willingness to contribute
+      options:
+        - Yes, I can open a pull request.
+        - Maybe, with guidance.
+        - No, I am only suggesting the idea.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, references, related issues, or upstream ManimCE behavior.
+    validations:
+      required: false

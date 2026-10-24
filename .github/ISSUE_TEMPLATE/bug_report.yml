@@ -1,0 +1,117 @@
+name: Bug report
+description: Report a reproducible bug in real-time-manim
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please include a **minimal, runnable reproduction**; issues without one may be closed.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I can reproduce this with the latest release.
+          required: true
+        - label: I am lazy to check
+          required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and the expected behavior.
+      placeholder: "When I ..., I expected ..., but ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide a minimal scene or command that triggers the bug.
+      render: python
+      placeholder: |
+        from real_time_manim import Scene, Square, BLUE
+        from real_time_manim.vulkan_bind import MLWindow, Create, Wait
+
+        class Demo(Scene):
+            def construct(self):
+                win = MLWindow(1920, 1080)
+                win.scene = self
+                win.play(Create(Square(color=BLUE)), run_time=1.0)
+                win.play(Wait(0.5))
+                win.close()
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Traceback or logs
+      description: Paste the full traceback or relevant terminal output.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: rtm-version
+    attributes:
+      label: real-time-manim version
+      placeholder: "2.0.1"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - PyPI
+        - TestPyPI
+        - Source checkout
+        - Editable install
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and Vulkan driver
+      description: Include the GPU model and driver version. `vulkaninfo --summary` is helpful on Windows and Linux.
+      placeholder: "NVIDIA RTX 4060 / driver 5xx.xx"
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, videos, recent changes, or anything else that helps.
+    validations:
+      required: false
