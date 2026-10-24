@@ -18,12 +18,14 @@ def record_scene(scene, out_path=None, *, fps=60, overwrite=True, cleanup=True, 
 | --- | --- | --- | --- |
 | `scene` | `type \| instance \| Callable[[], None]` | — | a `Scene` subclass, a `Scene` instance, or a zero-argument callable |
 | `out_path` | `str \| None` | `None` → `~/Downloads/output.mp4` | target `.mp4`; when a scene opens several windows, `_partN` is appended automatically |
-| `fps` | `int` | `60` (forced) | frame rate at which a background thread grabs frames from the live window |
+| `fps` | `int` | `60` (forced) | frame rate of the live capture; every frame the play loop draws is captured exactly once |
 | `overwrite` | `bool` | `True` | when `False`, an existing `out_path` is not overwritten |
 | `cleanup` | `bool` | `True` (recommended) | delete the temporary manim `media/` directory after recording; `False` keeps it |
 | `verbose` | `bool` | `True` | print a progress line for each window |
 
 > Note: the recording frame rate **only supports `60`** (`SUPPORTED_FPS`)
+
+`record_scene` is frame-exact: a `win.play(..., run_time=1.0)` at 60 fps contributes exactly 60 frames, so the MP4 is the same length as the scene schedule (the offline recorder produces the same frames). The capture runs on the render thread, one readback per drawn frame; the encoder write runs on a small writer thread so the visible animation stays real-time. On macOS the recording window's drawable is pinned to 1920×1080 while recording (a screen-clamped Retina window would otherwise capture 3420×1924 and need a per-frame downscale), then restored to the display's backing scale when `stop_record` runs.
 
 ### `fast_record_scene` (offline, no window by default)
 

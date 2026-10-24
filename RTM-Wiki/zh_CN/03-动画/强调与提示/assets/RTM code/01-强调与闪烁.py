@@ -7,9 +7,13 @@
     Blink(mobject, time_on=0.35, time_off=0.25, blinks=3, hide_at_end=True, **kwargs)   ✓
 不演示：`point` 传坐标点（传 mobject 时只取中心，两者画面等价）；
         `**kwargs` 里 Transform/Animation 的其余通用参数（无独立可视效果）。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

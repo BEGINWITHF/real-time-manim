@@ -11,9 +11,13 @@ Not demonstrated: `AddTextWordByWord` (`text_mobject` / `run_time` / `time_per_c
         the upstream source is annotated `# TODO, this is broken...`: word-splitting a plain `Text`
         yields nothing, and ManimCE itself renders a static frame too (a faithful reproduction, not a
         gap in RTM); the page also says it is "not recommended in new scripts".
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 import numpy as np
 from real_time_manim import (

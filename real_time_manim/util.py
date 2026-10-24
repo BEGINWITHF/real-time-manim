@@ -6,10 +6,10 @@ from scratch, which is slow and needs a working LaTeX toolchain every time.
 
 These functions let an application **cache** those SVGs so unchanged math is
 reused instead of recompiled, and **clean** the transient media folder the way
-the demo runner used to.  They are the library versions of the helpers that
-lived in ``run.py`` (``_restore_tex_cache`` / ``_save_tex_cache`` /
-``_clean_media``); every path and behaviour is explicit so each caller controls
-where the cache lives and how aggressive the cleanup is.
+the demo runner used to.  They are the library versions of the demo runner's
+``_restore_tex_cache`` / ``_save_tex_cache`` / ``_clean_media`` helpers; every
+path and behaviour is explicit so each caller controls where the cache lives
+and how aggressive the cleanup is.
 
 Typical use around a render::
 

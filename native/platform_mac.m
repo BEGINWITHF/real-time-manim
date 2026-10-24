@@ -123,6 +123,15 @@ int Vulkan_InitEx(int w, int h, int hidden) {
 }
 
 static int g_init_hidden = 0;
+// Set by Vulkan_SetPreviewBarReserve before a hidden window is revealed.
+static int g_preview_bar_reserved = 0;
+// Recording override: while non-zero the layer's drawable is pinned to this
+// physical size, so the framebuffer the readback sees is exactly the video's
+// 1920x1080 even though the on-screen window is screen-clamped and Retina
+// (3420x1924 on a 1710x962-point window).  Without it the live recorder had to
+// downscale 6.6 MP per frame in ffmpeg, which could not keep up with 60 fps.
+static int g_capture_w = 0;
+static int g_capture_h = 0;
 
 static int Mac_InitWindow(int w, int h, int hidden) {
     g_init_hidden = hidden;
@@ -135,6 +144,7 @@ static int Mac_InitWindow(int w, int h, int hidden) {
 
     g_aspect_ratio = (double)w / (double)h;
     g_should_close = 0;
+    g_preview_bar_reserved = 0;
 
     // macOS may clamp an oversized window to the screen, breaking the
     // requested aspect ratio.  Compute the largest rect with the REQUESTED
@@ -220,6 +230,845 @@ static int Mac_InitWindow(int w, int h, int hidden) {
     return 1;
 }
 
+// ── Preview control bar ─────────────────────────────────────────────────
+// macOS counterpart of Win32Bar in real_time_manim/preview.py: a small
+// native window docked right below the video window (never a second content
+// area in the video window).  AppKit only runs on the main thread, which is
+// also where FramePreview._loop calls Vulkan_Tick, so the native side queues
+// clicks/keystrokes and Python polls that queue (Vulkan_PollPreviewBar).  No
+// Python callback ever runs inside AppKit.
+//
+// The scrubber is a custom NSView rather than NSSlider on purpose: NSSlider's
+// mouseDown: runs a modal tracking loop, which would freeze this main-thread
+// event pump (and therefore frame scrubbing) until the mouse is released.
+// RTMScrubber returns immediately and handles mouseDragged:/mouseUp: as
+// separate events, so every drag step reaches Python and can draw a frame.
+
+enum {
+    RTM_BAR_NONE = 0,
+    RTM_BAR_SUBMIT = 1,
+    RTM_BAR_SAVE = 2,
+    RTM_BAR_QUIT = 3,
+    RTM_BAR_SEEK = 4,
+};
+
+#define RTM_BAR_QUEUE 128
+
+typedef struct {
+    int kind;
+    int value;
+    char text[256];
+} RTMBarEvent;
+
+static const CGFloat RTM_BAR_HEIGHT = 36.0;   // client height, like Win32Bar
+static const CGFloat RTM_BAR_GAP = 4.0;
+static const CGFloat RTM_BAR_TITLE = 28.0;    // fallback until a bar exists
+// Space between the bar's bottom edge and the display's visible frame.  The
+// Dock can auto-reveal over the bottom ~60 pt; a click there would go to the
+// Dock instead of the scrubber, so keep the whole bar above that strip.
+static const CGFloat RTM_BAR_BOTTOM_MARGIN = 64.0;
+
+@interface RTMScrubber : NSView {
+    int _frameCount;
+    int _value;
+    BOOL _dragging;
+    id _target;
+    SEL _action;
+}
+- (void)setFrameCount:(int)count;
+- (int)frameValue;
+- (void)setFrameValue:(int)value;
+- (void)setTarget:(id)target action:(SEL)action;
+@end
+
+@implementation RTMScrubber
+
+- (id)initWithFrame:(NSRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        _frameCount = 1;
+        _value = 0;
+        _dragging = NO;
+        _target = nil;
+        _action = NULL;
+    }
+    return self;
+}
+
+- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { (void)event; return YES; }
+
+- (void)setFrameCount:(int)count {
+    _frameCount = count > 0 ? count : 1;
+    [self setNeedsDisplay:YES];
+}
+
+- (int)frameValue { return _value; }
+
+- (void)setFrameValue:(int)value {
+    int last = _frameCount > 1 ? _frameCount - 1 : 0;
+    if (value < 0) value = 0;
+    if (value > last) value = last;
+    if (value == _value) return;
+    _value = value;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)setTarget:(id)target action:(SEL)action {
+    _target = target;
+    _action = action;
+}
+
+- (void)notify {
+    if (_target && _action) [NSApp sendAction:_action to:_target from:self];
+}
+
+- (void)seekToPoint:(NSPoint)p {
+    NSRect b = [self bounds];
+    CGFloat margin = 9.0;
+    CGFloat span = b.size.width - 2.0 * margin;
+    if (span < 1.0) span = 1.0;
+    double frac = (p.x - margin) / span;
+    if (frac < 0.0) frac = 0.0;
+    if (frac > 1.0) frac = 1.0;
+    int last = _frameCount > 1 ? _frameCount - 1 : 0;
+    int value = (int)llround(frac * (double)last);
+    [self setFrameValue:value];
+    [self notify];
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    _dragging = YES;
+    [[self window] makeFirstResponder:self];
+    [self seekToPoint:[self convertPoint:[event locationInWindow] fromView:nil]];
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    if (_dragging)
+        [self seekToPoint:[self convertPoint:[event locationInWindow] fromView:nil]];
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    if (_dragging) {
+        [self seekToPoint:[self convertPoint:[event locationInWindow] fromView:nil]];
+        _dragging = NO;
+    }
+}
+
+- (void)keyDown:(NSEvent *)event {
+    int last = _frameCount > 1 ? _frameCount - 1 : 0;
+    int step = 0;
+    switch ([event keyCode]) {
+        case 123: step = -1; break;                  // left
+        case 124: step = +1; break;                  // right
+        case 116: step = -10; break;                 // page up
+        case 121: step = +10; break;                 // page down
+        case 115: [self setFrameValue:0]; [self notify]; return;   // home
+        case 119: [self setFrameValue:last]; [self notify]; return; // end
+        default: [super keyDown:event]; return;
+    }
+    [self setFrameValue:_value + step];
+    [self notify];
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    NSRect b = [self bounds];
+    CGFloat margin = 9.0;
+    CGFloat trackW = b.size.width - 2.0 * margin;
+    if (trackW < 1.0) trackW = 1.0;
+    CGFloat cy = NSMidY(b);
+    CGFloat trackH = 4.0;
+    NSRect track = NSMakeRect(margin, cy - trackH / 2.0, trackW, trackH);
+
+    if ([[self window] firstResponder] == self) {
+        [[NSColor keyboardFocusIndicatorColor] setStroke];
+        NSBezierPath *focus = [NSBezierPath bezierPathWithRoundedRect:
+                               NSInsetRect(b, 1.5, 1.5) xRadius:4.0 yRadius:4.0];
+        [focus setLineWidth:2.0];
+        [focus stroke];
+    }
+
+    [[NSColor quaternaryLabelColor] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:track xRadius:2.0 yRadius:2.0] fill];
+
+    int last = _frameCount > 1 ? _frameCount - 1 : 0;
+    double frac = last > 0 ? (double)_value / (double)last : 0.0;
+
+    // TBS_AUTOTICKS in the Win32 bar: about ten reference marks.
+    int ticks = last > 0 ? 11 : 1;
+    [[NSColor tertiaryLabelColor] setStroke];
+    NSBezierPath *marks = [NSBezierPath bezierPath];
+    [marks setLineWidth:1.0];
+    for (int i = 0; i < ticks; i++) {
+        CGFloat tx = margin + trackW * (ticks > 1 ? (double)i / (double)(ticks - 1) : 0.0);
+        [marks moveToPoint:NSMakePoint(tx, cy - 7.0)];
+        [marks lineToPoint:NSMakePoint(tx, cy - 2.0)];
+    }
+    [marks stroke];
+
+    NSRect filled = track;
+    filled.size.width = trackW * frac;
+    [[NSColor controlAccentColor] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:filled xRadius:2.0 yRadius:2.0] fill];
+
+    CGFloat diameter = 14.0;
+    CGFloat kx = margin + trackW * frac;
+    NSRect knob = NSMakeRect(kx - diameter / 2.0, cy - diameter / 2.0,
+                             diameter, diameter);
+    [[NSColor controlBackgroundColor] setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:knob] fill];
+    [[NSColor controlAccentColor] setStroke];
+    NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:
+                          NSInsetRect(knob, 0.75, 0.75)];
+    [ring setLineWidth:1.5];
+    [ring stroke];
+}
+
+@end
+
+@interface RTMPreviewBar : NSObject <NSWindowDelegate> {
+    NSWindow *_window;
+    NSTextField *_edit;
+    RTMScrubber *_scrubber;
+    NSButton *_jump;
+    NSButton *_save;
+    NSButton *_quit;
+    int _nFrames;
+    int _sliderMode;
+    BOOL _closing;
+    RTMBarEvent _events[RTM_BAR_QUEUE];
+    int _head;
+    int _tail;
+    CGFloat _lastWidth;
+}
+- (BOOL)createWithFrames:(int)frames mode:(int)slider title:(const char *)title;
+- (void)destroy;
+- (void)tick;
+- (void)setCaption:(const char *)text;
+- (void)setPosition:(int)frame;
+- (CGFloat)frameHeight;
+- (int)pollValue:(int *)value text:(char *)text cap:(int)cap;
+@end
+
+@interface RTMPreviewBar ()
+- (void)layout;
+- (void)dock;
+- (void)focusInput;
+- (void)push:(int)kind value:(int)value text:(NSString *)text;
+@end
+
+@implementation RTMPreviewBar
+
+- (id)init {
+    self = [super init];
+    if (self) {
+        _head = _tail = 0;
+        _closing = NO;
+        _lastWidth = 0;
+    }
+    return self;
+}
+
+- (void)push:(int)kind value:(int)value text:(NSString *)text {
+    int next = (_tail + 1) % RTM_BAR_QUEUE;
+    if (next == _head)                      // full: drop the oldest event
+        _head = (_head + 1) % RTM_BAR_QUEUE;
+    _events[_tail].kind = kind;
+    _events[_tail].value = value;
+    _events[_tail].text[0] = 0;
+    if (text) {
+        const char *s = [text UTF8String];
+        if (s) snprintf(_events[_tail].text, sizeof(_events[_tail].text), "%s", s);
+    }
+    _tail = next;
+}
+
+- (BOOL)createWithFrames:(int)frames mode:(int)slider title:(const char *)title {
+    if (_window) [self destroy];
+    _nFrames = frames > 0 ? frames : 1;
+    _sliderMode = slider ? 1 : 0;
+    _closing = NO;
+    _head = _tail = 0;
+    _lastWidth = 0;
+
+    CGFloat width = 900.0;
+    if (g_window) width = MAX(360.0, NSWidth([g_window frame]));
+
+    NSRect contentRect = NSMakeRect(0, 0, width, RTM_BAR_HEIGHT);
+    _window = [[NSWindow alloc]
+        initWithContentRect:contentRect
+                  styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    [_window setReleasedWhenClosed:NO];
+    [_window setDelegate:self];
+    [_window setHidesOnDeactivate:NO];
+    [_window setTitle:(title ? [NSString stringWithUTF8String:title]
+                             : @"RTM frame preview")];
+
+    NSView *content = [[NSView alloc] initWithFrame:contentRect];
+    [_window setContentView:content];
+    [content release];
+
+    _edit = [[NSTextField alloc] initWithFrame:NSZeroRect];
+    [_edit setBezeled:YES];
+    [_edit setDrawsBackground:YES];
+    [_edit setEditable:YES];
+    [_edit setSelectable:YES];
+    [_edit setFont:[NSFont systemFontOfSize:13.0]];
+    [_edit setTarget:self];
+    [_edit setAction:@selector(submit:)];
+    [content addSubview:_edit];
+    [_edit release];
+
+    _jump = [NSButton buttonWithTitle:@"Jump" target:self action:@selector(submit:)];
+    [_jump setBezelStyle:NSBezelStyleRounded];
+    [_jump setKeyEquivalent:@"\r"];
+    [_jump setKeyEquivalentModifierMask:0];
+    [content addSubview:_jump];
+
+    _save = [NSButton buttonWithTitle:@"Save PNG" target:self
+                              action:@selector(savePressed:)];
+    [_save setBezelStyle:NSBezelStyleRounded];
+    [content addSubview:_save];
+
+    _quit = [NSButton buttonWithTitle:@"Quit" target:self
+                              action:@selector(quitPressed:)];
+    [_quit setBezelStyle:NSBezelStyleRounded];
+    [content addSubview:_quit];
+
+    _scrubber = [[RTMScrubber alloc] initWithFrame:NSZeroRect];
+    [_scrubber setFrameCount:_nFrames];
+    [_scrubber setTarget:self action:@selector(scrubberMoved:)];
+    [content addSubview:_scrubber];
+    [_scrubber release];
+
+    if (_sliderMode) {
+        [_edit setHidden:YES];
+        [_jump setHidden:YES];
+    } else {
+        [_scrubber setHidden:YES];
+    }
+
+    [self layout];
+    if (g_window) [g_window addChildWindow:_window ordered:NSWindowAbove];
+    [self dock];
+    [_window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    [self focusInput];
+    return YES;
+}
+
+- (void)layout {
+    if (!_window) return;
+    NSRect b = [[_window contentView] bounds];
+    CGFloat pad = 6.0;
+    CGFloat btnW = 80.0;          // Jump / Quit
+    CGFloat saveW = 104.0;        // "Save PNG" at 13 pt is ~60 pt + bezel
+    CGFloat h = b.size.height - 2.0 * pad;
+    CGFloat x = pad;
+    if (h < 18.0) h = 18.0;
+    if (_sliderMode) {
+        CGFloat w = b.size.width - saveW - btnW - 3.0 * pad;
+        if (w < 60.0) w = 60.0;
+        [_scrubber setFrame:NSMakeRect(x, pad, w, h)];
+        x += w + pad;
+        [_save setFrame:NSMakeRect(x, pad, saveW, h)];
+        x += saveW + 2.0;
+        [_quit setFrame:NSMakeRect(x, pad, btnW, h)];
+    } else {
+        CGFloat w = b.size.width - 2.0 * btnW - saveW - 4.0 * pad;
+        if (w < 60.0) w = 60.0;
+        [_edit setFrame:NSMakeRect(x, pad, w, h)];
+        x += w + pad;
+        [_jump setFrame:NSMakeRect(x, pad, btnW, h)];
+        x += btnW + 2.0;
+        [_save setFrame:NSMakeRect(x, pad, saveW, h)];
+        x += saveW + 2.0;
+        [_quit setFrame:NSMakeRect(x, pad, btnW, h)];
+    }
+}
+
+- (void)dock {
+    if (!_window || !g_window) return;
+    NSRect vf = [g_window frame];
+    NSRect wf = [_window frame];
+    CGFloat width = MAX(360.0, vf.size.width);
+    NSScreen *screen = [g_window screen];
+    if (!screen) screen = [NSScreen mainScreen];
+    NSRect vis = [screen visibleFrame];
+    if (width > vis.size.width) width = vis.size.width;
+    CGFloat x = vf.origin.x;
+    if (x + width > NSMaxX(vis)) x = NSMaxX(vis) - width;
+    if (x < vis.origin.x) x = vis.origin.x;
+    CGFloat y = vf.origin.y - wf.size.height - RTM_BAR_GAP;
+    if (y < vis.origin.y) y = vf.origin.y + RTM_BAR_GAP;
+    NSRect target = NSMakeRect(x, y, width, wf.size.height);
+    if (!NSEqualRects(wf, target)) [_window setFrame:target display:YES];
+    if (fabs(width - _lastWidth) > 0.5) {
+        _lastWidth = width;
+        [self layout];
+    }
+}
+
+- (void)tick {
+    [self dock];
+}
+
+- (void)focusInput {
+    if (!_window) return;
+    if (_edit && ![_edit isHidden]) [_window makeFirstResponder:_edit];
+    else if (_scrubber) [_window makeFirstResponder:_scrubber];
+}
+
+- (void)submit:(id)sender {
+    (void)sender;
+    if (!_edit) return;
+    NSString *text = [_edit stringValue];
+    if (text.length == 0) {             // Enter can reach both field and button
+        [self focusInput];
+        return;
+    }
+    [self push:RTM_BAR_SUBMIT value:0 text:text];
+    [_edit setStringValue:@""];
+    [self focusInput];
+}
+
+- (void)savePressed:(id)sender {
+    (void)sender;
+    [self push:RTM_BAR_SAVE value:0 text:nil];
+    [self focusInput];
+}
+
+- (void)quitPressed:(id)sender {
+    (void)sender;
+    [self push:RTM_BAR_QUIT value:0 text:nil];
+}
+
+- (void)scrubberMoved:(id)sender {
+    (void)sender;
+    [self push:RTM_BAR_SEEK value:[_scrubber frameValue] text:nil];
+}
+
+- (void)setCaption:(const char *)text {
+    if (!_window) return;
+    NSString *s = text ? [NSString stringWithUTF8String:text] : @"";
+    [_window setTitle:(s ? s : @"")];
+}
+
+- (void)setPosition:(int)frame {
+    if (_scrubber) [_scrubber setFrameValue:frame];
+}
+
+- (CGFloat)frameHeight {
+    return _window ? NSHeight([_window frame]) : 0.0;
+}
+
+- (int)pollValue:(int *)value text:(char *)text cap:(int)cap {
+    if (_head == _tail) return RTM_BAR_NONE;
+    RTMBarEvent *event = &_events[_head];
+    _head = (_head + 1) % RTM_BAR_QUEUE;
+    if (value) *value = event->value;
+    if (text && cap > 0) {
+        if (event->kind == RTM_BAR_SUBMIT) {
+            strncpy(text, event->text, (size_t)cap - 1);
+            text[cap - 1] = 0;
+        } else {
+            text[0] = 0;
+        }
+    }
+    return event->kind;
+}
+
+- (void)windowWillClose:(NSNotification *)note {
+    (void)note;
+    if (_closing) return;
+    [self push:RTM_BAR_QUIT value:0 text:nil];
+}
+
+- (void)destroy {
+    if (!_window) return;
+    _closing = YES;
+    NSWindow *window = _window;
+    _window = nil;
+    if (g_window) [g_window removeChildWindow:window];
+    [window setDelegate:nil];
+    [window orderOut:nil];
+    [window close];
+    [window release];
+    _edit = nil;
+    _scrubber = nil;
+    _jump = nil;
+    _save = nil;
+    _quit = nil;
+    _head = _tail = 0;
+    _lastWidth = 0;
+}
+
+@end
+
+static RTMPreviewBar *g_preview_bar = nil;
+
+// Set by FramePreview before it reveals a hidden window: yes, a control bar
+// will be docked below the video, so leave room for it.  Reveal happens
+// before the bar is created, hence the hint instead of probing the bar.
+void Vulkan_SetPreviewBarReserve(int reserved) {
+    g_preview_bar_reserved = reserved ? 1 : 0;
+}
+
+int Vulkan_CreatePreviewBar(int n_frames, int mode, const char *title) {
+    @autoreleasepool {
+        if (!g_preview_bar) g_preview_bar = [[RTMPreviewBar alloc] init];
+        return [g_preview_bar createWithFrames:n_frames mode:mode title:title] ? 1 : 0;
+    }
+}
+
+int Vulkan_PollPreviewBar(int *value, char *text, int text_cap) {
+    if (!g_preview_bar) return RTM_BAR_NONE;
+    return [g_preview_bar pollValue:value text:text cap:text_cap];
+}
+
+void Vulkan_SetPreviewBarCaption(const char *text) {
+    if (g_preview_bar) [g_preview_bar setCaption:text];
+}
+
+void Vulkan_SetPreviewBarPosition(int frame) {
+    if (g_preview_bar) [g_preview_bar setPosition:frame];
+}
+
+void Vulkan_DestroyPreviewBar(void) {
+    if (g_preview_bar) [g_preview_bar destroy];
+}
+
+static void MacBar_Tick(void) {
+    if (g_preview_bar) [g_preview_bar tick];
+}
+
+// ── Compile-wait popup ──────────────────────────────────────────────────
+// macOS counterpart of render_wait.WaitPopup (Windows).  A formula compile
+// blocks the main thread inside MathTex.__init__, so -- unlike the Windows
+// popup, which owns a message-loop thread -- this panel is created, shown and
+// advanced by explicit pumps from the compile's wait loops
+// (Vulkan_WaitPopupPump).  Everything stays on the AppKit main thread.
+// Python owns the 0.35 s "only if slow" delay and supplies the determinate
+// percentage (Vulkan_WaitPopupSetProgress); the slow SVG/mobject build runs on
+// a worker thread so those pumps keep flowing.
+
+static const CGFloat RTM_WAIT_WIDTH = 430.0;
+static const CGFloat RTM_WAIT_HEIGHT = 104.0;
+
+@interface RTMWaitPopup : NSObject {
+    NSPanel *_window;
+    NSTextField *_line1;
+    NSTextField *_line2;
+    NSTextField *_snippet;
+    NSProgressIndicator *_bar;
+    NSTextField *_percent;
+    NSTimer *_timer;
+    NSDate *_shownAt;
+    NSString *_line2Fmt;
+    BOOL _visible;
+}
+- (void)armTitle:(NSString *)title
+           line1:(NSString *)line1
+        line2Fmt:(NSString *)fmt
+         snippet:(NSString *)snippet;
+- (void)show;
+- (void)setProgress:(double)percent;
+- (void)pump:(double)seconds;
+- (void)destroy;
+@end
+
+@implementation RTMWaitPopup
+
+- (id)init {
+    self = [super init];
+    if (self) {
+        _visible = NO;
+    }
+    return self;
+}
+
+- (NSTextField *)newLabel:(NSRect)frame
+                     font:(NSFont *)font
+                    color:(NSColor *)color {
+    NSTextField *field = [[NSTextField alloc] initWithFrame:frame];
+    [field setBezeled:NO];
+    [field setBordered:NO];
+    [field setDrawsBackground:NO];
+    [field setEditable:NO];
+    [field setSelectable:NO];
+    [field setFont:font];
+    [field setTextColor:color];
+    [field setLineBreakMode:NSLineBreakByTruncatingTail];
+    [field setAutoresizingMask:NSViewWidthSizable];
+    return field;                       // caller adds and releases
+}
+
+- (void)armTitle:(NSString *)title
+           line1:(NSString *)line1
+        line2Fmt:(NSString *)fmt
+         snippet:(NSString *)snippet {
+    [self destroy];
+
+    NSRect contentRect = NSMakeRect(0, 0, RTM_WAIT_WIDTH, RTM_WAIT_HEIGHT);
+    _window = [[NSPanel alloc]
+        initWithContentRect:contentRect
+                  styleMask:(NSWindowStyleMaskTitled |
+                             NSWindowStyleMaskNonactivatingPanel)
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    [_window setFloatingPanel:YES];
+    [_window setBecomesKeyOnlyIfNeeded:YES];
+    [_window setTitle:(title ? title : @"")];
+    [_window setReleasedWhenClosed:NO];
+    [_window setLevel:NSFloatingWindowLevel];
+    [_window setHidesOnDeactivate:NO];
+    [_window setIgnoresMouseEvents:YES];
+    [_window setCollectionBehavior:
+        (NSWindowCollectionBehaviorCanJoinAllSpaces |
+         NSWindowCollectionBehaviorFullScreenAuxiliary)];
+
+    NSView *content = [[NSView alloc] initWithFrame:contentRect];
+    [_window setContentView:content];
+    [content release];
+
+    CGFloat w = RTM_WAIT_WIDTH - 28.0;
+    _line1 = [self newLabel:NSMakeRect(14, 68, w, 20)
+                       font:[NSFont systemFontOfSize:13.0
+                                              weight:NSFontWeightSemibold]
+                      color:[NSColor labelColor]];
+    _line2 = [self newLabel:NSMakeRect(14, 48, w, 16)
+                       font:[NSFont systemFontOfSize:11.0]
+                      color:[NSColor secondaryLabelColor]];
+    _snippet = [self newLabel:NSMakeRect(14, 28, w, 16)
+                         font:[NSFont systemFontOfSize:10.0]
+                        color:[NSColor tertiaryLabelColor]];
+    [_line1 setStringValue:(line1 ? line1 : @"")];
+    [_line2 setStringValue:@""];
+    [_snippet setStringValue:(snippet ? snippet : @"")];
+    [_snippet setHidden:(snippet.length == 0)];
+    [content addSubview:_line1];
+    [content addSubview:_line2];
+    [content addSubview:_snippet];
+    [_line1 release];
+    [_line2 release];
+    [_snippet release];
+
+    _bar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(14, 12, w - 44, 8)];
+    [_bar setStyle:NSProgressIndicatorStyleBar];
+    [_bar setControlSize:NSControlSizeSmall];
+    [_bar setIndeterminate:NO];
+    [_bar setMinValue:0.0];
+    [_bar setMaxValue:100.0];
+    [_bar setDoubleValue:0.0];
+    [content addSubview:_bar];
+    [_bar release];
+
+    _percent = [self newLabel:NSMakeRect(RTM_WAIT_WIDTH - 14 - 42, 8, 42, 14)
+                        font:[NSFont monospacedDigitSystemFontOfSize:10.0
+                                                              weight:NSFontWeightRegular]
+                       color:[NSColor secondaryLabelColor]];
+    [_percent setAlignment:NSTextAlignmentRight];
+    [_percent setStringValue:@"0%"];
+    [content addSubview:_percent];
+    [_percent release];
+
+    _line2Fmt = [fmt copy];
+}
+
+- (void)position {
+    if (!_window) return;
+    NSScreen *screen = g_window ? [g_window screen] : nil;
+    if (!screen) screen = [NSScreen mainScreen];
+    NSRect vis = [screen visibleFrame];
+    NSRect wf = [_window frame];
+    CGFloat x, y;
+    if (g_window) {
+        // Same corner as the Windows popup: just inside the video's top-right.
+        NSRect vf = [g_window frame];
+        x = NSMaxX(vf) - wf.size.width - 24.0;
+        y = NSMaxY(vf) - wf.size.height - 24.0;
+    } else {
+        x = NSMidX(vis) - wf.size.width / 2.0;
+        y = NSMidY(vis) - wf.size.height / 2.0;
+    }
+    if (x < NSMinX(vis)) x = NSMinX(vis);
+    if (x + wf.size.width > NSMaxX(vis)) x = NSMaxX(vis) - wf.size.width;
+    if (y < NSMinY(vis)) y = NSMinY(vis);
+    if (y + wf.size.height > NSMaxY(vis)) y = NSMaxY(vis) - wf.size.height;
+    [_window setFrameOrigin:NSMakePoint(floor(x), floor(y))];
+}
+
+- (void)updateElapsed {
+    if (!_line2 || !_shownAt || !_line2Fmt) return;
+    double elapsed = -[_shownAt timeIntervalSinceNow];
+    if (elapsed < 0.0) elapsed = 0.0;
+    [_line2 setStringValue:[NSString stringWithFormat:_line2Fmt, elapsed]];
+}
+
+- (void)tick:(NSTimer *)timer {
+    (void)timer;
+    [self updateElapsed];
+}
+
+- (void)setProgress:(double)percent {
+    if (percent < 0.0) percent = 0.0;
+    if (percent > 100.0) percent = 100.0;
+    if (_bar) [_bar setDoubleValue:percent];
+    if (_percent) {
+        [_percent setStringValue:
+            [NSString stringWithFormat:@"%.0f%%", percent]];
+    }
+}
+
+- (void)show {
+    if (!_window || _visible) return;
+    [self position];
+    [_shownAt release];
+    _shownAt = [[NSDate alloc] init];
+    [self setProgress:0.0];
+    [self updateElapsed];
+    [_window orderFrontRegardless];
+    [_window displayIfNeeded];
+    _visible = YES;
+    if (!_timer) {
+        _timer = [NSTimer scheduledTimerWithTimeInterval:0.1
+                                                  target:self
+                                                selector:@selector(tick:)
+                                                userInfo:nil
+                                                 repeats:YES];
+    }
+}
+
+- (void)pump:(double)seconds {
+    if (!_visible) return;
+    // The run loop fires NSTimer; the elapsed counter is also refreshed here
+    // because Python sets the percentage on every pump and runMode may return
+    // as soon as it has handled one source.
+    [self updateElapsed];
+    NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:
+                     (seconds > 0.0 ? seconds : 0.01)];
+    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:limit];
+}
+
+- (void)destroy {
+    if (_timer) {
+        [_timer invalidate];
+        _timer = nil;
+    }
+    if (_bar) [_bar stopAnimation:nil];
+    if (_window) {
+        [_window orderOut:nil];
+        [_window close];
+        [_window release];
+        _window = nil;
+    }
+    _line1 = nil;
+    _line2 = nil;
+    _snippet = nil;
+    _bar = nil;
+    _percent = nil;
+    [_line2Fmt release];
+    _line2Fmt = nil;
+    [_shownAt release];
+    _shownAt = nil;
+    _visible = NO;
+}
+
+@end
+
+static RTMWaitPopup *g_wait_popup = nil;
+
+void Vulkan_WaitPopupArm(const char *title, const char *line1,
+                         const char *line2_fmt, const char *snippet) {
+    @autoreleasepool {
+        if (!g_wait_popup) g_wait_popup = [[RTMWaitPopup alloc] init];
+        [g_wait_popup
+            armTitle:(title ? [NSString stringWithUTF8String:title] : @"")
+              line1:(line1 ? [NSString stringWithUTF8String:line1] : @"")
+           line2Fmt:(line2_fmt ? [NSString stringWithUTF8String:line2_fmt] : @"")
+            snippet:(snippet ? [NSString stringWithUTF8String:snippet] : @"")];
+    }
+}
+
+void Vulkan_WaitPopupShow(void) {
+    if (g_wait_popup) [g_wait_popup show];
+}
+
+void Vulkan_WaitPopupPump(double seconds) {
+    if (g_wait_popup) [g_wait_popup pump:seconds];
+}
+
+void Vulkan_WaitPopupSetProgress(double percent) {
+    if (g_wait_popup) [g_wait_popup setProgress:percent];
+}
+
+void Vulkan_WaitPopupDestroy(void) {
+    if (g_wait_popup) [g_wait_popup destroy];
+}
+
+// Show/hide the window after a hidden Vulkan_InitEx.  The preview builds its
+// window hidden (so offline work never pops up), then calls this through
+// MLWindow.set_visible(True).  A hidden 1920x1080 window is larger than most
+// screens, so fit it to the screen while preserving the scene's aspect ratio.
+// When a control bar is coming (Vulkan_SetPreviewBarReserve), also keep room
+// for it and for the auto-hiding Dock underneath, so the bar is never covered.
+void Vulkan_SetWindowVisible(int visible) {
+    if (!g_window) return;
+    if (!visible) {
+        [g_window orderOut:nil];
+        g_init_hidden = 1;
+        return;
+    }
+
+    int was_hidden = g_init_hidden;
+    g_init_hidden = 0;
+    if (was_hidden) {
+        NSScreen *screen = [g_window screen];
+        if (!screen) screen = [NSScreen mainScreen];
+        NSRect vis = [screen visibleFrame];
+
+        // Space below the video: the bar itself plus a margin that keeps its
+        // scrubber clear of the Dock's auto-reveal strip.
+        CGFloat bottom = 0.0;
+        if (g_preview_bar_reserved) {
+            CGFloat barH = g_preview_bar ? [g_preview_bar frameHeight] : 0.0;
+            if (barH < 1.0) barH = RTM_BAR_HEIGHT + RTM_BAR_TITLE;
+            bottom = RTM_BAR_BOTTOM_MARGIN + barH + RTM_BAR_GAP;
+        }
+        CGFloat titleH = NSHeight([g_window frame]) -
+                         NSHeight([[g_window contentView] bounds]);
+        if (titleH < 0.0) titleH = 0.0;
+
+        CGFloat maxH = vis.size.height - bottom - titleH;
+        CGFloat maxW = vis.size.width;
+        CGFloat ar = g_aspect_ratio > 0 ? g_aspect_ratio : (16.0 / 9.0);
+        if (maxH < 120.0) maxH = 120.0;
+        CGFloat cw = [[g_window contentView] bounds].size.width;
+        CGFloat ch = [[g_window contentView] bounds].size.height;
+        if (cw <= 0 || ch <= 0) { ch = maxH; cw = ch * ar; }
+        if (cw > maxW || ch > maxH) {
+            ch = maxH;
+            cw = ch * ar;
+            if (cw > maxW) { cw = maxW; ch = cw / ar; }
+        }
+        if (cw < 16.0) cw = 16.0;
+        if (ch < 16.0) ch = 16.0;
+        [g_window setContentSize:NSMakeSize(cw, ch)];
+        CGFloat x = vis.origin.x + (vis.size.width - cw) / 2.0;
+        // With a bar the video is anchored just above it; without one, keep
+        // the old vertically centred placement.
+        CGFloat y = bottom > 0.0
+            ? vis.origin.y + bottom
+            : vis.origin.y + (vis.size.height - ch - titleH) / 2.0;
+        [g_window setFrameOrigin:NSMakePoint(floor(x), floor(y))];
+    }
+    [g_window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
 int Vulkan_Tick(void) {
     @autoreleasepool {
         // Drain pending events without blocking (the Python main thread
@@ -232,6 +1081,7 @@ int Vulkan_Tick(void) {
             if (!ev) break;
             [NSApp sendEvent:ev];
         }
+        MacBar_Tick();
     }
     if (g_should_close) return 0;
 
@@ -241,10 +1091,23 @@ int Vulkan_Tick(void) {
         // contentsScale every tick — AppKit can reset it if the window moves
         // to a display with a different backing scale.
         NSRect vb = [g_view bounds];
-        g_layer.contentsScale = g_init_hidden ? 1.0 : [g_window backingScaleFactor];
-        if (g_layer.contentsScale < 1.0) g_layer.contentsScale = 1.0;
-        int dw = (int)(vb.size.width * g_layer.contentsScale + 0.5);
-        int dh = (int)(vb.size.height * g_layer.contentsScale + 0.5);
+        int dw, dh;
+        if (g_capture_w > 0 && g_capture_h > 0) {
+            // Recording: pin the drawable to the output size.  The window is
+            // still the same rectangle on screen; the compositor scales the
+            // (now exactly 1920x1080) content up to the Retina backing store.
+            dw = g_capture_w;
+            dh = g_capture_h;
+            g_layer.contentsScale =
+                (vb.size.width > 0) ? (double)dw / vb.size.width : 1.0;
+        } else {
+            // Re-assert contentsScale every tick — AppKit can reset it if the
+            // window moves to a display with a different backing scale.
+            g_layer.contentsScale = g_init_hidden ? 1.0 : [g_window backingScaleFactor];
+            if (g_layer.contentsScale < 1.0) g_layer.contentsScale = 1.0;
+            dw = (int)(vb.size.width * g_layer.contentsScale + 0.5);
+            dh = (int)(vb.size.height * g_layer.contentsScale + 0.5);
+        }
         if (dw < 1) dw = 1;
         if (dh < 1) dh = 1;
         g_layer.drawableSize = CGSizeMake(dw, dh);
@@ -275,6 +1138,8 @@ int Vulkan_Tick(void) {
 }
 
 void Vulkan_Shutdown(void) {
+    Vulkan_WaitPopupDestroy();
+    Vulkan_DestroyPreviewBar();
     Mac_FreeReadbackBuffer();
     Render_Cleanup();
     if (g_window) {
@@ -577,6 +1442,28 @@ int Vulkan_RequestReadback(void) {
     if (w <= 0 || h <= 0) return -1;
     g_readback_requested = 1;  // next drawn frame copies before present
     return 0;                  // slot 0: the single mac staging buffer
+}
+
+// Pin (or release) the drawable size used while recording.  w/h == 0 restores
+// the window's normal backing scale on the next tick.  The swapchain is
+// rebuilt synchronously so the first armed frame after this call already has
+// the requested extent: a lazy rebuild inside the next tick would clear
+// g_readback_requested and silently lose that frame from the recording.
+int Vulkan_SetDrawableSize(int w, int h) {
+    if (!g_is_ready || !g_layer || !g_view) return 0;
+    if (w <= 0 || h <= 0) {
+        g_capture_w = 0;
+        g_capture_h = 0;
+        return 1;
+    }
+    NSRect vb = [g_view bounds];
+    if (vb.size.width <= 0 || vb.size.height <= 0) return 0;
+    g_capture_w = w;
+    g_capture_h = h;
+    g_layer.contentsScale = (double)w / vb.size.width;
+    g_layer.drawableSize = CGSizeMake(w, h);
+    RecreateSwapchain();
+    return 1;
 }
 
 int SaveScreenshotRaw(unsigned char *out, int out_cap, int *out_size) {

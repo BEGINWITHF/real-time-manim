@@ -17,11 +17,14 @@
   * `AddTextWordByWord` 是 manim 的 Succession，RTM 会把它内部的 `Group` 也作为
     根对象塞进场景，淡出后要把这个 Group 一并 `self.remove` 掉，否则会残留一份全亮副本。
 
-运行（cwd 必须是 real-time-manim 仓库）：
-    $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"
+运行（脚本会自行把仓库根目录加入 sys.path）：
     python demo_rtm.py      # -> assets\\sample.mp4
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 import numpy as np
 from real_time_manim import (

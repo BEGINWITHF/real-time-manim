@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+import sys
 import unicodedata
 from collections.abc import Generator, Iterable, Sequence
 from pathlib import Path
@@ -22,6 +23,29 @@ from manim.utils.tex import TexTemplate
 from .. import config, logger
 
 __all__ = ["tex_to_svg_file"]
+
+
+def _run_tex_tool(command):
+    """Run LaTeX/dvisvgm, pumping the macOS slow-compile popup while it runs.
+
+    A plain ``subprocess.run`` blocks the main thread and would freeze the
+    popup's percentage bar; polling in short slices lets ``render_wait``
+    advance the AppKit run loop.  Windows keeps its own popup thread, so it
+    (and any other platform) uses the original blocking call.
+    """
+    if sys.platform != "darwin":
+        return subprocess.run(command, stdout=subprocess.DEVNULL)
+    from real_time_manim.render_wait import pump_compile_wait
+
+    proc = subprocess.Popen(command, stdout=subprocess.DEVNULL)
+    while True:
+        try:
+            proc.wait(timeout=0.03)
+        except subprocess.TimeoutExpired:
+            pump_compile_wait()
+            continue
+        break
+    return subprocess.CompletedProcess(command, proc.returncode)
 
 
 def tex_hash(expression: Any) -> str:
@@ -211,7 +235,7 @@ def compile_tex(
                 tex_file,
                 tex_dir,
             )
-            cp = subprocess.run(command, stdout=subprocess.DEVNULL)
+            cp = _run_tex_tool(command)
             if cp.returncode != 0:
                 log_file = tex_file.with_suffix(".log")
                 print_all_tex_errors(log_file, compiler, tex_file)
@@ -251,7 +275,7 @@ def convert_to_svg(dvi_file: Path, extension: str, page: int = 1) -> Path:
             f"--output={result.as_posix()}",
             f"{dvi_file.as_posix()}",
         ]
-        subprocess.run(command, stdout=subprocess.DEVNULL)
+        _run_tex_tool(command)
 
     # if the file does not exist now, this means conversion failed
     if not result.exists():

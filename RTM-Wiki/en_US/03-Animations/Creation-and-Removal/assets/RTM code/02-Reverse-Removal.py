@@ -13,7 +13,7 @@ ASSETS = os.path.dirname(HERE)
 OUT = os.path.join(HERE, "final",
                         os.path.splitext(os.path.basename(__file__))[0])
 os.makedirs(OUT, exist_ok=True)
-sys.path.insert(0, r"C:\Users\begin\Desktop\real-time-manim")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     Scene, Text, Square, Rectangle, Circle, VGroup,

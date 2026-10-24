@@ -8,9 +8,13 @@ Parameters demonstrated (one by one from the page's "Parameters" tables):
 Not demonstrated: passing a coordinate point as `point` (when a mobject is passed only its centre is
         used, so the two look the same); the remaining Transform/Animation common parameters in
         `**kwargs` (no distinct visual effect).
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

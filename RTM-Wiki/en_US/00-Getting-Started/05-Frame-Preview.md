@@ -1,8 +1,9 @@
 # Frame Preview (Frame Skipping)
 
-> Note: interactive preview is an RTM-only capability; the window and control bar are described below. Regression tests: `tests/test_preview_spec.py` (20 items); frame-skip timings are in the measurement table below.
+> Note: interactive preview is an RTM-only capability; the window and control bar are described below. Regression tests: `tests/test_preview_spec.py` (20 items) and `tests/test_preview_mac_bar.py` (19 items); frame-skip timings are in the measurement table below.
 
-A window pops up and **plays nothing by default**, with a control bar (a text box or a slider) docked directly below the window. Fill in **any frame** and press Enter, and that frame **immediately** appears in the window: you neither pre-render the whole video nor replay from the start up to that frame.
+A window pops up and **plays nothing by default**, with a control bar (a text box or a slider) attached to it. Fill in **any frame** and press Enter, and that frame **immediately** appears in the window: you neither pre-render the whole video nor replay from the start up to that frame.
+On Windows and macOS the bar is a native window of its own, docked directly below the video window; on macOS it is also kept clear of an auto-hiding Dock.
 
 ```bash
 python -m real_time_manim.preview 1                    # demo 1 in run.py
@@ -24,14 +25,14 @@ That is to say: **there is no pre-rendering at all** — the frame 0 you see is 
 
 ## Control bar: text box or slider
 
-The control bar below the window has two appearances, chosen by `controls=` (the `--controls` command-line flag):
+The control bar has two appearances, chosen by `controls=` (the `--controls` command-line flag):
 
 | `controls` | Control bar | How to skip frames |
 | --- | --- | --- |
 | `"input"` (default) | `[ text box ] [Jump] [Save PNG] [Quit]` | fill the text box with a frame number / seconds / step, then press Enter or click `Jump` |
 | `"slider"` | `[═════╪═════] [Save PNG] [Quit]` | drag the slider (**dragging itself samples frames live**, and rapid-fire seeks are coalesced automatically so only the newest frame is drawn) |
 
-Both modes show `frame 123/347   t=2.050s` live in the window title bar.
+Both modes show `frame 123/347   t=2.050s` live in the control bar's title bar (on macOS the video window keeps its own `Real Time Manim` title, because the bar is a separate window). The video keeps its exact aspect ratio when the window is resized; the bar follows its width and stays docked underneath.
 
 ```bash
 python -m real_time_manim.preview 3 --controls slider
@@ -40,7 +41,7 @@ python -m real_time_manim.preview 3 --controls input
 
 > Multiple previews at once: the video windows are native windows placed by the system by default, so they may **overlap**; separate them with `--pos X,Y` (or `position=(x, y)`).
 >
-> The control bar **always stays glued to the bottom edge of its own video window**: drag the video window and the bar follows.
+> The control bar **always stays with its video window**: it is glued to the bottom edge on both platforms (drag the video window and the bar follows).
 
 ## Input syntax (typed into the text box in `input` mode)
 
@@ -69,7 +70,7 @@ FramePreview(scene_cls, fps=60, out_dir="frames", use_bar=True,
 | `scene_cls` | `type \| instance \| Callable` | — | the scene to preview (same forms as `fast_record_scene`) |
 | `fps` | `int` | `60` | **frame rate for frame-number conversion**: `120` means frame 120, i.e. `t = 120 / fps` |
 | `out_dir` | `str` | `"frames"` | directory where `s` / `Save PNG` stores images |
-| `use_bar` | `bool` | `True` | when `False`, falls back to **terminal input** (the same syntax and queue protocol, and it works outside Windows too) |
+| `use_bar` | `bool` | `True` | when `False`, falls back to **terminal input** (the same syntax and queue protocol); also automatic on platforms without a native bar |
 | `width` / `height` | `int \| None` | `None` | window size (RTM only supports 1920×1080 and will force-correct it) |
 | `verbose` | `bool` | `True` | print the preparation time and status lines |
 | `controls` | `str` | `"input"` | `"input"` (text box) / `"slider"` (slider); the aliases `box`/`text`/`edit` and `bar`/`progress`/`scrub` are all accepted, anything else raises `ValueError` |

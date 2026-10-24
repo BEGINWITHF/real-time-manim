@@ -10,9 +10,13 @@ Not demonstrated: `suspend_mobject_updating=True` — it suspends the object's o
         updater, the opposite of this page's "per-frame callback driving" purpose;
         the sample keeps it explicitly False as the page recommends;
         the remaining common Transform/Animation parameters in `**kwargs` have no visual effect.
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     GREEN,

@@ -9,9 +9,13 @@
     Blink(cursor, time_on=0.3, time_off=0.3, blinks=2)  ← 页面示例里的光标闪烁组合      ✓
 不演示：`cursor` 的"颜色参数"不在动画签名里 —— 光标就是个 mobject，颜色在创建
         Rectangle 时给（样例用 RED，页面示例用 GREY_A）；`**kwargs` 其余上游通用参数无可视效果。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     GREEN,

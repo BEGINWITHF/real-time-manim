@@ -166,6 +166,14 @@ class SVGMobject(VMobject, metaclass=ConvertToOpenGL):
         --------
         :meth:`.SVGMobject.generate_mobject`
         """
+        # A formula's SVG can carry thousands of paths; building them is the
+        # slowest part of a cold TeX render and is pure CPU.  While a visible
+        # compile popup is armed, run it on a worker so the main thread can
+        # keep the percentage bar and elapsed counter moving.
+        from real_time_manim.render_wait import run_pumping
+        return run_pumping(self._init_svg_mobject, use_svg_cache)
+
+    def _init_svg_mobject(self, use_svg_cache: bool) -> Self:
         if use_svg_cache:
             hash_val = hash_obj(self.hash_seed)
             if hash_val in SVG_HASH_TO_MOB_MAP:

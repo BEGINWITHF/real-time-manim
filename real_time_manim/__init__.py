@@ -43,6 +43,7 @@ import sys
 import warnings
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 try:
     __version__ = version("real-time-manim")
@@ -145,7 +146,31 @@ if not any(finder.__class__ is _RtmManimAliasFinder for finder in sys.meta_path)
 # 2. Re-export the whole ManimCE namespace, so scenes only import RTM.
 # ---------------------------------------------------------------------------
 
-from manim import *                                                    # noqa: F403
+# RTM's public API *is* the ManimCE namespace: scenes import one module and get
+# Scene, Square, Create, BLUE, ... Listing several hundred names here would be
+# unmaintainable and would drift from the bundled release, so the wildcard is
+# deliberate.  pyright flags wildcard imports from third-party packages; this
+# is the facade that makes that rule a false positive.
+from manim import *  # noqa: F403  # pyright: ignore[reportWildcardImportFromLibrary]
+
+# The import above only resolves at runtime: ``manim`` is installed into
+# ``sys.modules`` by ``_install_bundled_manim()``, which a static analyzer
+# never executes.  Type checkers therefore see no names coming through it.
+# Re-import the same objects by their real path (``real_time_manim.manim`` is
+# the bundle on disk) so ``from real_time_manim import *`` is typed.
+if TYPE_CHECKING:                                                      # pragma: no cover
+    from real_time_manim.manim import *                                # noqa: F403
+    from real_time_manim.frames import FrameServer
+    from real_time_manim.preview import FramePreview
+    from real_time_manim.record import fast_record_scene, record_scene
+    from real_time_manim.timeline import Timeline
+    from real_time_manim.util import (
+        clear_media,
+        clear_tex_cache,
+        restore_tex_cache,
+        save_tex_cache,
+    )
+    from real_time_manim.vulkan_bind import MLWindow
 
 # ---------------------------------------------------------------------------
 # 3. Upstream defects RTM works around (see real_time_manim/compat.py).

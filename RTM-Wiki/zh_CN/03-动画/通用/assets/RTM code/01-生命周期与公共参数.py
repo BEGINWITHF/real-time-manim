@@ -15,9 +15,13 @@
     已接线（override_animation / animation_override_for），但要自定义 Mobject 子类
     才有效果；set_run_time/set_name/get_run_time/get_rate_func/is_introducer/
     is_remover/copy —— RTM 自有 Animation 已实现这些链式方法（tests/test_gap_wait_timeline.py）。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

@@ -49,6 +49,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -71,14 +72,15 @@ Homepage = "https://github.com/BEGINWITHF/real-time-manim"
 Documentation = "https://github.com/BEGINWITHF/real-time-manim#readme"
 Source = "https://github.com/BEGINWITHF/real-time-manim"
 
-# Auto-discover the package tree (real_time_manim and every subpackage) so a
-# new subpackage never has to be listed by hand.
-[tool.setuptools.packages.find]
-include = ["real_time_manim*"]
+# Package discovery lives in setup.py: the wheel also carries the PEP 561
+# ``manim-stubs`` tree, whose directory name is not a valid Python identifier
+# and is therefore invisible to setuptools' own discovery.
 
 [tool.setuptools.package-data]
 real_time_manim = [
+    "py.typed",
     "vulkan_core.dll",
+    "vulkan_core.dylib",
     "logo.ico",
     "wait.ico",
     # data files of the bundled ManimCE copy

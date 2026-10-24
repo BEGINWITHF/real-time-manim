@@ -3,12 +3,15 @@
 
 Nothing plays when it opens.  Type a frame, press Enter, and the window shows
 that frame -- no pre-render, no replay: ``Timeline.render_at`` is O(1) in ``t``
-(``docs/2.0.0-time-addressable.md``), so a seek costs ~10 ms no matter where it
-lands.
+(see the 2.0 time-addressable design notes), so a seek costs ~10 ms no matter
+where it lands.
 
-    python -m real_time_manim.preview 1                  # demo #1 from run.py
-    python -m real_time_manim.preview examples.scenes:DemoCreate --at 120
-    python -m real_time_manim.preview 1 --no-bar         # type in the terminal
+    python -m real_time_manim.preview my_scene:Hello           # module:Class
+    python -m real_time_manim.preview my_scene:Hello --at 120
+    python -m real_time_manim.preview my_scene:Hello --no-bar  # terminal input
+
+A bare number (``1``) selects an entry from the development tree's demo
+table; that table is not part of the installed package.
 
 One-off cost
 ------------
@@ -20,19 +23,19 @@ first picture you see is only drawn when the window appears.
 Caveat: a seek replays **animation** state, not accumulated *updater* state, so
 a scene whose mobjects are only driven by custom updaters / ``TracedPath`` is
 exact when you step forward and approximate when you jump backwards.  Making
-those time-replayable is P3 in ``docs/2.0.0-time-addressable.md``.
+those time-replayable is P3 in the 2.0 time-addressable design notes.
 
 Input bar
 ---------
-On Windows the bar is a small native window docked right below the video
-window.  It comes in two flavours (``controls=``):
+On Windows and macOS the bar is native -- no GUI toolkit needed.  It comes in
+two flavours (``controls=``):
 
 ``"input"`` (default)
     a text field + *Jump* / *Save PNG* / *Quit*.
 ``"slider"``
     a draggable progress bar (scrubber) + *Save PNG* / *Quit*.
 
-The current frame always shows in the bar's title.  Accepted input:
+The current frame always shows in the bar window's title.  Accepted input:
 
     123 / 123f   frame 123            (frame numbers are the default unit)
     1.5 / 1.5s   time 1.5 s
@@ -42,13 +45,17 @@ The current frame always shows in the bar's title.  Accepted input:
     ?            help
     q            quit
 
-Everywhere else (or with ``--no-bar``) the same input is read from the terminal,
-so the mode works without a GUI toolkit.
+On Windows the bar is Win32 and lives in a bar window docked under the video.
+On macOS it is Cocoa through the same bundled dylib: a separate native window
+docked under the video as well, kept clear of an auto-hiding Dock.  Other
+platforms (or ``--no-bar``) read the same input from the terminal, so the mode
+works without a GUI toolkit.
 """
 from __future__ import annotations
 
 import argparse
 import collections
+import ctypes
 import os
 import queue
 import re
@@ -472,14 +479,15 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
         _BARS[self._hwnd] = self
 
         font = _g.GetStockObject(_DEFAULT_GUI_FONT)
-        btn_w = int(80 * scale)
+        btn_w = int(80 * scale)          # Jump / Quit
+        save_w = int(104 * scale)        # "Save PNG" must not ellipsize
         pad = int(6 * scale)
         ctl_h = self._client_h - 2 * pad
         y = pad
         controls = []
         if self.controls == "slider":
             x = pad
-            w = outer_w - 2 * btn_w - 3 * pad
+            w = outer_w - save_w - btn_w - 3 * pad
             self._slider = _u.CreateWindowExW(
                 0, _TRACKBAR_CLASS, "",
                 _WS_CHILD | _WS_VISIBLE | _WS_TABSTOP | _TBS_AUTOTICKS |
@@ -498,23 +506,25 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
                 ctypes.cast(self._slider_proc_obj, ctypes.c_void_p))
             controls.append(self._slider)
             x += w + pad
-            buttons = (("Save PNG", _ID_SAVE, 0), ("Quit", _ID_QUIT, 0))
+            buttons = (("Save PNG", _ID_SAVE, 0, save_w),
+                       ("Quit", _ID_QUIT, 0, btn_w))
         else:
             x = pad
-            w = outer_w - 3 * btn_w - 4 * pad
+            w = outer_w - 2 * btn_w - save_w - 4 * pad
             self._edit = _u.CreateWindowExW(
                 0, "EDIT", "", _WS_CHILD | _WS_VISIBLE | _WS_TABSTOP |
                 _ES_AUTOHSCROLL, x, y, w, ctl_h, self._hwnd, _ID_EDIT, hinst,
                 None)
             controls.append(self._edit)
             x += w + pad
-            buttons = (("Jump", _ID_GO, _BS_DEFPUSHBUTTON),
-                       ("Save PNG", _ID_SAVE, 0), ("Quit", _ID_QUIT, 0))
-        for label, cid, bstyle in buttons:
+            buttons = (("Jump", _ID_GO, _BS_DEFPUSHBUTTON, btn_w),
+                       ("Save PNG", _ID_SAVE, 0, save_w),
+                       ("Quit", _ID_QUIT, 0, btn_w))
+        for label, cid, bstyle, bw in buttons:
             controls.append(_u.CreateWindowExW(
                 0, "BUTTON", label, _WS_CHILD | _WS_VISIBLE | _WS_TABSTOP |
-                bstyle, x, y, btn_w, ctl_h, self._hwnd, cid, hinst, None))
-            x += btn_w + int(2 * scale)
+                bstyle, x, y, bw, ctl_h, self._hwnd, cid, hinst, None))
+            x += bw + int(2 * scale)
         for ctl in controls:
             if ctl:
                 _u.SendMessageW(ctl, _WM_SETFONT, int(font or 0), 1)
@@ -646,6 +656,175 @@ class Win32Bar:  # pragma: no cover - needs a Windows desktop
 
 
 # ---------------------------------------------------------------------------
+# the native input bar (Cocoa, through the same dylib -- no extra dependency)
+# ---------------------------------------------------------------------------
+
+_MAC_BAR_NONE = 0
+_MAC_BAR_SUBMIT = 1
+_MAC_BAR_SAVE = 2
+_MAC_BAR_QUIT = 3
+_MAC_BAR_SEEK = 4
+
+
+class MacBar:
+    """The Cocoa control bar docked below the preview window (macOS).
+
+    It mirrors :class:`Win32Bar` exactly -- same ``controls`` looks, same
+    widgets, same callbacks::
+
+    ``"input"`` (default)
+        ``[ frame ] [Jump] [Save PNG] [Quit]`` -- type a frame number.
+
+    ``"slider"``
+        ``[========|===== ] [Save PNG] [Quit]`` -- drag the scrubber.
+
+    Like Win32Bar it is a window of its own, docked just below the video
+    window.  The difference in threading follows: AppKit only runs on the main
+    thread, which is also where ``FramePreview._loop`` already is, so the
+    native side queues clicks/keystrokes and :meth:`poll` turns them into the
+    same ``("text"|"seek"|"save"|"quit", payload)`` items Win32Bar pushes into
+    the preview queue.  There is no bar thread and no Python callback from
+    inside AppKit.
+    """
+
+    def __init__(self, submit, save, quit_, seek=None, controls="input",
+                 n_frames=1, title="RTM frame preview", dll=None):
+        self._submit, self._save, self._quit = submit, save, quit_
+        self._seek = seek
+        self.controls = normalize_controls(controls)
+        self._n_frames = max(1, int(n_frames))
+        self._title = title
+        self._dll = dll
+        self._started = False
+        self._caption = None
+        self._position = None
+        self._create = self._poll = None
+        self._set_caption = self._set_position = self._destroy = None
+
+    # -- lifecycle ----------------------------------------------------------
+    def _bind(self):
+        dll = self._dll
+        if dll is None:
+            return False
+        try:
+            create = dll.Vulkan_CreatePreviewBar
+            poll = dll.Vulkan_PollPreviewBar
+            caption = dll.Vulkan_SetPreviewBarCaption
+            position = dll.Vulkan_SetPreviewBarPosition
+            destroy = dll.Vulkan_DestroyPreviewBar
+        except AttributeError:      # older dylib -> terminal fallback
+            return False
+        create.restype = ctypes.c_int
+        create.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p]
+        poll.restype = ctypes.c_int
+        poll.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
+                         ctypes.c_int]
+        caption.restype = None
+        caption.argtypes = [ctypes.c_char_p]
+        position.restype = None
+        position.argtypes = [ctypes.c_int]
+        destroy.restype = None
+        destroy.argtypes = []
+        self._create, self._poll = create, poll
+        self._set_caption, self._set_position = caption, position
+        self._destroy = destroy
+        return True
+
+    def start(self, video_window=None, timeout=5.0):
+        """Create the bar on the current (main) thread.  False -> fall back."""
+        (video_window, timeout)        # parity with Win32Bar.start's signature
+        if not self._bind():
+            return False
+        mode = 1 if self.controls == "slider" else 0
+        if not self._create(self._n_frames, mode, self._title.encode("utf-8")):
+            return False
+        self._started = True
+        return True
+
+    def stop(self):
+        if self._started:
+            self._destroy()
+            self._started = False
+        self._caption = None
+        self._position = None
+
+    # -- feedback (main thread) --------------------------------------------
+    def set_caption(self, text):
+        """Set the title-bar text (the window's own loop used to do this)."""
+        if not self._started:
+            return
+        text = str(text)
+        if text != self._caption:
+            self._caption = text
+            self._set_caption(text.encode("utf-8"))
+
+    def set_position(self, frame):
+        """Move the scrubber without emitting a seek event (slider mode)."""
+        if not self._started or self.controls != "slider":
+            return
+        frame = int(frame)
+        if frame != self._position:
+            self._position = frame
+            self._set_position(frame)
+
+    # -- events -------------------------------------------------------------
+    def poll(self):
+        """Drain the native event queue into preview-queue items.
+
+        Returns at most the events that arrived since the last call; callers
+        put them on ``FramePreview._queue`` so ``_dispatch`` stays the single
+        place that acts on input.
+        """
+        if not self._started:
+            return []
+        events = []
+        value = ctypes.c_int(0)
+        buf = ctypes.create_string_buffer(256)
+        while True:
+            kind = self._poll(ctypes.byref(value), buf, len(buf))
+            if kind == _MAC_BAR_NONE:
+                break
+            if kind == _MAC_BAR_SUBMIT:
+                events.append(("text", buf.value.decode("utf-8", "replace")))
+            elif kind == _MAC_BAR_SAVE:
+                events.append(("save", None))
+            elif kind == _MAC_BAR_QUIT:
+                events.append(("quit", None))
+            elif kind == _MAC_BAR_SEEK:
+                events.append(("seek", int(value.value)))
+            # Unknown codes are ignored: forward compatibility.
+        return events
+
+
+def _bar_class():
+    """The native input bar for this platform, or ``None`` (terminal only)."""
+    if sys.platform == "win32":
+        return Win32Bar
+    if sys.platform == "darwin":
+        return MacBar
+    return None
+
+
+def _reserve_bar_space(window, enabled=True):
+    """Reserve room below the video for the macOS bar before it is revealed.
+
+    The native window is revealed before the bar exists, so the platform layer
+    cannot see it yet.  On a display whose visible frame is exactly the video's
+    aspect ratio, the bar would otherwise land against the screen edge, where
+    an auto-hidden Dock intercepts its clicks.  A dylib without the export is
+    simply left alone.
+    """
+    reserve = getattr(getattr(window, "dll", None),
+                      "Vulkan_SetPreviewBarReserve", None)
+    if reserve is None:
+        return False
+    reserve.restype = None
+    reserve.argtypes = [ctypes.c_int]
+    reserve(1 if enabled else 0)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # the preview itself
 # ---------------------------------------------------------------------------
 
@@ -661,7 +840,7 @@ class FramePreview:
         self.controls = normalize_controls(controls)
         self.position = parse_position(position)
         self._queue = queue.Queue()
-        self.use_bar = bool(use_bar) and sys.platform == "win32"
+        self.use_bar = bool(use_bar) and _bar_class() is not None
         self._log = (lambda *a: print("[rtm]", *a)) if verbose else (lambda *a: None)
         self._print = print if verbose else (lambda *a: None)
 
@@ -707,6 +886,8 @@ class FramePreview:
         """Show the window on ``start_frame``, then serve the input bar."""
         self.running = True
         try:
+            if _bar_class() is MacBar:
+                _reserve_bar_space(self.window, enabled=self.use_bar)
             self._seek(start_frame)
             self.server.show_frame(self.time_of(self.current))  # reveal it
             self._log("prepared in %.2fs (construct ran once, nothing rendered); "
@@ -719,10 +900,14 @@ class FramePreview:
             force_foreground(self.window.hwnd)
             submit, save, quit_ = self._input_callbacks()
             if self.use_bar:
-                self._bar = Win32Bar(
+                bar_cls = _bar_class()
+                kwargs = {}
+                if bar_cls is MacBar:
+                    kwargs["dll"] = self.window.dll
+                self._bar = bar_cls(
                     submit, save, quit_,
                     seek=lambda frame: self._queue.put_nowait(("seek", frame)),
-                    controls=self.controls, n_frames=self.n_frames)
+                    controls=self.controls, n_frames=self.n_frames, **kwargs)
                 if not self._bar.start(self.window.hwnd):
                     self._bar = None
             if self._bar is None:
@@ -772,8 +957,23 @@ class FramePreview:
             pass
 
     # -- main loop ----------------------------------------------------------
+    def _pump_bar(self):
+        """Move native bar events into the queue.
+
+        Win32Bar pushes from its own thread; MacBar queues in AppKit and has to
+        be polled here, on the main thread.  Either way ``_dispatch`` is the
+        only code that touches the timeline.
+        """
+        bar = self._bar
+        poll = getattr(bar, "poll", None) if bar is not None else None
+        if poll is None:
+            return
+        for kind, payload in poll():
+            self._queue.put_nowait((kind, payload))
+
     def _loop(self):
         while self.running:
+            self._pump_bar()
             try:
                 kind, payload = self._queue.get(timeout=0.02)
             except queue.Empty:
@@ -782,6 +982,7 @@ class FramePreview:
                 # the user closed the window.
                 if not self.window.tick():
                     break
+                self._pump_bar()
                 continue
             self._dispatch(kind, payload)
 
@@ -856,6 +1057,7 @@ class FramePreview:
         frame = self.current
         deadline = time.perf_counter()
         while self._playing and self.running and frame < self.n_frames:
+            self._pump_bar()
             try:
                 kind, payload = self._queue.get_nowait()
             except queue.Empty:
@@ -891,7 +1093,7 @@ class FramePreview:
             self._bar.set_caption(text)
             self._bar.set_position(self.current)      # slider mode
         elif self.verbose:
-            # No bar (macOS / --no-bar): the terminal is the only feedback.
+            # No bar (--no-bar, or a platform without one): terminal feedback.
             self._print("[rtm] " + text)
 
 
@@ -913,7 +1115,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="python -m real_time_manim.preview",
         description="Show any frame of a scene instantly (no pre-render).")
-    ap.add_argument("scene", help="demo number (from run.py) or 'module:Class'")
+    ap.add_argument("scene", help="'module:Class' (a demo number needs the "
+                               "development-only demo table)")
     ap.add_argument("--fps", type=int, default=60, help="frame numbering rate")
     ap.add_argument("--at", type=int, default=0, help="first frame to show")
     ap.add_argument("--out", default="frames", help="where 's' writes PNGs")

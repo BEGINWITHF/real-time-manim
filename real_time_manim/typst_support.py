@@ -19,7 +19,7 @@ Two jobs live here (see RTM-Wiki 04-图形与文本/10-Typst.md):
    only then awaited, so a multi-part formula compiles in parallel.  The
    SVG files are content-hashed and cached by Manim's
    ``typst_to_svg_file`` under ``config.get_dir("tex_dir")`` (media/Tex),
-   which also means ``run.py``'s tex_cache restore keeps them warm.
+   which also means a caller's ``restore_tex_cache`` keeps them warm.
 
 Toggles
 -------
@@ -635,7 +635,8 @@ def warmup_typst_math(bodies):
             continue
         code = f"$ {body} $"
         futs.append(_POOL.submit(typst_to_svg_file, code, ""))
-    return [f.result() for f in futs]
+    from real_time_manim.render_wait import wait_future
+    return [wait_future(f) for f in futs]
 
 
 # ---------------------------------------------------------------------------

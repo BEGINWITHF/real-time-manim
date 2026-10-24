@@ -19,9 +19,13 @@
       `animation.interpolate(alpha)`，而 RTM 自有的 `Write` / `ApplyWave` 是时间语义
       （`begin(t)`、`interpolate(t)`），两者不兼容；本页第 4 步因此用 manim 原生的
       `Write` / `ApplyWave`（RTM 的 render_hooks 已接线，可正常渲染）。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 import numpy as np
 from real_time_manim import (

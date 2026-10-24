@@ -15,9 +15,13 @@ Not demonstrated: name — only affects repr/logs, the image is unchanged; suspe
     mechanism is wired up (override_animation / animation_override_for), but it only has an effect with a
     custom Mobject subclass; set_run_time/set_name/get_run_time/get_rate_func/is_introducer/
     is_remover/copy — RTM's own Animation implements these chained methods (tests/test_gap_wait_timeline.py).
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

@@ -155,10 +155,18 @@ def main(argv=None):
             width, height = server.frame_size
             fmt = server.readback_format
             from real_time_manim.window.recording import encoder_threads
-            proc = subprocess.Popen(
-                segment_ffmpeg(width, height, fps, fmt, out_path,
-                               threads=encoder_threads(jobs)),
-                stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            try:
+                proc = subprocess.Popen(
+                    segment_ffmpeg(width, height, fps, fmt, out_path,
+                                   threads=encoder_threads(jobs)),
+                    stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(
+                    "ffmpeg is required to encode the worker segment %r but "
+                    "was not found on PATH; install it (macOS: brew install "
+                    "ffmpeg, Windows: winget install ffmpeg) and re-run."
+                    % out_path
+                ) from exc
             with proc.stdin as pipe:
                 for t in times[start:end]:
                     pipe.write(server.grab_pixels(t))

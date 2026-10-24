@@ -1,2 +1,10 @@
-manim>=0.20.0
-numpy
+# real-time-manim declares its runtime dependencies in pyproject.toml (PEP 621),
+# so this file only has to install the checkout itself:
+#
+#     pip install -r requirements.txt
+#
+# `manim` is deliberately NOT listed.  RTM bundles the ManimCE source it drives
+# (real_time_manim/manim, see real_time_manim/manim/UPSTREAM.md); installing
+# ManimCE alongside it makes `import manim` resolve to the external copy, so RTM
+# silently drives that instead of the bundle it was tested against.
+-e .

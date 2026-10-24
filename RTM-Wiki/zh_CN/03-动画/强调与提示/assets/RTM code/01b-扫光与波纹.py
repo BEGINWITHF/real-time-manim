@@ -10,9 +10,13 @@
         （2026-10-16 补全 `remover` 形参、默认 `True` 保持向后兼容：`True` 时 `clean_up_from_scene`
         把对象移出场景；显式传 `False` 时对象留在场景并恢复全笔画），样例用默认值；
         `**kwargs` 其余通用参数无可视效果。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

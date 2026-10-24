@@ -7,9 +7,13 @@
     GrowFromEdge(mobject, edge=RIGHT, point_color=ORANGE, run_time=1.3)  ✓
 不演示：point_color=None（默认=沿用对象自身颜色，与"不传"无差别）；
     **kwargs 里的 path_arc / path_func（Transform 路径参数，在 Grow 中不可视）。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

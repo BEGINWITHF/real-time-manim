@@ -6,9 +6,9 @@ Preparing a scene costs one ``construct()`` pass (records the whole timeline
 without drawing); after that every frame is O(1) -- just draw it at time ``t``.
 
     from real_time_manim.frames import FrameServer
-    from examples.scenes import DemoCreate
+    from my_scene import Demo             # any Scene subclass
 
-    fs = FrameServer(DemoCreate)        # build + record the timeline ONCE (no window)
+    fs = FrameServer(Demo)              # build + record the timeline ONCE (no window)
     fs.show_frame(1.5)                  # draw t=1.5 in the window (~10 ms, and shows it)
     fs.save_frame(1.5, "f.png")         # draw + readback + write (PNG), still no window
     fs.close()
@@ -94,7 +94,7 @@ class FrameServer:
             ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
         # Optional: the no-conversion readback (see native/SaveScreenshotRawBGRA).
         # One memcpy of the staging buffer instead of a per-pixel BGRA->BGR loop.
-        # The bare `raw_bgra` alias is deliberate: tools/check_bindings.py only
+        # The bare `raw_bgra` alias is deliberate: the binding checker only
         # recognises `name = getattr(dll, 'Symbol', None)` and would otherwise
         # report the export as called-but-never-bound (pointers truncated).
         raw_bgra = getattr(self.window.dll, "SaveScreenshotRawBGRA", None)
@@ -302,7 +302,12 @@ def _resolve_scene(token):
         mod_name, cls_name = token.split(':', 1)
         import importlib
         return getattr(importlib.import_module(mod_name), cls_name)
-    from run import SCENES  # demo table (repo root)
+    try:
+        from run import SCENES  # optional demo table in the development tree
+    except ImportError:
+        raise SystemExit(
+            "no demo table: pass 'module:Class' instead of a demo number "
+            "(numbered demos come from a development-only demo table)")
     for num, desc, cls in SCENES:
         if num == token:
             return cls

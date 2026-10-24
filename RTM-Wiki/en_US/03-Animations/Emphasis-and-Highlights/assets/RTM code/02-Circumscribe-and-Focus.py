@@ -14,9 +14,13 @@ Not demonstrated: `Circumscribe`'s `time_width` beam branch — ✅ wired up (co
         the `fade_in` / `fade_out=True` branch **ignores** this parameter, consistent with CE
         (both samples on this page take the fade branch), so there is no beam-branch video on this
         page; the remaining Transform common parameters in `FocusOn`'s `**kwargs` have no visual effect.
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     GREEN,

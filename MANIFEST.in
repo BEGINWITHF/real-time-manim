@@ -1,9 +1,36 @@
 # Native C/C++ sources — shipped in the sdist so users can rebuild the DLL.
-# The compiled vulkan_core.dll itself is shipped as package-data in real_time_manim/.
 recursive-include native *.c *.h *.ps1 *.sh *.m
+
+# PEP 561 marker: tells Pylance/mypy to use the package's inline annotations
+# instead of reporting "Stub file not found for real_time_manim".
+include real_time_manim/py.typed
+
+# PEP 561 stub-only package for the bundled ManimCE copy.  It makes
+# ``import manim`` (used throughout real_time_manim/manim/) resolvable to a
+# static analyzer without changing anything at runtime (see
+# scripts/gen_manim_stubs.py).
+recursive-include manim-stubs *.pyi py.typed
+include scripts/gen_manim_stubs.py
+
+# Compiled binaries.  They are package-data in pyproject.toml too, but listing
+# them here is deliberate: a sdist without them produces a package whose first
+# MLWindow() raises FileNotFoundError (the published 2.0.0 sdist shipped the
+# Windows DLL only, so every macOS install that fell back to it was broken).
+include real_time_manim/vulkan_core.dll
+include real_time_manim/vulkan_core.dylib
+
+# Crash/benchmark leftovers that must never leak into an sdist.
+global-exclude *.py[cod]
+global-exclude .DS_Store
+
+# distutils' sdist adds tests/test*.py unconditionally.  This checkout keeps
+# tests out of the published tree (see .gitignore); they also depend on the
+# sibling `tools` checkout, so shipping them would only ship broken imports.
+prune tests
 
 # Standard metadata (normally auto-included, listed explicitly for clarity)
 include LICENSE
+include requirements.txt
 include README.md
 include PYPI_README.md
 include logo.jpg

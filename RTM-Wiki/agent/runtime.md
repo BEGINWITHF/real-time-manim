@@ -376,7 +376,7 @@ def __init__(self, scene_cls, fps=60, out_dir="frames", use_bar=True, width=None
 | `scene_cls` | `type \| Scene \| Callable` | — | scene to preview (same forms as `fast_record_scene`) |
 | `fps` | `int` | `60` | frame-number rate (`120` = frame 120 = `t = 120/fps`) |
 | `out_dir` | `str` | `"frames"` | directory `s` / `Save PNG` writes into |
-| `use_bar` | `bool` | `True` | `False` → terminal input (no GUI toolkit); auto-`False` off Windows |
+| `use_bar` | `bool` | `True` | `False` → terminal input (no GUI toolkit); auto-`False` where no native bar exists (Windows/macOS have one) |
 | `width` / `height` | `int \| None` | `None` | window size (forced to 1920×1080) |
 | `verbose` | `bool` | `True` | print prepare time and status lines |
 | `controls` | `str` | `"input"` | `"input"` (text field) or `"slider"` (scrubber); aliases `box`/`text`/`edit`, `bar`/`progress`/`progressbar`/`scrub` |
@@ -387,6 +387,8 @@ def __init__(self, scene_cls, fps=60, out_dir="frames", use_bar=True, width=None
 - `notes`:
   - Input syntax: `120`/`120f` frame, `1.5`/`1.5s` seconds, `+10`/`-1` step N frames, `s` save PNG, `p` play from here, `?` help, `q` quit. Out-of-range clamps; bad input prints e.g. `[rtm] cannot read '{x}' -- try 120, 2.5s, +1, s, q`.
   - Title bar shows `frame {i}/{last}   t={t:.3f}s`.
+  - Bar: `Win32Bar` (Windows) and `MacBar` (macOS) are native bar windows docked under the video. Both use the same widgets (`input`: text + Jump/Save PNG/Quit; `slider`: scrubber + Save PNG/Quit).
+  - macOS AppKit runs only on the main thread, so the native bar queues events and `FramePreview._pump_bar()` drains them into `_queue`; `_dispatch` remains the sole timeline owner. `FramePreview.run()` tells the platform layer to reserve room before revealing the hidden window (`Vulkan_SetPreviewBarReserve`), so the docked bar stays clear of an auto-hiding Dock. `MacBar` falls back to terminal input if the dylib lacks the preview-bar exports.
   - A seek replays **animation** state; custom-updater / `TracedPath`-only objects are exact forward, approximate backwards.
 - `errs`:
   - `ValueError: "controls must be 'input' or 'slider', got {value!r}"`.
@@ -487,8 +489,8 @@ def export_srt(path, entries=None, windows=None, verbose=False)
 
 - `shows`: only when a **visible** `MLWindow` is registered (`MLWindow._registry`, `hidden` False) **and** the compile exceeds `RTM_WAIT_POPUP_DELAY` (default `0.35` s). A cache hit (~30 ms) never triggers it.
 - `silent`: hidden/offline runs — `fast_record_scene` and `FrameServer` build hidden windows.
-- `content`: live `已等待 N.Ns` counter + marquee progress bar. Language follows the **Windows display language (user UI language)** — `zh`/`en`/`ja`/`ko`, else English.
-- `effect on output`: **none** — it only observes elapsed time; the compile and the recorded video are unchanged. No-op off Windows.
+- `content`: live `已等待 N.Ns` counter + a progress bar. macOS shows a **determinate percentage** (estimated from elapsed time vs. a rolling compile-time estimate; it reaches 100% only when the compile really returns) and moves the slow SVG/mobject build to a worker so the bar keeps painting; Windows keeps its marquee bar. Language follows the **Windows display language (user UI language)** on Windows, and `LC_ALL`/`LC_MESSAGES`/`LANG`/locale elsewhere — `zh`/`en`/`ja`/`ko`, else English.
+- `effect on output`: **none** — it only observes elapsed time; the compile and the recorded video are unchanged. No-op on platforms without a native bar.
 - `avoid / clear the wait`: warm the cache with `restore_tex_cache` (see *LaTeX / Typst cache* below), or force a recompile with `clear_tex_cache`.
 
 | env | default | effect |
@@ -523,7 +525,7 @@ def restore_tex_cache(cache_dir, media_dir=None, *, tex_subdir="Tex",
 | `dry_run` | `bool` | `False` | report only, copy nothing |
 | `verbose` | `bool` | `True` | print a line per file |
 
-- `notes`: call **before** a run to skip recompiling unchanged math; `run.py` does this.
+- `notes`: call **before** a run to skip recompiling unchanged math; the demo runner does this.
 - `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
 
 ### `save_tex_cache`

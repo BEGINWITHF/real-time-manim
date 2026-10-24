@@ -1,16 +1,40 @@
 """Screenshots and video capture.
 
 Pixels come from the Vulkan swapchain readback (`screenshot`, the fast-record
-pipe and the live `start_record` worker); the BMP headers below are what the
+pipe and the live `start_record` capture); the BMP headers below are what the
 fallback path parses when a DLL has no raw readback export."""
 
 import ctypes
 import os
+import queue
 import sys
 import time
 import shutil
 import subprocess
 import tempfile
+import threading
+
+from .._ffmpeg import capture, read_capture, require as require_ffmpeg
+
+
+def check_pipe_destination(path):
+    """Reject destinations ffmpeg cannot infer an output format for.
+
+    The fast-record pipe suppresses ffmpeg's stderr, so an extension-less path
+    ("out") or a directory used to surface as ``BrokenPipeError: [Errno 32]
+    Broken pipe`` from the first frame write -- the actual reason ("Unable to
+    find a suitable output format", "Is a directory") never reached the caller.
+    """
+    if os.path.isdir(path):
+        raise IsADirectoryError(
+            "output path is a directory: %r -- pass a video file such as "
+            "'output.mp4' (a directory is only valid with segment=...)" % path
+        )
+    if not os.path.splitext(path)[1]:
+        raise ValueError(
+            "output path has no file extension: %r -- ffmpeg picks the "
+            "container from it; pass e.g. 'output.mp4'" % path
+        )
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -40,7 +64,26 @@ class BITMAPFILEHEADER(ctypes.Structure):
     ]
 
 
-def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path, threads=None):
+def bmp_extent(path):
+    """``(width, height)`` from a BMP file header (height is never negative).
+
+    The live recorder needs the *captured* pixel size, not the requested one:
+    on macOS a visible window is screen-clamped and Retina-backed, so its
+    swapchain can be 3420x1924 while RTM's contract says 1920x1080.  Reading
+    the first frame's header is the only size that is guaranteed to match the
+    frames ffmpeg is about to decode.
+    """
+    with open(path, "rb") as fh:
+        head = fh.read(26)
+    if len(head) < 26 or head[:2] != b"BM":
+        raise ValueError("not a BMP file: %r" % path)
+    width = int.from_bytes(head[18:22], "little", signed=True)
+    height = int.from_bytes(head[22:26], "little", signed=True)
+    return width, abs(height)
+
+
+def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path, threads=None,
+                          video_filter=None):
     """The ffmpeg argv that encodes a raw frame pipe (fast record, single piped).
 
     Shared by the live ``enable_fast_record`` pipe and the frame-parallel
@@ -59,7 +102,16 @@ def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path, threads=None):
     truncates where manim's own encoder rounds, which decoded flat #808080 one
     level low and, through the chroma round trip, shifted flat scenes by
     (-4,-2,-5) RGB -- just outside tolerance.
+
+    ``video_filter`` replaces that filter chain when the input is not already
+    the output size.  The live recorder passes a ``scale=1920:1080`` prefix
+    (a visible macOS window is Retina-backed, so its framebuffer is larger than
+    RTM's one output format); the range fix is still appended after it.
     """
+    if video_filter is None:
+        video_filter = "scale=out_range=pc"
+    else:
+        video_filter = video_filter.rstrip(",") + ",scale=out_range=pc"
     args = [
         "ffmpeg", "-y",
         "-f", "rawvideo", "-pixel_format", pix_fmt,
@@ -67,7 +119,7 @@ def fast_pipe_ffmpeg_args(width, height, fps, pix_fmt, out_path, threads=None):
         "-framerate", str(fps),
         "-i", "-",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-vf", "scale=out_range=pc",
+        "-vf", video_filter,
         "-color_range", "pc",
         "-crf", "18", "-preset", "fast",
     ]
@@ -156,6 +208,13 @@ class RecordingMixin:
         self._fast_slot_pending = None
         self._fast_raw_buf = None
         self._readback_slot = None
+        # A visible macOS window is screen-clamped and Retina-backed: its
+        # framebuffer is 3420x1924 while this pipe tells ffmpeg 1920x1080, so
+        # every raw readback failed the size check and the recording came out
+        # 0 bytes (fast_record_scene(hidden=False) only).  Pin the drawable to
+        # the output size exactly like the live recorder does; hidden windows
+        # are already exact and skip this.
+        self._pin_capture_drawable()
         w, h = self.win_w, self.win_h
 
         # Hide window for faster rendering (no compositing)
@@ -178,6 +237,8 @@ class RecordingMixin:
             print(f"[FastRecord] BMP mode {segment} → {path}/")
         else:
             # Pipe mode: SaveScreenshot → parse BMP → pipe BGR to ffmpeg
+            check_pipe_destination(self._fast_record_path)
+            require_ffmpeg("ffmpeg", "record %r" % self._fast_record_path)
             self._fast_record_pipe_mode = True
             self._fast_w = w
             self._fast_h = h
@@ -188,7 +249,7 @@ class RecordingMixin:
             # drops the alpha, so the per-pixel BGRA->BGR loop disappears.  The
             # BMP route stays as the fallback for a DLL without that export (and
             # for macOS).  The bare `raw_bgra` alias is what
-            # tools/check_bindings.py can see, hence the explicit argtypes.
+            # the binding checker can see, hence the explicit argtypes.
             raw_bgra = getattr(self.dll, "SaveScreenshotRawBGRA", None)
             if raw_bgra is not None:
                 raw_bgra.restype = ctypes.c_int
@@ -209,8 +270,14 @@ class RecordingMixin:
             pix_fmt = "bgra" if self._fast_raw_bgra else "bgr24"
             ffmpeg_cmd = fast_pipe_ffmpeg_args(w, h, fps, pix_fmt,
                                                self._fast_record_path)
-            self._ffmpeg = subprocess.Popen(
-                ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self._ffmpeg_log = capture()
+            try:
+                self._ffmpeg = subprocess.Popen(
+                    ffmpeg_cmd, stdin=subprocess.PIPE, stderr=self._ffmpeg_log)
+            except FileNotFoundError:
+                self._ffmpeg_log.close()
+                self._ffmpeg_log = None
+                raise
             self._fast_tmp_bmp = os.path.join(tempfile.gettempdir(),
                 f"manim_fast_{os.getpid()}_{id(self)}.bmp")
             # A record must not be paced by the display (see _set_unpaced).
@@ -286,6 +353,35 @@ class RecordingMixin:
             return self._capture_raw_bgra_to_pipe()
         return self._capture_bmp_to_pipe()
 
+    def _pipe_write(self, data, proc=None, path=None, log=None):
+        """Write raw pixels to ffmpeg, translating a dead encoder pipe.
+
+        ``Popen(stderr=DEVNULL)`` used to make a bad destination ("out", a
+        directory, a read-only folder) look like an unrelated ``BrokenPipeError``
+        on the first frame.  The encoder's stderr is now captured and attached
+        to a message that says what actually went wrong.
+
+        ``proc`` / ``path`` / ``log`` default to the fast-record encoder; the
+        live recorder passes its own so both paths share the same diagnosis.
+        """
+        if proc is None:
+            proc = self._ffmpeg
+        if path is None:
+            path = self._fast_record_path
+        if log is None:
+            log = getattr(self, "_ffmpeg_log", None)
+        try:
+            proc.stdin.write(data)
+        except (BrokenPipeError, ValueError) as exc:
+            detail = read_capture(log)
+            raise RuntimeError(
+                "ffmpeg stopped reading frames for %r (%s). The destination "
+                "must be a writable file whose extension names a video "
+                "container (e.g. .mp4).%s"
+                % (path, exc,
+                   (" ffmpeg said: " + detail) if detail else "")
+            ) from exc
+
     def _fast_capture_via_slots(self):
         """Queue this frame and write out the previous one.
 
@@ -318,7 +414,7 @@ class RecordingMixin:
             return
         if out_size.value != need:
             return
-        self._ffmpeg.stdin.write(memoryview(buf)[:need])
+        self._pipe_write(memoryview(buf)[:need])
 
     def _fast_drain_slot(self):
         """Write the last buffered frame (nothing follows it to hide behind)."""
@@ -341,7 +437,7 @@ class RecordingMixin:
         # fixed -video_size: drop the frame instead of shearing the rest.
         if out_size.value != need:
             return
-        self._ffmpeg.stdin.write(memoryview(buf)[:need])
+        self._pipe_write(memoryview(buf)[:need])
 
     def _capture_bmp_to_pipe(self):
         """SaveScreenshot → parse BMP → pipe tightly packed BGR to ffmpeg.
@@ -375,69 +471,263 @@ class RecordingMixin:
         if bmp_w != self._fast_w or bmp_h != self._fast_h:
             return
         if padded == row_size:
-            self._ffmpeg.stdin.write(data)
+            self._pipe_write(data)
             return
 
         height = self._fast_h
         try:
             import numpy as np
             rows = np.frombuffer(data, dtype=np.uint8, count=padded * height)
-            self._ffmpeg.stdin.write(rows.reshape(height, padded)[:, :row_size].tobytes())
+            self._pipe_write(rows.reshape(height, padded)[:, :row_size].tobytes())
         except Exception:                              # numpy unavailable
             out = bytearray(row_size * height)
             for y in range(height):
                 src = y * padded
                 out[y * row_size:(y + 1) * row_size] = data[src:src + row_size]
-            self._ffmpeg.stdin.write(bytes(out))
+            self._pipe_write(bytes(out))
 
     def _finish_fast_record(self):
-        """Finish recording: close ffmpeg pipe or report BMP count."""
+        """Finish recording: close the ffmpeg pipe or report the BMP count.
+
+        A failed encode is raised, not printed: ``fast_record_scene`` used to
+        report success (``files: []``) after swallowing the error here.
+        """
         if not self._fast_record:
             return
-        if getattr(self, '_fast_record_count_only', False):
-            print(f"[FastRecord] Count: {self._fast_record_frame_idx} frames")
-        elif getattr(self, '_fast_record_pipe_mode', False):
-            try:
-                self._fast_drain_slot()          # the frame nobody follows
-                self._ffmpeg.stdin.close()
-                self._ffmpeg.wait()
-                sz = os.path.getsize(self._fast_record_path) / 1024
-                print(f"[FastRecord] Saved: {self._fast_record_path} "
-                      f"({self._fast_record_frame_idx} frames, {sz:.0f} KB)")
-            except Exception as e:
-                print(f"[FastRecord] ffmpeg failed: {e}")
-            try:
-                os.unlink(self._fast_tmp_bmp)
-            except Exception:
-                pass
-        else:
-            bmps = [f for f in os.listdir(self._fast_record_path) if f.endswith('.bmp')]
-            print(f"[FastRecord] BMP: {len(bmps)} frames in {self._fast_record_path}")
-        self._fast_record = False
-        # Back to what the window's visibility wants: hidden stays unpaced,
-        # a window someone is watching goes back to vsync (see _set_unpaced).
-        self._set_unpaced(bool(getattr(self, 'hidden', True)))
+        failure = None
+        try:
+            if getattr(self, '_fast_record_count_only', False):
+                print(f"[FastRecord] Count: {self._fast_record_frame_idx} frames")
+            elif getattr(self, '_fast_record_pipe_mode', False):
+                try:
+                    self._fast_drain_slot()      # the frame nobody follows
+                    self._ffmpeg.stdin.close()
+                    code = self._ffmpeg.wait()
+                    if code:
+                        failure = "ffmpeg exited with status %d" % code
+                except (BrokenPipeError, ValueError) as exc:
+                    failure = "the encoder pipe closed early (%s)" % exc
+                except Exception as exc:          # noqa: BLE001 - reported below
+                    failure = str(exc) or type(exc).__name__
+                try:
+                    os.unlink(self._fast_tmp_bmp)
+                except OSError:
+                    pass
+                if failure is None:
+                    sz = os.path.getsize(self._fast_record_path) / 1024
+                    print(f"[FastRecord] Saved: {self._fast_record_path} "
+                          f"({self._fast_record_frame_idx} frames, {sz:.0f} KB)")
+            else:
+                bmps = [f for f in os.listdir(self._fast_record_path)
+                        if f.endswith('.bmp')]
+                if not bmps:
+                    failure = ("BMP segment mode wrote no frames to %r"
+                               % self._fast_record_path)
+                else:
+                    first = os.path.join(self._fast_record_path, sorted(bmps)[0])
+                    try:
+                        w, h = bmp_extent(first)
+                    except (OSError, ValueError) as exc:
+                        failure = "cannot read the first BMP frame: %s" % exc
+                    else:
+                        if (w, h) != (self.SUPPORTED_WIDTH, self.SUPPORTED_HEIGHT):
+                            failure = (
+                                "BMP segment mode wrote %dx%d frames, expected "
+                                "%dx%d" % (w, h, self.SUPPORTED_WIDTH,
+                                           self.SUPPORTED_HEIGHT))
+                        else:
+                            print(f"[FastRecord] BMP: {len(bmps)} frames in "
+                                  f"{self._fast_record_path}")
+        finally:
+            self._fast_record = False
+            # Undo the recording-size pin before the window goes back to live
+            # playback (a visible window returns to its Retina backing scale).
+            self._restore_capture_drawable()
+            # Back to what the window's visibility wants: hidden stays unpaced,
+            # a window someone is watching goes back to vsync.
+            self._set_unpaced(bool(getattr(self, 'hidden', True)))
+            log = getattr(self, "_ffmpeg_log", None)
+            detail = read_capture(log)
+            if log is not None:
+                try:
+                    log.close()
+                except OSError:
+                    pass
+                self._ffmpeg_log = None
+            self._ffmpeg_error = detail
+        if failure:
+            detail = getattr(self, "_ffmpeg_error", "")
+            raise RuntimeError(
+                "fast record failed for %r: %s.%s"
+                % (self._fast_record_path, failure,
+                   (" ffmpeg said: " + detail) if detail else "")
+            )
+
+    def _pin_capture_drawable(self):
+        """Render the visible window at exactly 1920x1080 while recording.
+
+        macOS clamps an oversized window to the screen and backs it with a 2x
+        layer, so a requested 1920x1080 window produces a 3420x1924 framebuffer
+        on a 1710x962-point screen.  Capturing that means reading back and
+        downscaling 6.6 MP per frame, which is both slower than real-time and a
+        round trip away from the video the caller asked for.  The native export
+        pins the layer's drawable to the output size (the compositor scales the
+        1080p image up to the Retina backing store) and rebuilds the swapchain
+        *now*, so frame 0 is already the right size.
+
+        A hidden window is already exactly 1920x1080 at 1x; a DLL without the
+        export keeps the old capture-then-scale behaviour.
+        """
+        self._capture_drawable_pinned = False
+        fn = getattr(self.dll, "Vulkan_SetDrawableSize", None)
+        if fn is None or getattr(self, "hidden", False):
+            return
+        fn.restype = ctypes.c_int
+        fn.argtypes = [ctypes.c_int, ctypes.c_int]
+        self._capture_drawable_pinned = bool(
+            fn(self.SUPPORTED_WIDTH, self.SUPPORTED_HEIGHT))
+        if self._capture_drawable_pinned:
+            # The rebuild is synchronous: the swapchain (and every following
+            # tick) is exactly this size, even if the window had been shown at
+            # its native Retina size before this call.
+            self.win_w = self.SUPPORTED_WIDTH
+            self.win_h = self.SUPPORTED_HEIGHT
+
+    def _restore_capture_drawable(self):
+        """Undo `_pin_capture_drawable` (next tick returns to Retina/1x)."""
+        if not getattr(self, "_capture_drawable_pinned", False):
+            return
+        self._capture_drawable_pinned = False
+        fn = getattr(self.dll, "Vulkan_SetDrawableSize", None)
+        if fn is not None:
+            fn.restype = ctypes.c_int
+            fn.argtypes = [ctypes.c_int, ctypes.c_int]
+            fn(0, 0)
 
     def start_record(self, path="output.mp4", fps=60):
         if self._recording:
             return
         self._record_path = os.path.abspath(path)
+        check_pipe_destination(self._record_path)
+        require_ffmpeg("ffmpeg", "record %r" % self._record_path)
         if int(fps) != self.SUPPORTED_FPS:
             print(f"[rtm] forcing {self.SUPPORTED_FPS} fps: RTM supports high "
                   f"quality only (asked for {fps})")
             fps = self.SUPPORTED_FPS
         self._record_fps = fps
-        self._record_dir = tempfile.mkdtemp(prefix="manim_record_")
         self._record_frame_idx = 0
-        self._recording = True
+        self._record_dropped = 0
         self._record_start_time = time.time()
-        import threading
+        self._recording = True
+        # Pin the live drawable to RTM's one output size while recording (see
+        # `_pin_capture_drawable`).  This is what keeps the capture real-time:
+        # the on-screen window is screen-clamped and Retina-backed, so without
+        # it every frame is 3420x1924 and has to be downscaled by ffmpeg.
+        self._pin_capture_drawable()
+        # Frame-exact live capture (see `_capture_frame`): the render thread
+        # reads the framebuffer it just drew and pipes it straight to ffmpeg.
+        # The old background BMP worker polls the framebuffer on its own clock,
+        # so a 1.5 s play at 60 fps produced ~85 frames and ffmpeg padded the
+        # gap by repeating frames -- the video ran 1.65 s instead of 1.50 s.
+        self._record_raw_bgra = None
+        self._record_ffmpeg = None
+        self._record_ffmpeg_log = None
+        self._record_ffmpeg_error = ""
+        self._record_raw_buf = None
+        self._record_capture_size = None
+        self._record_free = None
+        self._record_pending = None
+        self._record_writer = None
+        self._record_write_error = None
+        raw = getattr(self.dll, "SaveScreenshotRawBGRA", None)
+        if raw is not None:
+            raw.restype = ctypes.c_int
+            raw.argtypes = [
+                ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
+                ctypes.POINTER(ctypes.c_int)]
+            self._record_raw_bgra = raw
+            print(f"[Record] Recording to {self._record_path} at {fps} fps")
+            return
+        # Fallback for a DLL without the raw readback export: the old
+        # wall-clock BMP worker, encoded on stop.
+        self._record_dir = tempfile.mkdtemp(prefix="manim_record_")
         self._record_stop_event = threading.Event()
         self._record_thread = threading.Thread(target=self._record_worker, daemon=True)
         self._record_thread.start()
         print(f"[Record] Recording to {self._record_path} at {fps} fps")
 
+    def _start_record_pipe(self, w, h):
+        """Start the live ffmpeg encoder once the captured size is known.
+
+        A visible macOS window is screen-clamped and Retina-backed, so its
+        framebuffer is not 1920x1080 (on a 1710x962-point window at 2x it is
+        3420x1924).  RTM promises one output format, so the encoder scales the
+        live capture back to it; the fast-record path already runs at exactly
+        1920x1080 and needs no resize.
+
+        The encoder write runs on its own thread over a small ring of reusable
+        pixel buffers.  Writing 26 MB per frame straight into ffmpeg's stdin
+        cost ~8 ms of a 16.7 ms frame on the render thread, which pushed a
+        1.5 s scene to 1.9 s (the frames were right, but playback was not
+        real-time).  The ring is bounded, so the render thread blocks only when
+        the encoder is genuinely behind -- never silently drops a frame.
+        """
+        target_w, target_h = self.SUPPORTED_WIDTH, self.SUPPORTED_HEIGHT
+        video_filter = None
+        if (w, h) != (target_w, target_h):
+            video_filter = (f"scale={target_w}:{target_h}:flags=lanczos,"
+                            f"setsar=1")
+        cmd = fast_pipe_ffmpeg_args(w, h, self._record_fps, "bgra",
+                                    self._record_path,
+                                    video_filter=video_filter)
+        self._record_ffmpeg_log = capture()
+        try:
+            self._record_ffmpeg = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stderr=self._record_ffmpeg_log)
+        except FileNotFoundError:
+            self._record_ffmpeg_log.close()
+            self._record_ffmpeg_log = None
+            raise
+        self._record_capture_size = (w, h)
+        need = w * h * 4
+        # Three slots: the frame being written, the one just captured, and one
+        # the render thread can fill while the encoder drains.  Any more would
+        # just add ~26 MB per slot without buying headroom (the encoder is
+        # ~2x faster than 60 fps).
+        self._record_free = queue.Queue()
+        for _ in range(3):
+            self._record_free.put((ctypes.c_ubyte * need)())
+        self._record_pending = queue.Queue()
+        self._record_write_error = None
+        self._record_writer = threading.Thread(
+            target=self._record_writer_loop, daemon=True)
+        self._record_writer.start()
+
+    def _record_writer_loop(self):
+        """Drain captured frames into ffmpeg's stdin, off the render thread."""
+        while True:
+            item = self._record_pending.get()
+            if item is None:
+                return
+            buf, need = item
+            if self._record_write_error is None:
+                try:
+                    self._pipe_write(memoryview(buf)[:need],
+                                     proc=self._record_ffmpeg,
+                                     path=self._record_path,
+                                     log=self._record_ffmpeg_log)
+                except Exception as exc:      # noqa: BLE001 - raised on stop
+                    self._record_write_error = exc
+            # Always hand the slot back: the render thread may be waiting on
+            # it, and an encoder failure must not deadlock the scene.
+            self._record_free.put(buf)
+
     def _record_worker(self):
+        # Fallback live capture for a DLL without SaveScreenshotRawBGRA: write
+        # one BMP per polled frame, encoded on stop.  This is a wall-clock
+        # sampler, not frame-exact -- the raw path in `_capture_frame` is the
+        # one `record_scene` uses on a current DLL.
+        #
         # Captures the Vulkan framebuffer directly via SaveScreenshot (real
         # readback), NOT the composited screen. This is immune to window
         # occlusion/scaling that would corrupt a screen-based capture.
@@ -467,8 +757,12 @@ class RecordingMixin:
     def stop_record(self):
         if not self._recording:
             return
-        self._record_stop_event.set()
         self._recording = False
+        self._restore_capture_drawable()
+        if getattr(self, "_record_raw_bgra", None) is not None:
+            self._finish_live_pipe()
+            return
+        self._record_stop_event.set()
         if self._record_thread:
             self._record_thread.join(timeout=2.0)
             self._record_thread = None
@@ -487,6 +781,24 @@ class RecordingMixin:
                 shutil.rmtree(frame_dir, ignore_errors=True)
             return
 
+        # A visible macOS window is screen-clamped and Retina-backed, so its
+        # framebuffer is not 1920x1080 (on a 1710x962 point window at 2x it is
+        # 3420x1924).  RTM promises one output format; scale the live capture
+        # back to it instead of leaking the desktop's backing size into the MP4.
+        target_w, target_h = self.SUPPORTED_WIDTH, self.SUPPORTED_HEIGHT
+        captured_w = captured_h = 0
+        try:
+            first = sorted(f for f in os.listdir(frame_dir)
+                           if f.endswith(".bmp"))[0]
+            captured_w, captured_h = bmp_extent(os.path.join(frame_dir, first))
+        except (OSError, IndexError, ValueError):
+            pass
+        if (captured_w, captured_h) == (target_w, target_h):
+            video_filter = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+        else:
+            video_filter = (f"scale={target_w}:{target_h}:flags=lanczos,"
+                            f"setsar=1")
+
         pattern = os.path.join(frame_dir, "frame_%06d.bmp")
         cmd = [
             "ffmpeg", "-y",
@@ -495,7 +807,7 @@ class RecordingMixin:
             "-r", "60",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
-            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-vf", video_filter,
             "-crf", "18",
             "-preset", "fast",
             output,
@@ -503,10 +815,12 @@ class RecordingMixin:
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             print(f"[Record] Saved: {output}")
-        except FileNotFoundError:
-            print("[Record] ffmpeg not found. Install ffmpeg and add it to PATH.")
-            print(f"[Record] Frames are in: {frame_dir}")
-            return
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                "ffmpeg is required to encode %r but was not found on PATH. "
+                "Install it and re-run. The captured frames are in: %s"
+                % (output, frame_dir)
+            ) from exc
         except subprocess.CalledProcessError as e:
             print(f"[Record] ffmpeg failed: {e.stderr.decode(errors='replace')}")
             print(f"[Record] Frames are in: {frame_dir}")
@@ -515,5 +829,113 @@ class RecordingMixin:
             shutil.rmtree(frame_dir, ignore_errors=True)
 
 
+    def _finish_live_pipe(self):
+        """Close the live encoder and report what it wrote.
+
+        The live pipe encodes while the scene runs, so unlike the BMP fallback
+        there is no post-pass to hide behind: an encoder failure has to be
+        raised here or ``record_scene`` returns success for a truncated file.
+        """
+        output = self._record_path
+        total = self._record_frame_idx
+        dropped = getattr(self, "_record_dropped", 0)
+        duration = time.time() - getattr(self, "_record_start_time", time.time())
+        print(f"[Record] Captured {total} frames in {duration:.1f}s, saving at "
+              f"{self._record_fps} fps to {output} ...")
+        proc = getattr(self, "_record_ffmpeg", None)
+        log = getattr(self, "_record_ffmpeg_log", None)
+        failure = None
+        writer = getattr(self, "_record_writer", None)
+        if writer is not None:
+            self._record_pending.put(None)
+            writer.join(timeout=15.0)
+            if writer.is_alive():
+                failure = "the encoder writer did not finish"
+                if proc is not None:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+            self._record_writer = None
+        write_error = getattr(self, "_record_write_error", None)
+        if failure is None and write_error is not None:
+            failure = str(write_error) or type(write_error).__name__
+        if proc is not None:
+            try:
+                proc.stdin.close()
+                code = proc.wait()
+                if code:
+                    failure = failure or ("ffmpeg exited with status %d" % code)
+            except (BrokenPipeError, ValueError) as exc:
+                failure = failure or ("the encoder pipe closed early (%s)" % exc)
+            except Exception as exc:          # noqa: BLE001 - reported below
+                failure = failure or (str(exc) or type(exc).__name__)
+        elif failure is None:
+            failure = "no frames were captured"
+        detail = read_capture(log)
+        if log is not None:
+            try:
+                log.close()
+            except OSError:
+                pass
+        self._record_ffmpeg = None
+        self._record_ffmpeg_log = None
+        self._record_ffmpeg_error = detail
+        if failure:
+            raise RuntimeError(
+                "live record failed for %r: %s.%s"
+                % (output, failure,
+                   (" ffmpeg said: " + detail) if detail else "")
+            )
+        if dropped:
+            print(f"[Record] Dropped {dropped} frame(s) that could not be read "
+                  f"back (resized or closed mid-record).")
+        print(f"[Record] Saved: {output}")
+
     def _capture_frame(self):
-        pass
+        """Capture the frame the render loop just presented (live record).
+
+        Runs on the render thread immediately after ``tick()``, once per
+        rendered frame, so the recording is frame-exact: a 1.0 s ``play`` at
+        60 fps contributes exactly 60 frames, whether or not the machine keeps
+        up.  The previous background worker polled ``SaveScreenshot`` on its
+        own clock and wrote a BMP per frame; at Retina size that cost more than
+        a 16.7 ms frame, so ~15% of frames were never captured and ffmpeg
+        padded the gaps by repeating neighbours (1.65 s of video for a 1.50 s
+        scene).  Raw readback into a recycled buffer removes both the disk
+        round-trip and the sampling error; the encoder write is handed to
+        ``_record_writer_loop`` so it does not eat the frame budget.
+
+        Falls back to a no-op when the DLL has no ``SaveScreenshotRawBGRA``:
+        ``start_record`` then runs the BMP worker instead.
+        """
+        if not getattr(self, "_recording", False):
+            return
+        raw = getattr(self, "_record_raw_bgra", None)
+        if raw is None:
+            return                    # the background BMP worker owns capture
+        w, h = int(self.win_w), int(self.win_h)
+        if w <= 0 or h <= 0:
+            return
+        if self._record_ffmpeg is None:
+            self._start_record_pipe(w, h)
+        elif (w, h) != self._record_capture_size:
+            # A resize changes the row layout under ffmpeg's fixed
+            # -video_size: drop the frame instead of shearing the rest.
+            self._record_dropped += 1
+            return
+        need = w * h * 4
+        buf = self._record_free.get()
+        out_size = ctypes.c_int(need)
+        if not raw(buf, need, ctypes.byref(out_size)):
+            # No completed readback: the frame was not armed (or the window
+            # went away between the draw and this call).
+            self._record_free.put(buf)
+            self._record_dropped += 1
+            return
+        if out_size.value != need:
+            self._record_free.put(buf)
+            self._record_dropped += 1
+            return
+        self._record_pending.put((buf, need))
+        self._record_frame_idx += 1

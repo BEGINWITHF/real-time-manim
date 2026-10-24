@@ -18,9 +18,13 @@ Not demonstrated: path_arc_centers — RTM's own Transform (real_time_manim/anim
         axis swings the arc off screen, so there is nothing to compare (this clip passes OUT
         explicitly, matching the default).
 
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 import numpy as np
 from real_time_manim import (
