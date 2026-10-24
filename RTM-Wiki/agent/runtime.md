@@ -489,8 +489,8 @@ def export_srt(path, entries=None, windows=None, verbose=False)
 
 - `shows`: only when a **visible** `MLWindow` is registered (`MLWindow._registry`, `hidden` False) **and** the compile exceeds `RTM_WAIT_POPUP_DELAY` (default `0.35` s). A cache hit (~30 ms) never triggers it.
 - `silent`: hidden/offline runs — `fast_record_scene` and `FrameServer` build hidden windows.
-- `content`: live `已等待 N.Ns` counter + marquee progress bar. Language follows the **Windows display language (user UI language)** — `zh`/`en`/`ja`/`ko`, else English.
-- `effect on output`: **none** — it only observes elapsed time; the compile and the recorded video are unchanged. No-op off Windows.
+- `content`: live `已等待 N.Ns` counter + a progress bar. macOS shows a **determinate percentage** (estimated from elapsed time vs. a rolling compile-time estimate; it reaches 100% only when the compile really returns) and moves the slow SVG/mobject build to a worker so the bar keeps painting; Windows keeps its marquee bar. Language follows the **Windows display language (user UI language)** on Windows, and `LC_ALL`/`LC_MESSAGES`/`LANG`/locale elsewhere — `zh`/`en`/`ja`/`ko`, else English.
+- `effect on output`: **none** — it only observes elapsed time; the compile and the recorded video are unchanged. No-op on platforms without a native bar.
 - `avoid / clear the wait`: warm the cache with `restore_tex_cache` (see *LaTeX / Typst cache* below), or force a recompile with `clear_tex_cache`.
 
 | env | default | effect |

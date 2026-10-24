@@ -745,6 +745,270 @@ static void MacBar_Tick(void) {
     if (g_preview_bar) [g_preview_bar tick];
 }
 
+// ── Compile-wait popup ──────────────────────────────────────────────────
+// macOS counterpart of render_wait.WaitPopup (Windows).  A formula compile
+// blocks the main thread inside MathTex.__init__, so -- unlike the Windows
+// popup, which owns a message-loop thread -- this panel is created, shown and
+// advanced by explicit pumps from the compile's wait loops
+// (Vulkan_WaitPopupPump).  Everything stays on the AppKit main thread.
+// Python owns the 0.35 s "only if slow" delay and supplies the determinate
+// percentage (Vulkan_WaitPopupSetProgress); the slow SVG/mobject build runs on
+// a worker thread so those pumps keep flowing.
+
+static const CGFloat RTM_WAIT_WIDTH = 430.0;
+static const CGFloat RTM_WAIT_HEIGHT = 104.0;
+
+@interface RTMWaitPopup : NSObject {
+    NSPanel *_window;
+    NSTextField *_line1;
+    NSTextField *_line2;
+    NSTextField *_snippet;
+    NSProgressIndicator *_bar;
+    NSTextField *_percent;
+    NSTimer *_timer;
+    NSDate *_shownAt;
+    NSString *_line2Fmt;
+    BOOL _visible;
+}
+- (void)armTitle:(NSString *)title
+           line1:(NSString *)line1
+        line2Fmt:(NSString *)fmt
+         snippet:(NSString *)snippet;
+- (void)show;
+- (void)setProgress:(double)percent;
+- (void)pump:(double)seconds;
+- (void)destroy;
+@end
+
+@implementation RTMWaitPopup
+
+- (id)init {
+    self = [super init];
+    if (self) {
+        _visible = NO;
+    }
+    return self;
+}
+
+- (NSTextField *)newLabel:(NSRect)frame
+                     font:(NSFont *)font
+                    color:(NSColor *)color {
+    NSTextField *field = [[NSTextField alloc] initWithFrame:frame];
+    [field setBezeled:NO];
+    [field setBordered:NO];
+    [field setDrawsBackground:NO];
+    [field setEditable:NO];
+    [field setSelectable:NO];
+    [field setFont:font];
+    [field setTextColor:color];
+    [field setLineBreakMode:NSLineBreakByTruncatingTail];
+    [field setAutoresizingMask:NSViewWidthSizable];
+    return field;                       // caller adds and releases
+}
+
+- (void)armTitle:(NSString *)title
+           line1:(NSString *)line1
+        line2Fmt:(NSString *)fmt
+         snippet:(NSString *)snippet {
+    [self destroy];
+
+    NSRect contentRect = NSMakeRect(0, 0, RTM_WAIT_WIDTH, RTM_WAIT_HEIGHT);
+    _window = [[NSPanel alloc]
+        initWithContentRect:contentRect
+                  styleMask:(NSWindowStyleMaskTitled |
+                             NSWindowStyleMaskNonactivatingPanel)
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    [_window setFloatingPanel:YES];
+    [_window setBecomesKeyOnlyIfNeeded:YES];
+    [_window setTitle:(title ? title : @"")];
+    [_window setReleasedWhenClosed:NO];
+    [_window setLevel:NSFloatingWindowLevel];
+    [_window setHidesOnDeactivate:NO];
+    [_window setIgnoresMouseEvents:YES];
+    [_window setCollectionBehavior:
+        (NSWindowCollectionBehaviorCanJoinAllSpaces |
+         NSWindowCollectionBehaviorFullScreenAuxiliary)];
+
+    NSView *content = [[NSView alloc] initWithFrame:contentRect];
+    [_window setContentView:content];
+    [content release];
+
+    CGFloat w = RTM_WAIT_WIDTH - 28.0;
+    _line1 = [self newLabel:NSMakeRect(14, 68, w, 20)
+                       font:[NSFont systemFontOfSize:13.0
+                                              weight:NSFontWeightSemibold]
+                      color:[NSColor labelColor]];
+    _line2 = [self newLabel:NSMakeRect(14, 48, w, 16)
+                       font:[NSFont systemFontOfSize:11.0]
+                      color:[NSColor secondaryLabelColor]];
+    _snippet = [self newLabel:NSMakeRect(14, 28, w, 16)
+                         font:[NSFont systemFontOfSize:10.0]
+                        color:[NSColor tertiaryLabelColor]];
+    [_line1 setStringValue:(line1 ? line1 : @"")];
+    [_line2 setStringValue:@""];
+    [_snippet setStringValue:(snippet ? snippet : @"")];
+    [_snippet setHidden:(snippet.length == 0)];
+    [content addSubview:_line1];
+    [content addSubview:_line2];
+    [content addSubview:_snippet];
+    [_line1 release];
+    [_line2 release];
+    [_snippet release];
+
+    _bar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(14, 12, w - 44, 8)];
+    [_bar setStyle:NSProgressIndicatorStyleBar];
+    [_bar setControlSize:NSControlSizeSmall];
+    [_bar setIndeterminate:NO];
+    [_bar setMinValue:0.0];
+    [_bar setMaxValue:100.0];
+    [_bar setDoubleValue:0.0];
+    [content addSubview:_bar];
+    [_bar release];
+
+    _percent = [self newLabel:NSMakeRect(RTM_WAIT_WIDTH - 14 - 42, 8, 42, 14)
+                        font:[NSFont monospacedDigitSystemFontOfSize:10.0
+                                                              weight:NSFontWeightRegular]
+                       color:[NSColor secondaryLabelColor]];
+    [_percent setAlignment:NSTextAlignmentRight];
+    [_percent setStringValue:@"0%"];
+    [content addSubview:_percent];
+    [_percent release];
+
+    _line2Fmt = [fmt copy];
+}
+
+- (void)position {
+    if (!_window) return;
+    NSScreen *screen = g_window ? [g_window screen] : nil;
+    if (!screen) screen = [NSScreen mainScreen];
+    NSRect vis = [screen visibleFrame];
+    NSRect wf = [_window frame];
+    CGFloat x, y;
+    if (g_window) {
+        // Same corner as the Windows popup: just inside the video's top-right.
+        NSRect vf = [g_window frame];
+        x = NSMaxX(vf) - wf.size.width - 24.0;
+        y = NSMaxY(vf) - wf.size.height - 24.0;
+    } else {
+        x = NSMidX(vis) - wf.size.width / 2.0;
+        y = NSMidY(vis) - wf.size.height / 2.0;
+    }
+    if (x < NSMinX(vis)) x = NSMinX(vis);
+    if (x + wf.size.width > NSMaxX(vis)) x = NSMaxX(vis) - wf.size.width;
+    if (y < NSMinY(vis)) y = NSMinY(vis);
+    if (y + wf.size.height > NSMaxY(vis)) y = NSMaxY(vis) - wf.size.height;
+    [_window setFrameOrigin:NSMakePoint(floor(x), floor(y))];
+}
+
+- (void)updateElapsed {
+    if (!_line2 || !_shownAt || !_line2Fmt) return;
+    double elapsed = -[_shownAt timeIntervalSinceNow];
+    if (elapsed < 0.0) elapsed = 0.0;
+    [_line2 setStringValue:[NSString stringWithFormat:_line2Fmt, elapsed]];
+}
+
+- (void)tick:(NSTimer *)timer {
+    (void)timer;
+    [self updateElapsed];
+}
+
+- (void)setProgress:(double)percent {
+    if (percent < 0.0) percent = 0.0;
+    if (percent > 100.0) percent = 100.0;
+    if (_bar) [_bar setDoubleValue:percent];
+    if (_percent) {
+        [_percent setStringValue:
+            [NSString stringWithFormat:@"%.0f%%", percent]];
+    }
+}
+
+- (void)show {
+    if (!_window || _visible) return;
+    [self position];
+    [_shownAt release];
+    _shownAt = [[NSDate alloc] init];
+    [self setProgress:0.0];
+    [self updateElapsed];
+    [_window orderFrontRegardless];
+    [_window displayIfNeeded];
+    _visible = YES;
+    if (!_timer) {
+        _timer = [NSTimer scheduledTimerWithTimeInterval:0.1
+                                                  target:self
+                                                selector:@selector(tick:)
+                                                userInfo:nil
+                                                 repeats:YES];
+    }
+}
+
+- (void)pump:(double)seconds {
+    if (!_visible) return;
+    // The run loop fires NSTimer; the elapsed counter is also refreshed here
+    // because Python sets the percentage on every pump and runMode may return
+    // as soon as it has handled one source.
+    [self updateElapsed];
+    NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:
+                     (seconds > 0.0 ? seconds : 0.01)];
+    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:limit];
+}
+
+- (void)destroy {
+    if (_timer) {
+        [_timer invalidate];
+        _timer = nil;
+    }
+    if (_bar) [_bar stopAnimation:nil];
+    if (_window) {
+        [_window orderOut:nil];
+        [_window close];
+        [_window release];
+        _window = nil;
+    }
+    _line1 = nil;
+    _line2 = nil;
+    _snippet = nil;
+    _bar = nil;
+    _percent = nil;
+    [_line2Fmt release];
+    _line2Fmt = nil;
+    [_shownAt release];
+    _shownAt = nil;
+    _visible = NO;
+}
+
+@end
+
+static RTMWaitPopup *g_wait_popup = nil;
+
+void Vulkan_WaitPopupArm(const char *title, const char *line1,
+                         const char *line2_fmt, const char *snippet) {
+    @autoreleasepool {
+        if (!g_wait_popup) g_wait_popup = [[RTMWaitPopup alloc] init];
+        [g_wait_popup
+            armTitle:(title ? [NSString stringWithUTF8String:title] : @"")
+              line1:(line1 ? [NSString stringWithUTF8String:line1] : @"")
+           line2Fmt:(line2_fmt ? [NSString stringWithUTF8String:line2_fmt] : @"")
+            snippet:(snippet ? [NSString stringWithUTF8String:snippet] : @"")];
+    }
+}
+
+void Vulkan_WaitPopupShow(void) {
+    if (g_wait_popup) [g_wait_popup show];
+}
+
+void Vulkan_WaitPopupPump(double seconds) {
+    if (g_wait_popup) [g_wait_popup pump:seconds];
+}
+
+void Vulkan_WaitPopupSetProgress(double percent) {
+    if (g_wait_popup) [g_wait_popup setProgress:percent];
+}
+
+void Vulkan_WaitPopupDestroy(void) {
+    if (g_wait_popup) [g_wait_popup destroy];
+}
+
 // Show/hide the window after a hidden Vulkan_InitEx.  The preview builds its
 // window hidden (so offline work never pops up), then calls this through
 // MLWindow.set_visible(True).  A hidden 1920x1080 window is larger than most
@@ -874,6 +1138,7 @@ int Vulkan_Tick(void) {
 }
 
 void Vulkan_Shutdown(void) {
+    Vulkan_WaitPopupDestroy();
     Vulkan_DestroyPreviewBar();
     Mac_FreeReadbackBuffer();
     Render_Cleanup();

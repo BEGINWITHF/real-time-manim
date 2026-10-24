@@ -635,7 +635,8 @@ def warmup_typst_math(bodies):
             continue
         code = f"$ {body} $"
         futs.append(_POOL.submit(typst_to_svg_file, code, ""))
-    return [f.result() for f in futs]
+    from real_time_manim.render_wait import wait_future
+    return [wait_future(f) for f in futs]
 
 
 # ---------------------------------------------------------------------------

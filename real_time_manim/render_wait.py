@@ -16,9 +16,16 @@ This module shows a small always-on-top window while that compile runs:
   ``FrameServer`` run hidden and stay silent),
 * only when the compile is **slow** (a cache hit finishes in ~30 ms, so a
   short delay arms the popup and a fast compile cancels it before it appears),
-* with a live "已等待 N.Ns" counter and a marquee bar, so it is visibly *doing
-  something* rather than frozen,
+* with a live "已等待 N.Ns" counter and a **percentage** bar, so it is visibly
+  *doing something* rather than frozen,
 * telling the user the truth: this is a first render, and a warm cache is fast.
+
+The percentage is an adaptive estimate: LaTeX and dvisvgm do not expose an
+internal completion counter, so the bar advances with elapsed time versus a
+rolling estimate of how long a slow compile takes.  It approaches 99% if a
+compile outlives that estimate and is set to 100% only when the compile really
+returns.  The slow SVG/mobject build is moved to a worker thread (pure CPU) so
+the main thread can keep painting the bar instead of freezing it.
 
 The compile itself is untouched -- this only observes how long it takes.
 
@@ -37,8 +44,12 @@ Toggles
 ``RTM_WAIT_ICON``         override the ``.ico`` used for the popup window.
 ``RTM_LANG``              force the popup language (``zh`` / ``en`` / ``ja`` / ``ko``).
 
-Off Windows, or without a visible window, :func:`formula_compile_wait` is a
-no-op context manager.
+Without a visible window (or on a platform without a native popup),
+:func:`formula_compile_wait` is a no-op.  On macOS the popup is native Cocoa:
+the compile blocks the main thread, so :func:`pump_compile_wait` runs a short
+AppKit run-loop slice from the LaTeX subprocess waits, the Typst future waits,
+and the worker that builds the SVG mobject, keeping the percentage bar and
+elapsed counter moving.
 """
 from __future__ import annotations
 
@@ -47,13 +58,23 @@ import sys
 import threading
 import time
 
-__all__ = ["formula_compile_wait", "popup_is_shown", "WaitPopup"]
+__all__ = ["formula_compile_wait", "popup_is_shown", "WaitPopup",
+           "pump_compile_wait", "wait_future", "popup_armed",
+           "run_pumping"]
 
 _ENABLED = os.environ.get("RTM_WAIT_POPUP", "1") != "0"
 try:
     _DELAY = max(0.0, float(os.environ.get("RTM_WAIT_POPUP_DELAY", "0.35")))
 except ValueError:
     _DELAY = 0.35
+
+#: Rolling estimate of a formula's total compile time, used to turn the
+#: popup's progress bar into a percentage.  LaTeX/dvisvgm do not expose their
+#: internal completion, so the fraction is elapsed/expected (never stalling:
+#: a compile that outlives the estimate approaches 99% until it really ends).
+_EXPECTED = 1.0
+_EXPECTED_MIN = 0.40
+_EXPECTED_MAX = 5.0
 
 #: Win32 class name of the popup (never translated -- tests and FindWindowW
 #: look it up by this exact string).
@@ -174,14 +195,19 @@ def _icon_path() -> str:
     return ""
 
 
-def _visible_window_exists() -> bool:
-    """True while an RTM window that a human can see is open."""
+def _visible_window():
+    """The newest RTM window a human can see, or ``None``."""
     try:
         from real_time_manim.window import MLWindow
         reg = list(getattr(MLWindow, "_registry", ()))
     except Exception:
-        return False
-    return any(not getattr(w, "hidden", False) for w in reg)
+        return None
+    for window in reversed(reg):
+        if getattr(window, "hidden", False):
+            continue
+        if getattr(window, "dll", None) is not None:
+            return window
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -195,14 +221,33 @@ class _CompileWait:
         self._popup = None
         self._cancelled = False
         self._lock = threading.Lock()
+        # macOS: armed for the outermost compile.  The native panel is created
+        # only by pump() once the compile has actually exceeded _DELAY.
+        self._mac_armed = None
+        self._mac_dll = None
+        self._mac_shown = False
+        self._mac_pump = None
+        self._mac_destroy = None
+        self._mac_progress = None
+        self._mac_shown_at = None
 
     def __enter__(self):
         _local.depth = _depth() + 1
-        if (_depth() == 1 and _ENABLED and sys.platform == "win32"
-                and _visible_window_exists()):
-            self._timer = threading.Timer(_DELAY, self._spawn)
-            self._timer.daemon = True
-            self._timer.start()
+        if _depth() == 1 and _ENABLED:
+            window = _visible_window()
+            if window is not None:
+                if sys.platform == "win32":
+                    self._timer = threading.Timer(_DELAY, self._spawn)
+                    self._timer.daemon = True
+                    self._timer.start()
+                elif (sys.platform == "darwin"
+                        and threading.current_thread() is threading.main_thread()):
+                    # Never arm from a worker thread: AppKit is main-thread only.
+                    # (A heavy formula's SVG build runs on a worker while this
+                    # main thread pumps; nested wrappers there must stay quiet.)
+                    self._mac_armed = time.monotonic()
+                    self._mac_dll = window.dll
+                    _local.wait = self
         return self
 
     def _spawn(self):
@@ -221,8 +266,88 @@ class _CompileWait:
                 if self._popup is popup:
                     self._popup = None
 
+    # -- macOS ------------------------------------------------------------
+    def _expectation(self):
+        return max(_EXPECTED_MIN, min(_EXPECTED_MAX, _EXPECTED))
+
+    def pump(self):
+        """Show/advance the mac popup; called from the compile's wait loop."""
+        if self._mac_armed is None:
+            return
+        if threading.current_thread() is not threading.main_thread():
+            return                       # AppKit is main-thread only
+        if not self._mac_shown:
+            if time.monotonic() - self._mac_armed < _DELAY:
+                return
+            if not self._show_mac():
+                self._mac_armed = None   # old dylib: compile silently
+                return
+        if self._mac_progress is not None and self._mac_shown_at is not None:
+            elapsed = max(0.0, time.monotonic() - self._mac_shown_at)
+            x = elapsed / self._expectation()
+            # Elapsed-based, but never stalls: a compile that outlives the
+            # estimate keeps inching towards 99% until it actually finishes.
+            pct = 100.0 * x / (x + 0.7)
+            if pct > 99.0:
+                pct = 99.0
+            try:
+                self._mac_progress(pct)
+            except Exception:
+                self._mac_progress = None
+        if self._mac_pump is not None:
+            try:
+                self._mac_pump(0.01)
+            except Exception:
+                self._mac_pump = None
+
+    def _show_mac(self):
+        dll = self._mac_dll
+        if dll is None:
+            return False
+        try:
+            arm = dll.Vulkan_WaitPopupArm
+            show = dll.Vulkan_WaitPopupShow
+            pump = dll.Vulkan_WaitPopupPump
+            destroy = dll.Vulkan_WaitPopupDestroy
+        except AttributeError:           # dylib predates the popup
+            return False
+        progress = getattr(dll, "Vulkan_WaitPopupSetProgress", None)
+        import ctypes
+        arm.restype = None
+        arm.argtypes = [ctypes.c_char_p] * 4
+        show.restype = None
+        show.argtypes = []
+        pump.restype = None
+        pump.argtypes = [ctypes.c_double]
+        destroy.restype = None
+        destroy.argtypes = []
+        if progress is not None:
+            progress.restype = None
+            progress.argtypes = [ctypes.c_double]
+
+        snippet = self.label
+        if len(snippet) > 70:
+            snippet = snippet[:67] + "..."
+        line2 = _t("line2").replace("{e:.1f}", "%0.1f").replace("{e}", "%0.1f")
+        try:
+            arm(_t("title").encode("utf-8"),
+                _t("line1").encode("utf-8"),
+                line2.encode("utf-8"),
+                snippet.encode("utf-8"))
+            show()
+        except Exception:
+            return False
+        self._mac_pump = pump
+        self._mac_progress = progress
+        self._mac_destroy = destroy
+        self._mac_shown_at = time.monotonic()
+        self._mac_shown = True
+        return True
+
     def __exit__(self, *exc):
         _local.depth = max(0, _depth() - 1)
+        if getattr(_local, "wait", None) is self:
+            _local.wait = None
         with self._lock:
             self._cancelled = True
             if self._timer is not None:
@@ -231,6 +356,31 @@ class _CompileWait:
             popup, self._popup = self._popup, None
         if popup is not None:
             popup.stop()
+        main = threading.current_thread() is threading.main_thread()
+        if self._mac_shown and self._mac_armed is not None and main:
+            actual = time.monotonic() - self._mac_armed
+            if 0.0 < actual < 60.0:
+                global _EXPECTED
+                _EXPECTED = 0.8 * _EXPECTED + 0.2 * actual
+            # Show a completed bar for a moment instead of tearing it down at
+            # 97%: the compile *did* finish, so 100% is the honest value.
+            if self._mac_progress is not None and self._mac_pump is not None:
+                try:
+                    self._mac_progress(100.0)
+                    self._mac_pump(0.04)
+                except Exception:
+                    pass
+        if (self._mac_destroy is not None and main):
+            try:
+                self._mac_destroy()
+            except Exception:
+                pass
+        self._mac_destroy = None
+        self._mac_pump = None
+        self._mac_progress = None
+        self._mac_shown = False
+        self._mac_shown_at = None
+        self._mac_armed = None
         return False
 
 
@@ -239,8 +389,71 @@ def formula_compile_wait(label: str = "") -> _CompileWait:
     return _CompileWait(str(label or ""))
 
 
+def popup_armed() -> bool:
+    """True while this (main) thread has an armed compile popup."""
+    return getattr(_local, "wait", None) is not None
+
+
+def run_pumping(fn, *args, **kwargs):
+    """Run a heavy, CPU-only step on a worker while the mac popup animates.
+
+    ``SVGMobject``'s build (SVG parse + thousands of path mobjects) is the long
+    part of a cold formula render and does not touch AppKit or Vulkan.  Off the
+    main thread it can run while ``pump_compile_wait()`` keeps the popup's
+    percentage and elapsed counter moving; without this the panel would freeze
+    for the whole build.  Other platforms/threads call ``fn`` inline.
+    """
+    wait = getattr(_local, "wait", None)
+    if (sys.platform != "darwin" or wait is None
+            or threading.current_thread() is not threading.main_thread()):
+        return fn(*args, **kwargs)
+    box = {}
+
+    def target():
+        try:
+            box["value"] = fn(*args, **kwargs)
+        except BaseException as exc:          # re-raised on the main thread
+            box["error"] = exc
+
+    thread = threading.Thread(target=target, name="rtm-svg-build", daemon=True)
+    thread.start()
+    while thread.is_alive():
+        thread.join(0.02)
+        wait.pump()
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
+def pump_compile_wait() -> None:
+    """Keep a slow compile's popup alive (macOS); a no-op elsewhere.
+
+    Call this from loops that block the main thread while a formula compiles
+    (the LaTeX subprocess waits and the Typst future waits).  It only does
+    anything on the thread that armed the popup.
+    """
+    wait = getattr(_local, "wait", None)
+    if wait is not None:
+        wait.pump()
+
+
+def wait_future(future):
+    """``future.result()`` while pumping the macOS compile popup."""
+    if sys.platform != "darwin":
+        return future.result()
+    from concurrent.futures import TimeoutError as FutureTimeout
+    while True:
+        try:
+            return future.result(timeout=0.02)
+        except FutureTimeout:
+            pump_compile_wait()
+
+
 def popup_is_shown() -> bool:
     """True while the popup window is actually on screen (for tests)."""
+    if sys.platform == "darwin":
+        wait = getattr(_local, "wait", None)
+        return bool(wait is not None and getattr(wait, "_mac_shown", False))
     return any(p.alive for p in list(_POPUPS.values()))
 
 
