@@ -523,7 +523,7 @@ def restore_tex_cache(cache_dir, media_dir=None, *, tex_subdir="Tex",
 | `dry_run` | `bool` | `False` | report only, copy nothing |
 | `verbose` | `bool` | `True` | print a line per file |
 
-- `notes`: call **before** a run to skip recompiling unchanged math; `run.py` does this.
+- `notes`: call **before** a run to skip recompiling unchanged math; the demo runner does this.
 - `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
 
 ### `save_tex_cache`

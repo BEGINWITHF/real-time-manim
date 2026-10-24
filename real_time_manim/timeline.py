@@ -18,7 +18,8 @@ A whole scene is just a schedule of animations on one global time axis, so
 ``render_at(t)`` gives any frame of the whole scene, enabling scrubbing / seek.
 
 This module is additive: it does not touch ``play`` yet.  The plan is to migrate
-the legacy pipeline onto this model (see ``docs/2.0.0-time-addressable.md``).
+the legacy pipeline onto this model (see the 2.0 time-addressable design
+notes).
 
 Known limitations (tracked for later phases):
 - stateful animations (rotation accumulation, updaters, ``TracedPath`` histories,
@@ -669,6 +670,9 @@ class Timeline:
         import subprocess
         import tempfile
         import time
+
+        from real_time_manim._ffmpeg import require
+        require("ffmpeg", "render the timeline to %r" % (path,))
 
         self.finish_hooks = True
         # Sample the schedule exactly the way `play()` writes it: each play

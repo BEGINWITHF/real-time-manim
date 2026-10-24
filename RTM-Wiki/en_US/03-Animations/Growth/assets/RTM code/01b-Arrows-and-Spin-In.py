@@ -6,9 +6,13 @@ Demonstrated parameters (one by one from the page's Parameters table):
     SpinInFromNothing(mobject, angle=PI/2, point_color=None, run_time=1.5)  ✓ default angle for comparison
 Not demonstrated: point_color=None as a step of its own (the default = keeps the object's own colour, no different from not passing it);
     path_func in **kwargs is occupied by spiral_path(angle) and cannot be passed separately.
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

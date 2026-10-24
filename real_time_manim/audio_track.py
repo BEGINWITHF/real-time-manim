@@ -131,9 +131,12 @@ def has_sounds() -> bool:
 
 
 def _probe_duration(path):
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                          "format=duration", "-of", "csv=p=0", path],
-                         capture_output=True, text=True).stdout.strip()
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                              "format=duration", "-of", "csv=p=0", path],
+                             capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return 0.0
     try:
         return float(out)
     except ValueError:
@@ -179,10 +182,13 @@ def build_track(wav_path, duration=None):
 def mux_audio(mp4_path, wav_path):
     """Copy the video stream and attach `wav_path` as AAC.  Replaces the file."""
     tmp = mp4_path + ".withaudio.mp4"
-    proc = subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", mp4_path, "-i", wav_path,
-         "-c:v", "copy", "-c:a", "aac", "-shortest", tmp],
-        capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", mp4_path, "-i", wav_path,
+             "-c:v", "copy", "-c:a", "aac", "-shortest", tmp],
+            capture_output=True, text=True)
+    except OSError:
+        return False
     if proc.returncode != 0 or not os.path.exists(tmp):
         return False
     os.replace(tmp, mp4_path)
@@ -226,6 +232,8 @@ def apply_sounds(files, verbose=False):
     files = [f for f in files if os.path.exists(f)]
     if not files:
         return []
+    from real_time_manim._ffmpeg import require
+    require("ffmpeg", "mux the scene's audio track into %r" % (files[0],))
     # Padding: a track that is even slightly shorter than the video makes
     # `-shortest` trim video frames (measured: 16 -> 12 frames).  Extra audio
     # tail is harmless, so always overshoot a little.

@@ -10,9 +10,13 @@ Not demonstrated: .animate(lag_ratio=...) — a single .animate has no submobjec
     (the parameter itself is not dropped; with no children it raises a UserWarning, see the page end);
     @override_animate / @override_animation — they need a custom Mobject subclass, so no sample on this
     page (the mechanism is wired up, see the page end).
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

@@ -15,10 +15,12 @@ close.  The two map onto the engine's two built-in recorders:
 
 * ``fast_record_scene`` — **offline** record via Vulkan framebuffer readback
   streamed straight to ffmpeg (optionally with a hidden window).  This is the
-  path used by the batch ``run_all.py`` renderer; fastest, no visible window.
-* ``record_scene`` — **real-time** record against a live window using a
-  background frame-capture thread (``start_record``/``stop_record``), the path
-  used by the interactive ``run.py``.
+  path used by a batch renderer; fastest, no visible window.
+* ``record_scene`` — **real-time** record against a live window
+  (``start_record``/``stop_record``): each frame the play loop presents is
+  captured on the render thread and piped to ffmpeg, so the file has exactly
+  as many frames as the scene draws.  This is the path used by interactive
+  playback.
 
 Each function takes rich keyword arguments so the capture/encode step is
 customisable (fps, window visibility, count-only probe, BMP segment mode,
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -136,6 +139,36 @@ def _produced_files(out_path: str) -> List[str]:
         p for p in os.listdir(os.path.dirname(out_path) or ".") if p.startswith(os.path.basename(root))
     ) if os.path.isdir(os.path.dirname(out_path) or ".") else []
     return [os.path.join(os.path.dirname(out_path) or ".", p) for p in hits]
+
+
+def _validate_out_path(out_path: str, *, segment=None,
+                       count_only: bool = False) -> None:
+    """Refuse destinations that cannot produce a video, before the scene runs.
+
+    A missing extension and a directory both used to reach ffmpeg, which exits
+    immediately; because the fast-record pipe captures ffmpeg's stderr, the
+    caller only saw ``BrokenPipeError: [Errno 32] Broken pipe`` from the first
+    frame write.
+    """
+    if count_only or segment is not None:
+        return                       # count-only writes nothing; BMP mode uses a dir
+    from real_time_manim.window.recording import check_pipe_destination
+    check_pipe_destination(out_path)
+
+
+def _require_ffmpeg(what: str) -> None:
+    """Fail with an actionable message when ffmpeg is not installed."""
+    from real_time_manim._ffmpeg import require
+    require("ffmpeg", what)
+
+
+def _remove_incomplete(path: str) -> None:
+    """Delete a header-only file left by a failed record (best effort)."""
+    try:
+        if os.path.isfile(path) and os.path.getsize(path) < 1024:
+            os.remove(path)
+    except OSError:
+        pass
 
 
 # --------------------------------------------------------------------------
@@ -286,6 +319,9 @@ def _parallel_plan(scene, jobs, fps: int, hidden: bool, count_only: bool,
 
 def _concat_segments(segments: List[str], out_path: str) -> None:
     """Join the workers' segments in order, without re-encoding."""
+    # Guard here as well as in the caller: this is the one external process the
+    # parallel path runs itself, and a missing ffmpeg must name itself.
+    _require_ffmpeg("join the recorded segments into %r" % out_path)
     lst = out_path + ".concat.txt"
     with open(lst, "w", encoding="utf-8") as fh:
         for seg in segments:
@@ -349,10 +385,11 @@ def _fast_record_parallel(scene, out_path: str, *, fps: int, jobs: int,
     concatenated with ``-c copy``.  Each worker pays its own ``construct()`` and
     window, so this wins when the scene is long compared with that setup cost.
     """
-    import shutil
     import tempfile
 
     out_path = os.path.abspath(out_path)
+    _validate_out_path(out_path)
+    _require_ffmpeg("record %r" % out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     _guard_overwrite(out_path, overwrite)
 
@@ -457,8 +494,8 @@ def _frame_count(path: str) -> int:
              "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", path],
             capture_output=True, text=True, encoding="utf-8").stdout.strip()
         return int(out.splitlines()[0])
-    except Exception:
-        return 0
+    except (OSError, ValueError, IndexError):
+        return 0                        # no ffprobe / unreadable file: best effort
 
 
 # --------------------------------------------------------------------------
@@ -507,8 +544,13 @@ class _AutoRecord:
 
         def patched_close(self_):
             st._n_closed += 1
-            st._on_close(self_)
-            st._orig_close(self_)
+            try:
+                st._on_close(self_)
+            finally:
+                # Always shut the window down, even when the encoder raises
+                # (the failure is reported by the caller, not masked by a
+                # leaked Vulkan device).
+                st._orig_close(self_)
 
         vb.MLWindow.__init__ = patched_init
         vb.MLWindow.close = patched_close
@@ -523,9 +565,12 @@ class _AutoRecord:
 def _run(scene, out_path: str, on_init, on_close,
          verbose: bool, overwrite: bool, count_only: bool,
          cleanup: bool = True, hidden: Optional[bool] = None,
-         expect_files: bool = True) -> Dict[str, Any]:
+         expect_files: bool = True, segment=None) -> Dict[str, Any]:
     runner = _as_runner(scene)
     out_path = os.path.abspath(out_path)
+    _validate_out_path(out_path, segment=segment, count_only=count_only)
+    if expect_files:
+        _require_ffmpeg("record %r" % out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     _guard_overwrite(out_path, overwrite, count_only)
     from real_time_manim import audio_track
@@ -546,13 +591,36 @@ def _run(scene, out_path: str, on_init, on_close,
     # hook (``_finish_fast_record`` / ``stop_record``): the ffmpeg pipe stays
     # open and the file on disk is a 48-byte header.  That used to be reported
     # as success (audit ``forget_close_fast_record``); fail with an actionable
-    # message instead of handing back a broken video.
+    # message instead of handing back a broken video, and remove the stub so it
+    # cannot be mistaken for a real recording later.
     if expect_files and rec._n_windows and rec._n_closed < rec._n_windows:
+        for f in rec.windows:
+            _remove_incomplete(f)
         raise RuntimeError(
             "recorded %d window(s) but MLWindow.close() was only called %d "
             "time(s): the encoder was never finished, so the output is "
-            "incomplete. Call win.close() at the end of construct()."
+            "incomplete (and the partial file was removed). Call win.close() "
+            "at the end of construct()."
             % (rec._n_windows, rec._n_closed)
+        )
+    # A scene with no MLWindow draws nothing RTM can capture: it ran on
+    # ManimCE's Cairo renderer (writing its own media/ output, which the
+    # cleanup below removes) and used to come back as `files: []` -- success,
+    # with no video and no explanation.  `self.play(...)` is not enough.
+    if expect_files and rec._n_windows == 0:
+        if cleanup:
+            from real_time_manim.util import clear_media
+            clear_media(verbose=verbose)
+        raise RuntimeError(
+            "the scene ran but opened no MLWindow, so nothing was recorded.\n"
+            "RTM only captures frames drawn by an MLWindow. Inside "
+            "construct():\n"
+            "    win = MLWindow(1920, 1080)\n"
+            "    win.scene = self\n"
+            "    win.play(Create(mobject), run_time=1.0)\n"
+            "    win.close()\n"
+            "(`self.play(...)` alone runs on ManimCE's Cairo renderer, which "
+            "RTM does not record.)"
         )
     # Rendering leaves transient manim media/Tex output behind; clear it for the
     # caller so they never have to remember to.  Opt out via cleanup=False.
@@ -561,6 +629,22 @@ def _run(scene, out_path: str, on_init, on_close,
         clear_media(verbose=verbose)
     files = [f for f in (rec.windows if rec.windows else _produced_files(out_path))
              if os.path.exists(f)]
+    if segment is not None:
+        # In BMP mode each ``rec.windows`` entry is a directory, so the generic
+        # branch above returns the directories themselves -- not the frames
+        # that were written.  Callers use ``files`` to know what is on disk.
+        bmps = []
+        for target in (rec.windows or [out_path]):
+            if os.path.isdir(target):
+                bmps.extend(sorted(
+                    os.path.join(target, name)
+                    for name in os.listdir(target) if name.endswith(".bmp")
+                ))
+        if not bmps:
+            raise RuntimeError(
+                "BMP segment mode wrote no frames to %r" % out_path
+            )
+        files = bmps
     # A 262-byte "video" is what an unbound scene leaves behind (no frame was
     # ever drawn) -- see audit ``unbound_window_fast_record``.  Anything below
     # one kilobyte cannot contain a frame.
@@ -571,10 +655,12 @@ def _run(scene, out_path: str, on_init, on_close,
             except OSError:
                 size = 0
             if size < 1024:
+                _remove_incomplete(f)
                 raise RuntimeError(
                     "recorded file looks empty/incomplete (%d bytes): %s -- "
                     "did the scene forget `win.scene = self`, or forget "
-                    "win.close()?" % (size, f)
+                    "win.close()? (the incomplete file was removed)"
+                    % (size, f)
                 )
     # Phase 6: attach the sounds the scene registered (copy the video stream).
     muxed = audio_track.apply_sounds(files, verbose=verbose)
@@ -600,9 +686,11 @@ def record_scene(scene: Union[type, Any, Callable[[], None]],
     """Record a scene to video in **real time** against a visible window.
 
     This maps onto ``MLWindow.start_record`` / ``stop_record`` (the interactive
-    ``run.py`` path): a background thread snapshots the live window at ``fps``
-    and the frames are encoded on close.  The window itself must be shown, so
-    the user sees the animation as it is captured.
+    path).  The window is shown, and every frame the play loop presents is
+    captured on the render thread and piped straight to ffmpeg -- one captured
+    frame per drawn frame, so a 1.0 s ``play`` at 60 fps contributes exactly
+    60 frames (no wall-clock sampling and no duplicate padding).  Encoding
+    runs alongside the scene and is finished by ``stop_record``.
 
     Parameters
     ----------
@@ -651,7 +739,7 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
     """Record a scene **offline** via fast framebuffer readback.
 
     Maps onto ``MLWindow.enable_fast_record`` / ``_finish_fast_record`` (the
-    batch ``run_all.py`` path): each frame is read straight from the Vulkan
+    batch path): each frame is read straight from the Vulkan
     buffer and streamed to ffmpeg, so no visible window is required and capture
     is the engine's fastest route.
 
@@ -715,5 +803,5 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
 
     return _run(scene, out_path if out_path is not None else _default_out_path(),
                 on_init, on_close, verbose, overwrite, count_only=count_only,
-                cleanup=cleanup, hidden=hidden,
+                cleanup=cleanup, hidden=hidden, segment=segment,
                 expect_files=(not count_only) and segment is None)

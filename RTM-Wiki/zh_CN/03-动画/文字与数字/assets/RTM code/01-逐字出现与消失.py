@@ -10,9 +10,13 @@
 不演示：`AddTextWordByWord`（`text_mobject` / `run_time` / `time_per_char`）——
         上游源码标注 `# TODO, this is broken...`：对普通 `Text` 切词为空，ManimCE 自身
         渲染同样是静止画面（忠实复现，不是 RTM 缺口），页面也标注"不建议在新脚本中使用"。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 import numpy as np
 from real_time_manim import (

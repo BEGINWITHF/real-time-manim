@@ -3,12 +3,15 @@
 
 Nothing plays when it opens.  Type a frame, press Enter, and the window shows
 that frame -- no pre-render, no replay: ``Timeline.render_at`` is O(1) in ``t``
-(``docs/2.0.0-time-addressable.md``), so a seek costs ~10 ms no matter where it
-lands.
+(see the 2.0 time-addressable design notes), so a seek costs ~10 ms no matter
+where it lands.
 
-    python -m real_time_manim.preview 1                  # demo #1 from run.py
-    python -m real_time_manim.preview examples.scenes:DemoCreate --at 120
-    python -m real_time_manim.preview 1 --no-bar         # type in the terminal
+    python -m real_time_manim.preview my_scene:Hello           # module:Class
+    python -m real_time_manim.preview my_scene:Hello --at 120
+    python -m real_time_manim.preview my_scene:Hello --no-bar  # terminal input
+
+A bare number (``1``) selects an entry from the development tree's demo
+table; that table is not part of the installed package.
 
 One-off cost
 ------------
@@ -20,7 +23,7 @@ first picture you see is only drawn when the window appears.
 Caveat: a seek replays **animation** state, not accumulated *updater* state, so
 a scene whose mobjects are only driven by custom updaters / ``TracedPath`` is
 exact when you step forward and approximate when you jump backwards.  Making
-those time-replayable is P3 in ``docs/2.0.0-time-addressable.md``.
+those time-replayable is P3 in the 2.0 time-addressable design notes.
 
 Input bar
 ---------
@@ -913,7 +916,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="python -m real_time_manim.preview",
         description="Show any frame of a scene instantly (no pre-render).")
-    ap.add_argument("scene", help="demo number (from run.py) or 'module:Class'")
+    ap.add_argument("scene", help="'module:Class' (a demo number needs the "
+                               "development-only demo table)")
     ap.add_argument("--fps", type=int, default=60, help="frame numbering rate")
     ap.add_argument("--at", type=int, default=0, help="first frame to show")
     ap.add_argument("--out", default="frames", help="where 's' writes PNGs")

@@ -8,9 +8,13 @@ Parameters demonstrated (one by one from the page's "Parameters" tables):
     ValueTracker + add_updater long-term following (the page's "tip" entry)          ✓
 Not demonstrated: `TextDecimalNumber` — another class RTM exports; the manual does not document its
         signature and the page states it "does not go into it".
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

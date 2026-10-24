@@ -11,9 +11,13 @@ Demonstrated parameters (each row of the page's "Parameters" tables):
 
 Not demonstrated: none — every visible parameter of the two classes on this page is shown explicitly.
 
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

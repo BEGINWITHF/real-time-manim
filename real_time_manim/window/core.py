@@ -7,6 +7,8 @@ import ctypes
 import hashlib
 import os
 import sys
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from real_time_manim.window.paint_order import (
@@ -17,6 +19,9 @@ from real_time_manim.window.paint_order import (
     scan_z_index,
 )
 from real_time_manim.window.scene import _RASTER_TOKEN, _raster_debug
+
+if TYPE_CHECKING:
+    from manim import Scene
 
 
 class CoreMixin:
@@ -52,7 +57,7 @@ class CoreMixin:
         self.win_w = w
         self.win_h = h
         self.frame_count = 0
-        self.scene = None
+        self.scene: Scene | None = None
         self._active_anims = []
         # Schedule mode (2.0.0): when the class flag _schedule_mode is True,
         # play() records animations on a global timeline instead of rendering,
@@ -88,7 +93,7 @@ class CoreMixin:
             ]
             lib_kind = "vulkan_core.dylib"
             build_hint = "native/build_mac.sh (requires Vulkan SDK + MoltenVK)"
-        else:
+        elif sys.platform == "win32":
             candidates = [
                 os.path.join(base_dir, "vulkan_core.dll"),
                 os.path.normpath(os.path.join(base_dir, "..", "dist", "release", "vulkan_core.dll")),
@@ -96,6 +101,16 @@ class CoreMixin:
             ]
             lib_kind = "vulkan_core.dll"
             build_hint = "native/build.ps1 (requires Vulkan SDK + MinGW-w64)"
+        else:
+            # Falling into the Windows branch used to report "vulkan_core.dll
+            # not found" on Linux, which sent the reader looking for a file
+            # that does not exist for their platform at all.
+            raise RuntimeError(
+                "real-time-manim ships native Vulkan backends for Windows and "
+                "macOS only; %r is not supported. Run on Windows or macOS, or "
+                "build a native backend for this platform and place it next "
+                "to real_time_manim/." % sys.platform
+            )
         dll_path = next((p for p in candidates if os.path.exists(p)), None)
         if dll_path is None:
             raise FileNotFoundError(

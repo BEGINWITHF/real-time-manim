@@ -10,6 +10,12 @@ OBJDIR="$PROJECT_ROOT/build/$BUILD_CONFIG-mac"
 OUTDIR="$PROJECT_ROOT/dist/$BUILD_CONFIG"
 OUT="$OUTDIR/vulkan_core.dylib"
 
+# Minimum macOS the dylib may require.  Without this the binary inherits the
+# *builder's* OS (macOS 27 here), and dlopen() then fails on every older Mac.
+# 12.0 is the floor Homebrew's libMoltenVK.dylib is built for, so a lower value
+# would still fail at load time.  Keep this in sync with MIN_MACOS in setup.py.
+MACOS_MIN="12.0"
+
 if [ "$BUILD_CONFIG" = "debug" ]; then
     OPT="-O0 -g -DDEBUG"
 else
@@ -44,7 +50,8 @@ fi
 # (clang ignores the attribute on non-Windows targets — silence the warning).
 # Default visibility exports every non-static symbol, so no export macro is
 # needed on the definitions either.
-CFLAGS=(-fdeclspec -fvisibility=default -Wno-ignored-attributes $OPT -std=c11)
+CFLAGS=(-fdeclspec -fvisibility=default -Wno-ignored-attributes $OPT -std=c11
+        -mmacosx-version-min="$MACOS_MIN")
 for p in "${INC_PATHS[@]}"; do
     CFLAGS+=("-I$p")
 done
@@ -90,9 +97,10 @@ clang "${CFLAGS[@]}" -c platform_mac.m -o "$OBJDIR/platform_mac.o"
 OBJS+=("$OBJDIR/platform_mac.o")
 
 echo "[INFO] Linking $OUT ..."
-clang -dynamiclib -o "$OUT" "${OBJS[@]}" \
+clang -dynamiclib -mmacosx-version-min="$MACOS_MIN" -o "$OUT" "${OBJS[@]}" \
     -L"$MOLTENVK_DIR" -lMoltenVK \
     -framework Cocoa -framework Metal -framework QuartzCore \
+    -Wl,-install_name,@rpath/vulkan_core.dylib \
     -Wl,-rpath,"$MOLTENVK_DIR"
 
 echo "[SUCCESS] Compilation successful!"

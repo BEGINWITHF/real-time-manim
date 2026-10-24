@@ -20,9 +20,13 @@ Note: `turn_animation_into_updater` / `cycle_animation` call
       `animation.interpolate(alpha)` with alpha semantics, while RTM's own `Write` / `ApplyWave`
       use time semantics (`begin(t)`, `interpolate(t)`); the two are incompatible, so step 4 on this
       page uses manim's native `Write` / `ApplyWave` (RTM's render_hooks are wired up and render fine).
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 import numpy as np
 from real_time_manim import (

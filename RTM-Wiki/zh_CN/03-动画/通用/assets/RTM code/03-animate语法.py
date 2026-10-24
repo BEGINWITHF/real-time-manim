@@ -9,9 +9,13 @@
 不演示：.animate(lag_ratio=...) —— 单个 .animate 没有子对象错峰可言（参数本身没被丢弃，
     无子对象时打 UserWarning 提示，见页尾）；@override_animate / @override_animation ——
     需要自定义 Mobject 子类，本页不出样例（机制已接线，见页尾）。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

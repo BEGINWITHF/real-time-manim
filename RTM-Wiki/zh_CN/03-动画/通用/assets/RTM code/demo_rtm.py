@@ -10,11 +10,14 @@
 02 页里 RTM 未接线/无法在录制里体现的参数（subcaption 字幕、Scene.pause、
 wait_until(stop_condition=...)、frozen_frame）不进脚本，页面上逐项标「无视频」。
 
-运行（cwd 必须是 real-time-manim 仓库）：
-    $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"
+运行（脚本会自行把仓库根目录加入 sys.path）：
     python demo_rtm.py      # -> assets\\sample.mp4
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

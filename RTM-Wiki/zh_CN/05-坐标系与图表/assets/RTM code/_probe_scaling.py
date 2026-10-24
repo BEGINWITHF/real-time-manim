@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """10 页 LogBase 语义探针（只算不渲）：轴范围是“真实值”还是“指数”。"""
+import os
 import sys
 import numpy as np
 
-sys.path.insert(0, r"C:\Users\begin\Desktop\real-time-manim")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), *[".."] * 5)))
 from real_time_manim import Axes, NumberLine, LogBase  # noqa: E402
 
 ax = Axes(x_range=[0, 10, 1], y_range=[-2, 6, 1], tips=False,

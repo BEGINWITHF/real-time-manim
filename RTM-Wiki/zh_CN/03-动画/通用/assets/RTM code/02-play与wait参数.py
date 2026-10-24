@@ -11,9 +11,13 @@
     Scene.wait_until 与 Wait 的 stop_condition / frozen_frame —— 均已支持，演示见 01-场景与相机/
     场景/03-播放与等待；play 级 lag_ratio —— RTM 的 win.play
     只覆盖 run_time / rate_func 两个关键字，错峰请写在动画构造器或 AnimationGroup 上。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

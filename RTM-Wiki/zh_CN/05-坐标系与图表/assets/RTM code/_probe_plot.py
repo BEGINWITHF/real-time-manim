@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """探针：05-函数曲线 plot 样例里 bad 曲线（无 discontinuities）的几何统计。"""
+import os
 import sys
 import numpy as np
 
-sys.path.insert(0, r"C:\Users\begin\Desktop\real-time-manim")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), *[".."] * 5)))
 from real_time_manim import Axes, RED  # noqa: E402
 
 ax = Axes(x_range=[-3, 3, 1], y_range=[-4, 4, 1])

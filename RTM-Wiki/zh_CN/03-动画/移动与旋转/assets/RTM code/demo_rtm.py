@@ -11,11 +11,14 @@ Rotate / Rotating / MoveAlongPath / Homotopy 为 RTM 自有实现（✅ 名单�
 02b、03 三个 ⚠️ 类（SmoothedVectorizedHomotopy / ComplexHomotopy / PhaseFlow /
 Broadcast）来自 manim 原生实现，由 RTM 的 render_hooks 适配渲染，实测可出片。
 
-运行（cwd 必须是 real-time-manim 仓库）：
-    $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"
+运行（脚本会自行把仓库根目录加入 sys.path）：
     python demo_rtm.py      # -> assets\\sample.mp4
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 import numpy as np
 from real_time_manim import (

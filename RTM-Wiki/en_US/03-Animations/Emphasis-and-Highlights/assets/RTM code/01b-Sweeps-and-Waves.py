@@ -12,9 +12,13 @@ Not demonstrated: `ShowPassingFlash`'s "restore the full stroke" (`remover=False
         the scene; with an explicit `False` the object stays in the scene and its full stroke is
         restored), the sample uses the default; the remaining common parameters in `**kwargs` have no
         visual effect.
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

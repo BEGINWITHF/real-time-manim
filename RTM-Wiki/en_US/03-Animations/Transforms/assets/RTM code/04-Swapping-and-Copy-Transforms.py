@@ -16,9 +16,13 @@ Not demonstrated: none — every visible parameter of the five classes on this p
         (Clockwise/CounterclockwiseTransform pass the documented default ±pi explicitly so that
         the arc is visible to the eye; Swap uses the non-default 180 degrees to prove the parameter can change).
 
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 import numpy as np
 from real_time_manim import (

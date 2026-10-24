@@ -123,6 +123,13 @@ int Vulkan_InitEx(int w, int h, int hidden) {
 }
 
 static int g_init_hidden = 0;
+// Recording override: while non-zero the layer's drawable is pinned to this
+// physical size, so the framebuffer the readback sees is exactly the video's
+// 1920x1080 even though the on-screen window is screen-clamped and Retina
+// (3420x1924 on a 1710x962-point window).  Without it the live recorder had to
+// downscale 6.6 MP per frame in ffmpeg, which could not keep up with 60 fps.
+static int g_capture_w = 0;
+static int g_capture_h = 0;
 
 static int Mac_InitWindow(int w, int h, int hidden) {
     g_init_hidden = hidden;
@@ -241,10 +248,23 @@ int Vulkan_Tick(void) {
         // contentsScale every tick — AppKit can reset it if the window moves
         // to a display with a different backing scale.
         NSRect vb = [g_view bounds];
-        g_layer.contentsScale = g_init_hidden ? 1.0 : [g_window backingScaleFactor];
-        if (g_layer.contentsScale < 1.0) g_layer.contentsScale = 1.0;
-        int dw = (int)(vb.size.width * g_layer.contentsScale + 0.5);
-        int dh = (int)(vb.size.height * g_layer.contentsScale + 0.5);
+        int dw, dh;
+        if (g_capture_w > 0 && g_capture_h > 0) {
+            // Recording: pin the drawable to the output size.  The window is
+            // still the same rectangle on screen; the compositor scales the
+            // (now exactly 1920x1080) content up to the Retina backing store.
+            dw = g_capture_w;
+            dh = g_capture_h;
+            g_layer.contentsScale =
+                (vb.size.width > 0) ? (double)dw / vb.size.width : 1.0;
+        } else {
+            // Re-assert contentsScale every tick — AppKit can reset it if the
+            // window moves to a display with a different backing scale.
+            g_layer.contentsScale = g_init_hidden ? 1.0 : [g_window backingScaleFactor];
+            if (g_layer.contentsScale < 1.0) g_layer.contentsScale = 1.0;
+            dw = (int)(vb.size.width * g_layer.contentsScale + 0.5);
+            dh = (int)(vb.size.height * g_layer.contentsScale + 0.5);
+        }
         if (dw < 1) dw = 1;
         if (dh < 1) dh = 1;
         g_layer.drawableSize = CGSizeMake(dw, dh);
@@ -577,6 +597,28 @@ int Vulkan_RequestReadback(void) {
     if (w <= 0 || h <= 0) return -1;
     g_readback_requested = 1;  // next drawn frame copies before present
     return 0;                  // slot 0: the single mac staging buffer
+}
+
+// Pin (or release) the drawable size used while recording.  w/h == 0 restores
+// the window's normal backing scale on the next tick.  The swapchain is
+// rebuilt synchronously so the first armed frame after this call already has
+// the requested extent: a lazy rebuild inside the next tick would clear
+// g_readback_requested and silently lose that frame from the recording.
+int Vulkan_SetDrawableSize(int w, int h) {
+    if (!g_is_ready || !g_layer || !g_view) return 0;
+    if (w <= 0 || h <= 0) {
+        g_capture_w = 0;
+        g_capture_h = 0;
+        return 1;
+    }
+    NSRect vb = [g_view bounds];
+    if (vb.size.width <= 0 || vb.size.height <= 0) return 0;
+    g_capture_w = w;
+    g_capture_h = h;
+    g_layer.contentsScale = (double)w / vb.size.width;
+    g_layer.drawableSize = CGSizeMake(w, h);
+    RecreateSwapchain();
+    return 1;
 }
 
 int SaveScreenshotRaw(unsigned char *out, int out_cap, int *out_size) {

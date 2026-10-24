@@ -9,9 +9,13 @@
 不演示：`suspend_mobject_updating=True` —— 会把对象自带 updater 挂起，与本页
         "每帧回调驱动"的演示目的相反，样例按文档建议显式保持 False；
         `**kwargs` 里 Transform/Animation 的其余通用参数无可视效果。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     GREEN,

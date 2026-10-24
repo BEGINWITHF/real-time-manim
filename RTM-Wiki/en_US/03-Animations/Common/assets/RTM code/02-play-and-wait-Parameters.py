@@ -12,9 +12,13 @@ Not demonstrated: subcaption / subcaption_duration / subcaption_offset — the t
     supported, demonstrated in 01-Scenes-and-Cameras/Scenes/03-Play-and-Wait; play-level lag_ratio — RTM's
     win.play only overrides the two keywords run_time / rate_func, so write staggering on the animation
     constructor or AnimationGroup.
-Run: $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<this file>"
+Run: python "<this file>"  (the script puts the repo root on sys.path itself)
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

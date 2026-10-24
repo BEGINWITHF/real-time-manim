@@ -5,7 +5,7 @@ import os
 import time
 import numpy as np
 from manim import (
-    Text, VGroup, Group, OUT
+    Text, VGroup, Group, OUT, Animation
 )
 from manim.animation.transform import Transform as _ManimTransform
 from manim.animation.transform import FadeTransform as _ManimFadeTransform
@@ -545,8 +545,9 @@ class PlayMixin:
                         - float(start_cursor))
         return record_subcaption(self, content, start, duration)
 
-    def play(self, *animations, subcaption=None, subcaption_duration=None,
-             subcaption_offset=0, **kwargs):
+    def play(self, *animations: Animation, subcaption: str | None = None,
+             subcaption_duration: float | None = None,
+             subcaption_offset: int = 0, **kwargs: object) -> None:
         """Timeline-driven playback (2.0.0).
 
         Animations are scheduled on one Timeline and every frame is produced by
@@ -794,13 +795,13 @@ class PlayMixin:
                     break
                 in_segment = seg is None or (seg[0] <= idx < seg[1])
             # Arm the readback BEFORE the draw: `SaveScreenshot` (fast-record's
-            # frame capture, the live `start_record` worker, user screenshots)
+            # frame capture, the live `start_record` capture, user screenshots)
             # only sees real pixels if the frame copied itself out while it
             # still owned the image -- see platform.c:663.  Without it every
             # capture silently fell back to `CopySwapchainImageToBuffer`, whose
             # content the spec leaves undefined after present (measured: stale
-            # frames).  The live record worker polls `SaveScreenshot` from its
-            # own thread and arms nothing, so the loop has to arm for it too.
+            # frames).  The live recorder reads the frame back right after
+            # this tick (`_capture_frame`), so the loop has to arm for it.
             #
             # The kwarg is passed only when a capture really is due: a plain
             # live play needs no readback, and a stand-in timeline in the tests

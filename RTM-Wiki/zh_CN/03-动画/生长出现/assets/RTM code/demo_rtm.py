@@ -9,11 +9,14 @@
 本组 5 个类（GrowFromPoint / GrowFromCenter / GrowFromEdge / GrowArrow /
 SpinInFromNothing）全部为 RTM 自有实现。
 
-运行（cwd 必须是 real-time-manim 仓库）：
-    $env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"
+运行（脚本会自行把仓库根目录加入 sys.path）：
     python demo_rtm.py      # -> assets\\sample.mp4
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     BLUE,

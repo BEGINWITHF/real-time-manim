@@ -12,9 +12,13 @@
         非 fade 分支改用 `ShowPassingFlash` 光束语义，**不传时**保持旧的 `Create` 渐进绘制；
         `fade_in` / `fade_out=True` 分支与 CE 一致**忽略**该参数（本页两条样例走的正是 fade 分支），
         故本页无光束分支视频；`FocusOn` 的 `**kwargs` 其余 Transform 通用参数无可视效果。
-运行：$env:PYTHONPATH="C:\\Users\\begin\\Desktop\\real-time-manim"; python "<本文件>"
+运行：python "<本文件>"（脚本会自行把仓库根目录加入 sys.path）
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), *[".."] * 6)))
 
 from real_time_manim import (
     GREEN,
