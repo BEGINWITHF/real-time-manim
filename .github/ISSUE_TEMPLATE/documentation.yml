@@ -62,20 +62,12 @@ body:
     validations:
       required: false
 
-  - type: textarea
-    id: evidence
-    attributes:
-      label: Screenshot, logs, or reference
-      description: Add screenshots, tracebacks, or a source that shows the correct behavior.
-    validations:
-      required: false
-
   - type: input
-    id: rtm-version
+    id: time-found
     attributes:
-      label: real-time-manim version
-      description: Optional, but useful if the documentation changed between releases.
-      placeholder: "2.0.1"
+      label: Date/time found
+      description: When did you notice the problem?
+      placeholder: "e.g. 2026-10-25 14:30"
     validations:
       required: false
 

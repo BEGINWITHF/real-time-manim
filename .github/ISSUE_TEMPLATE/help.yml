@@ -8,15 +8,16 @@ body:
       value: |
         Use this template when you need help. If you have a reproducible bug, please use **Bug report** instead.
 
-  - type: checkboxes
+  - type: dropdown
     id: preflight
     attributes:
       label: Preflight checklist
+      description: Select one option.
       options:
-        - label: I checked the README and RTM-Wiki, and searched existing issues.
-          required: true
-        - label: I am lazy to check
-          required: false
+        - I checked the README and RTM-Wiki, and searched existing issues.
+        - I am lazy to check
+    validations:
+      required: true
 
   - type: textarea
     id: goal

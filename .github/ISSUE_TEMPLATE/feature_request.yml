@@ -8,15 +8,16 @@ body:
       value: |
         Use this template for a **new capability**. If you want to improve something that already exists, use **Suggestion** instead.
 
-  - type: checkboxes
+  - type: dropdown
     id: preflight
     attributes:
       label: Preflight checklist
+      description: Select one option.
       options:
-        - label: I searched existing issues and did not find a duplicate.
-          required: true
-        - label: I am lazy to check
-          required: false
+        - I searched existing issues and did not find a duplicate.
+        - I am lazy to check
+    validations:
+      required: true
 
   - type: textarea
     id: problem

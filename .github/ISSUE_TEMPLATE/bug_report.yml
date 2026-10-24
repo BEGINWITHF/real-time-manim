@@ -8,17 +8,17 @@ body:
       value: |
         Thanks for taking the time to report a bug. Please include a **minimal, runnable reproduction**; issues without one may be closed.
 
-  - type: checkboxes
+  - type: dropdown
     id: preflight
     attributes:
       label: Preflight checklist
+      description: Select one option.
       options:
-        - label: I searched existing issues and did not find a duplicate.
-          required: true
-        - label: I can reproduce this with the latest release.
-          required: true
-        - label: I am lazy to check
-          required: false
+        - I searched existing issues and did not find a duplicate.
+        - I can reproduce this with the latest release.
+        - I am lazy to check
+    validations:
+      required: true
 
   - type: textarea
     id: what-happened
