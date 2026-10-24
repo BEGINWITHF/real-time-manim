@@ -21,13 +21,20 @@ several times faster than the default renderer.
 pip install real-time-manim
 ```
 
-The Windows wheel bundles `vulkan_core.dll`, so there is no build step. You need a Vulkan-capable
-GPU/driver, and `ffmpeg` on `PATH` to record video.
+The Windows wheel bundles `vulkan_core.dll` and the macOS wheel bundles `vulkan_core.dylib` (Apple
+Silicon), so there is no build step. You need a Vulkan-capable GPU/driver, and `ffmpeg` on `PATH` to
+record video.
 
-**macOS is supported as well** — build the dylib once, then install and run as usual:
+**macOS** needs MoltenVK at runtime — it provides the Vulkan layer on macOS:
 
 ```bash
-brew install molten-vk          # MoltenVK provides the Vulkan layer on macOS
+brew install molten-vk
+```
+
+Intel Macs aren't covered by the bundled dylib: build it once and drop it next to the installed
+`real_time_manim` package:
+
+```bash
 bash native/build_mac.sh        # -> dist/release/vulkan_core.dylib
 ```
 

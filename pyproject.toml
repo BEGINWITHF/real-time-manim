@@ -49,6 +49,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -79,6 +80,7 @@ include = ["real_time_manim*"]
 [tool.setuptools.package-data]
 real_time_manim = [
     "vulkan_core.dll",
+    "vulkan_core.dylib",
     "logo.ico",
     "wait.ico",
     # data files of the bundled ManimCE copy
