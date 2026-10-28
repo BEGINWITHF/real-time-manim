@@ -47,7 +47,12 @@ def depth_key(mob, viewport):
     if rot is None:
         return math.inf
     try:
-        c = mob.get_center()
+        # CE's ThreeDCamera sorts by get_z_index_reference_point(), not
+        # get_center(): z_index_group/z_index_as_group moves the reference
+        # point to the group's centre.  Using get_center() here silently
+        # ignored that group anchor and reordered those mobjects differently
+        # from CE.
+        c = mob.get_z_index_reference_point()
     except Exception:
         return math.inf
     return float(rot[2][0] * c[0] + rot[2][1] * c[1] + rot[2][2] * c[2])

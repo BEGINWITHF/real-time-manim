@@ -356,6 +356,14 @@ static void CreateTexPipeline(void) {
     cb.attachmentCount = 1;
     cb.pAttachments = &cba;
 
+    VkPipelineDepthStencilStateCreateInfo depth_state = {0};
+    depth_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_state.depthTestEnable = VK_FALSE;
+    depth_state.depthWriteEnable = VK_FALSE;
+    depth_state.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    depth_state.depthBoundsTestEnable = VK_FALSE;
+    depth_state.stencilTestEnable = VK_FALSE;
+
     VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo ds = {0};
     ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -372,6 +380,7 @@ static void CreateTexPipeline(void) {
     pci.pRasterizationState = &rs;
     pci.pMultisampleState = &ms;
     pci.pColorBlendState = &cb;
+    pci.pDepthStencilState = &depth_state;
     pci.pDynamicState = &ds;
     pci.layout = g_tex_pl_layout;
     pci.renderPass = g_render_pass;

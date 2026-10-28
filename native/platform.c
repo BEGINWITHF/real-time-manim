@@ -285,6 +285,15 @@ __declspec(dllexport) void AddPolygon(float x, float y, int r, int g, int b, int
     }
 }
 
+/* Depth-tested triangle batch.  Vertex layout: x, y, z, r, g, b, a.
+   Coordinates are already in NDC; z is in [0, 1] and smaller is nearer. */
+__declspec(dllexport) void AddMesh(int vertex_count, const float *verts) {
+    if (verts == NULL || vertex_count <= 0) return;
+    if (vertex_count > MAX_MESH_VERTS) vertex_count = MAX_MESH_VERTS;
+    memcpy(g_mesh_vertices, verts, sizeof(float) * 7 * vertex_count);
+    g_mesh_vertex_count = (uint32_t)vertex_count;
+}
+
 __declspec(dllexport) void AddDashedLine(float x1, float y1, float x2, float y2, int width, int r, int g, int b, float dash_length, float gap_length, float alpha) {
     /* The dash loop advances by dash_length/gap_length each step, so a pair of
        non-positive lengths leaves `pos` where it was and spins forever with the
@@ -332,6 +341,7 @@ __declspec(dllexport) void ClearShapes(void) {
     g_point_count = 0;
     g_image_quad_count = 0;
     g_draw_cmd_count = 0;
+    g_mesh_vertex_count = 0;
 }
 
 __declspec(dllexport) int Vulkan_Tick(void) {
