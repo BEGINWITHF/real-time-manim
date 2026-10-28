@@ -1192,5 +1192,5 @@ def enable_fast_record(self, path, fps=60, segment=None, hidden=True, count_only
 | `hidden` | `bool` | `True` | hidden window (win32 `ShowWindow(SW_HIDE)`). |
 | `count_only` | `bool` | `False` | count frames only. |
 
-- `notes`: low-level entry used by `fast_record_scene`. If you use this layer directly you own the finish: `MLWindow.close()` alone does not close the encoder — you must call `win._finish_fast_record()`, or the ffmpeg pipe stays open and the video is incomplete/absent. Live counterpart: `win.start_record(path, fps=60)` … `win.stop_record()`. `segment` BMP files start at `frame_000000.bmp`.
+- `notes`: low-level entry used by `fast_record_scene`. If you use this layer directly you own the finish: `MLWindow.close()` alone does not close the encoder — you must call `win.finish_record()`, or the ffmpeg pipe stays open and the video is incomplete/absent. Live counterpart: `win.start_record(path, fps=60)` … `win.stop_record()`. `segment` BMP files start at `frame_000000.bmp`.
 - `see`: ../zh_CN/01-场景与相机/配置/05-RTM的录制与窗口参数.md

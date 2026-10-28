@@ -334,7 +334,7 @@ For everyday use `fast_record_scene` is enough; use this layer only when you nee
 
 This section has no clip: each of its parameters shares the name and meaning of `fast_record_scene`, and the on-screen effect is in the corresponding samples above.
 
-> Note: using this layer directly means you are responsible for the finish-up — `MLWindow.close()` itself **does no recording-encoding finish-up**, and **calling `enable_fast_record(...)` + `win.close()` by hand does not finish up**; you must call `win._finish_fast_record()` yourself. If you forget it (going through `fast_record_scene`, that means forgetting `win.close()`) the ffmpeg pipe is not closed, and the video is incomplete / does not exist.
+> Note: using this layer directly means you are responsible for the finish-up — `MLWindow.close()` itself **does no recording-encoding finish-up**, and **calling `enable_fast_record(...)` + `win.close()` by hand does not finish up**; you must call `win.finish_record()` yourself. If you forget it (going through `fast_record_scene`, that means forgetting `win.close()`) the ffmpeg pipe is not closed, and the video is incomplete / does not exist.
 >
 > Also, the BMP file names written in `segment` mode start from `frame_000000.bmp`; sort them as needed.
 

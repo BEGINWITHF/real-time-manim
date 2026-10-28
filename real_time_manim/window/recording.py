@@ -486,6 +486,16 @@ class RecordingMixin:
                 out[y * row_size:(y + 1) * row_size] = data[src:src + row_size]
             self._pipe_write(bytes(out))
 
+    def finish_record(self):
+        """Finish a manual fast recording.
+
+        The recording helpers (``fast_record_scene`` / ``record_scene``) finish
+        up automatically before ``close()``.  Call this yourself only when you
+        enabled ``enable_fast_record()`` and close the window by hand; otherwise
+        the ffmpeg pipe is never closed and the file stays incomplete.
+        """
+        self._finish_fast_record()
+
     def _finish_fast_record(self):
         """Finish recording: close the ffmpeg pipe or report the BMP count.
 

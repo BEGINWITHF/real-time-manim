@@ -133,7 +133,7 @@ def close(self)
 - `ret`: none. Calls `_unregister()` + `Vulkan_Shutdown()`.
 - `notes`:
   - **Required** at the end of `construct()`; without it nothing is flushed and the run may not exit.
-  - Does **not** finish a record by itself. `fast_record_scene` / `record_scene` install `record._AutoRecord`, which runs `_finish_fast_record()` / `stop_record()` *before* the real `close()`. If you call `enable_fast_record(...)` manually you must call `win._finish_fast_record()` yourself.
+  - Does **not** finish a record by itself. `fast_record_scene` / `record_scene` install `record._AutoRecord`, which runs `_finish_fast_record()` / `stop_record()` *before* the real `close()`. If you call `enable_fast_record(...)` manually you must call `win.finish_record()` yourself.
   - If `_defer_close` is True (schedule mode) `close()` returns without shutting down.
 
 ### `MLWindow.set_mesh` / `MLWindow.clear_mesh`
@@ -195,11 +195,11 @@ def stop_record(self)
   - `[Record] ffmpeg failed: {stderr}`.
   - `[Record] No frames captured, aborting.`
 
-### `MLWindow.enable_fast_record` / `_finish_fast_record`
+### `MLWindow.enable_fast_record` / `finish_record`
 
 ```python
 def enable_fast_record(self, path, fps=60, segment=None, hidden=True, count_only=False)
-def _finish_fast_record(self)
+def finish_record(self)
 ```
 
 - `ret`: none. Offline capture: frames read from the Vulkan framebuffer straight into ffmpeg.
@@ -215,9 +215,9 @@ def _finish_fast_record(self)
 
 - `notes`:
   - Pipe mode prints `[FastRecord] Pipe: {w}x{h} @ {fps} fps ({pix_fmt}) → {path}`; BMP mode prints `[FastRecord] BMP mode {segment} → {path}/`.
-  - `_finish_fast_record` closes the ffmpeg pipe; prints `[FastRecord] Saved: {path} ({n} frames, {kb:.0f} KB)`, or `[FastRecord] BMP: {n} frames in {path}`, or `[FastRecord] Count: {n} frames`.
+  - `finish_record()` closes the ffmpeg pipe (internal `_finish_fast_record`); prints `[FastRecord] Saved: {path} ({n} frames, {kb:.0f} KB)`, or `[FastRecord] BMP: {n} frames in {path}`, or `[FastRecord] Count: {n} frames`.
   - On ffmpeg failure: `[FastRecord] ffmpeg failed: {e}`.
-  - Manual `enable_fast_record` + `close()` does **not** finish; call `_finish_fast_record()` yourself.
+  - Manual `enable_fast_record` + `close()` does **not** finish; call `finish_record()` yourself.
 
 ### `MLWindow.set_visible`
 
@@ -287,7 +287,7 @@ def fast_record_scene(scene, out_path=None, *, fps=60, hidden=True, count_only=F
 | `jobs` | `int \| "auto" \| None` | `None` | worker processes for frame-parallel recording |
 
 - `notes`:
-  - Offline, fastest route: Vulkan framebuffer readback → ffmpeg; maps to `enable_fast_record` / `_finish_fast_record`.
+  - Offline, fastest route: Vulkan framebuffer readback → ffmpeg; maps to `enable_fast_record` / `finish_record`.
   - `jobs=None` — single pass, no probe (default).
   - `jobs="auto"` — probe once, split only if a win: importable single-window Scene with ≥ `_AUTO_MIN_FRAMES = 240` frames (4 s @60fps), split across `min(4, cpus-1)`.
   - `jobs=N` — that many workers; still probes frame count / window count and falls back to single pass otherwise.

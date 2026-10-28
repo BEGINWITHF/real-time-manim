@@ -67,7 +67,7 @@ GenericGraph.add_edges(*edges: tuple[Hashable, Hashable], edge_type: type[Mobjec
 
 `g.animate.add_vertices(...)` smoothly "grows" new vertices (`positions=None` places them at the graph center, and **in practice you nearly always want to give `positions`**); any new vertices appearing in `add_edges` are created automatically. Both **return** a `Group` of the added vertices and edges.
 
-### Parameters
+### Add/remove parameters
 
 | Method | Parameter | Type | Default | Description |
 | --- | --- | --- | --- | --- |

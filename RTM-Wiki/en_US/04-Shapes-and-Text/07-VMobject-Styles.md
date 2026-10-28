@@ -1,8 +1,6 @@
 # VMobject styles (1): fill, stroke and whole-object style
 
-> Status: partly verified — the core `set_fill` / `set_stroke` / `set_color` classes have been verified by real rendering (2026-10-11, the engine's native style channel); `set_style`'s multi-stop gradient and sheen are in effect (dedicated test `tests/test_gradient_fill_stops.py`), and only the `background_image` texture fill does not take effect.
-
-The following methods are defined on `VMobject` in `mobject/types/vectorized_mobject.py`, and they are **common to all shapes / text / matrices / tables** (`scale`/`rotate`/`shift` at the `Mobject` layer are out of scope for this page).
+The following methods are defined on `VMobject` in `mobject/types/vectorized_mobject.py`, and they are **common to all shapes / text / matrices / tables** (`scale`/`rotate`/`shift` at the `Mobject` layer are out of scope for this page). These style channels are verified by real rendering: the core `set_fill` / `set_stroke` / `set_color` classes work, `set_style`'s multi-stop gradient and sheen take effect, and only the `background_image` texture fill does not.
 
 ## VMobject constructor style parameters (the fill/stroke items)
 `VMobject(fill_color=None, fill_opacity=0.0, stroke_color=None, stroke_opacity=1.0, stroke_width=4, background_stroke_color=BLACK, background_stroke_opacity=1.0, background_stroke_width=0, sheen_factor=0.0, joint_type=None, sheen_direction=UL, close_new_points=False, cap_style=CapStyleType.AUTO, **kwargs)`: the style parameters you can pass directly when constructing any vector class; they pass all the way through `**kwargs` to the concrete shape.
@@ -50,7 +48,7 @@ Paired reads: `get_stroke_width()`, `get_stroke_color()`, `get_stroke_opacity()`
 ## VMobject.set_style (only `background_image` does not take effect)
 `set_style(fill_color=None, fill_opacity=None, stroke_color=None, stroke_width=None, stroke_opacity=None, background_stroke_color=None, background_stroke_width=None, background_stroke_opacity=None, sheen_factor=None, sheen_direction=None, background_image=None, family=True)`: set the whole vector style in one go (a merged version of `set_fill` + `set_stroke` + sheen); items whose parameter is `None` keep their original values.
 
-> Status note: sheen (`sheen_factor`/`sheen_direction`) and the **multi-colour / multi-stop gradient fill** are in effect on RTM's Vulkan path — a multi-stop gradient is no longer averaged into a single colour, but takes the first and last stops and runs a native linear gradient (see `render/util.py:220-351`, dedicated test `tests/test_gradient_fill_stops.py`). Only `background_image` (texture fill) does not take effect under RTM.
+> Note: sheen (`sheen_factor`/`sheen_direction`) and the **multi-colour / multi-stop gradient fill** are in effect on RTM's Vulkan path — a multi-stop gradient is no longer averaged into a single colour, but takes the first and last stops and runs a native linear gradient (see `render/util.py:220-351`, dedicated test `tests/test_gradient_fill_stops.py`). Only `background_image` (texture fill) does not take effect under RTM.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
