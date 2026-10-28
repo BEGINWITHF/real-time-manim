@@ -51,7 +51,7 @@ def close(self):
 
 无参数。关闭窗口、结束渲染（`_unregister()` + `Vulkan_Shutdown()`）。
 
-**录制的编码收尾不在 `MLWindow.close` 里**：它由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 在调用 `close()` 前先执行 `_finish_fast_record()` / `stop_record()`（`record.py:181-186`、`window/recording.py:217-221`）。直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾，必须自己调 `win.finish_record()`。
+**录制的编码收尾不在 `MLWindow.close` 里**：它由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 在调用 `close()` 前先执行 `_finish_fast_record()` / `stop_record()`（`record.py:181-186`、`window/recording.py:217-221`）。直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾，必须调用内部收尾方法 `win._finish_fast_record()`（内部 API，普通场景不需要手动调用）。
 
 ### `MLWindow.set_mesh` / `MLWindow.clear_mesh`
 
@@ -122,10 +122,9 @@ TODO：第一个场景的产物直接拿过来
 | `win.hwnd` | 只读属性；Win32 窗口句柄，非 Windows 或未初始化时为 `None` |
 | `win.start_record(path="output.mp4", fps=60)` | 开始实时录制（后台线程编码） |
 | `win.stop_record()` | 结束实时录制并收尾 |
-| `win.finish_record()` | 结束手动 `enable_fast_record()` 的快速录制；`fast_record_scene` 会自动调用，手调时在 `close()` 前调用 |
 | `win.build_timeline()` | 把 schedule 模式记录的动画列表构建成 `Timeline` |
 | `win.sync(scene, angle=0.0)` | 每帧把 `scene` 同步到窗口；播放/录制循环内部使用，一般不用手调 |
 
-> 提醒：`start_record` / `stop_record` 是实时录制；`enable_fast_record` + `finish_record` 是离线快速录制。两者不要和 `fast_record_scene` 的自动收尾混用。
+> 提醒：`start_record` / `stop_record` 是实时录制；`enable_fast_record` + 内部 `_finish_fast_record` 是离线快速录制。两者不要和 `fast_record_scene` 的自动收尾混用。
 
 相关：[第一个场景](02-第一个场景.md) · [录制视频](04-录制视频.md) · [Scene 基础](../01-场景与相机/场景/01-Scene基础.md)

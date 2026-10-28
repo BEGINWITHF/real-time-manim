@@ -10,7 +10,7 @@
 - **No `manim` CLI.** `real_time_manim` is a pip library + Python API; `manim/cli/`, `__main__.py` and the console script are removed. `manim cfg` / `init` / `plugins -l` / `checkhealth` all unsupported. Entry points are `fast_record_scene` / `record_scene` / `MLWindow` / `FrameServer` / `FramePreview`.
 - **Fixed output 1920×1080 @ 60 fps.** Any other size prints `[rtm] forcing 1920x1080: ...`; any other fps prints `[rtm] forcing 60 fps: ...`. Constants: `MLWindow.SUPPORTED_WIDTH=1920`, `SUPPORTED_HEIGHT=1080`, `SUPPORTED_FPS=60`. No config key changes this.
 - **`win.scene = self` is required** before `win.play(...)`; without it `play()` raises. RTM runs `Scene.setup()` → `construct()` → `tear_down()` itself and **never calls `Scene.render()`**.
-- **`win.close()` is required** at the end of `construct()`; otherwise nothing is flushed and the run may not exit. `close()` alone does **not** finish a record — `fast_record_scene`/`record_scene` wrap it with `_AutoRecord` (calls `_finish_fast_record()`/`stop_record()` first). If you call `enable_fast_record(...)` manually you must call `win.finish_record()` yourself.
+- **`win.close()` is required** at the end of `construct()`; otherwise nothing is flushed and the run may not exit. `close()` alone does **not** finish a record — `fast_record_scene`/`record_scene` wrap it with `_AutoRecord` (calls `_finish_fast_record()`/`stop_record()` first). If you call `enable_fast_record(...)` manually you must call the internal `win._finish_fast_record()` yourself.
 - **One window per process** (native DLL limit; Python serialises via `MLWindow._registry`).
 - **Import order matters.** `import real_time_manim` installs its bundled ManimCE `0.21.0` as `sys.modules["manim"]` and re-exports the namespace. Importing `manim` **first** makes RTM use that external copy and may emit `RuntimeWarning` (different class identity). Always `import real_time_manim` first; `from manim import ...` then still works.
 - **RTM uses its own `play()`, not `Scene.render()`.** `self.play` is shimmed to forward to the bound window when one exists (`compat.py::_shim_scene_play_uses_window`); `self.play = win.play` remains valid and is the wiki idiom. `self.wait`/`pause`/`wait_until` route through `self.play`.
@@ -41,7 +41,7 @@
 - **`FrameServer`/`FramePreview`**: `construct()` must open a window (`RuntimeError: "scene did not create an MLWindow"`); bad `controls`/`position` → `ValueError: "controls must be 'input' or 'slider', got {value!r}"` / `"position must be two numbers, got {value!r}"` / `"position must look like '100,200', got {value!r}"`.
 - **`next_section` is callable but produces nothing** (no CLI/file-writer); `.srt`/segments need manual ffmpeg cuts.
 - **`interactive_embed`/`embed`/`set_key_function` unavailable** (RTM Vulkan window, no embed link).
-- **Manual `enable_fast_record` + `close()` does not finish** → call `win.finish_record()`.
+- **Manual `enable_fast_record` + `close()` does not finish** → call the internal `win._finish_fast_record()`.
 
 ### Scene & camera
 - **`self.camera.frame` on a plain `Camera`** → `AttributeError` (no `frame`; use `hasattr`). `MovingCameraScene`'s `camera_class` must have a `frame` (not plain `Camera`).
