@@ -427,6 +427,19 @@ class CoreMixin:
         self.dll.AddImageQuad(_RASTER_TOKEN, key, buf, int(width), int(height), quad, 1.0)
         return True
 
+    def set_mesh(self, mesh):
+        """Attach a ``MeshBatch`` for depth-tested 3D geometry.
+
+        The batch is submitted before the painter primitives, so a mesh can
+        occlude itself per pixel while 2D overlays still paint on top.  Pass
+        ``None`` (or call :meth:`clear_mesh`) to detach it.
+        """
+        self._mesh = mesh
+
+    def clear_mesh(self):
+        """Detach the ``MeshBatch`` attached with :meth:`set_mesh`."""
+        self._mesh = None
+
     def sync(self, scene, angle=0.0):
         # Phase 5: publish this frame's camera viewport (None for a plain Camera,
         # so non-camera scenes keep the fixed default frame).
