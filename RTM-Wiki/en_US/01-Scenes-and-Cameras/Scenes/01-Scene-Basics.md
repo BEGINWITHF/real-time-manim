@@ -1,3 +1,4 @@
+# Scene basics
 
 An RTM script = a class that subclasses `Scene` + an overridden `construct()`. `setup()` runs first, to prepare shared objects; `construct()` runs next, and all your animation goes here.
 

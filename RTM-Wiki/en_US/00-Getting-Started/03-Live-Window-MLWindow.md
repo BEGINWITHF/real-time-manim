@@ -51,7 +51,7 @@ def close(self):
 
 No parameters. Closes the window and ends rendering (`_unregister()` + `Vulkan_Shutdown()`).
 
-**The encoding finish-up for recording is not inside `MLWindow.close`**: it is done by the `record._AutoRecord` installed by `fast_record_scene` / `record_scene`, which runs `_finish_fast_record()` / `stop_record()` before calling `close()` (`record.py:181-186`, `window/recording.py:217-221`). Calling `enable_fast_record(...)` + `win.close()` by hand does not finish up; you must call `win._finish_fast_record()` yourself.
+**The encoding finish-up for recording is not inside `MLWindow.close`**: it is done by the `record._AutoRecord` installed by `fast_record_scene` / `record_scene`, which runs `_finish_fast_record()` / `stop_record()` before calling `close()` (`record.py:181-186`, `window/recording.py:217-221`). Calling `enable_fast_record(...)` + `win.close()` by hand does not finish up; you must call the internal `win._finish_fast_record()` (internal API, not needed in normal scenes).
 
 ### `MLWindow.set_mesh` / `MLWindow.clear_mesh`
 
@@ -108,4 +108,23 @@ class Hello(Scene):
 
 ## Sample video (RTM render result)
 TODO: just reuse the output of the first scene
+
+## Low-level methods (advanced)
+
+These methods are for recording, preview and custom frame loops. A normal scene only needs `win.play(...)` + `win.close()`.
+
+| Method | Meaning |
+| --- | --- |
+| `win.screenshot(path)` | save the current frame to an image; `path` is `str` or `bytes`; works on a hidden window; returns the native result (non-zero = written) |
+| `win.request_readback()` | arm the next frame for readback; must be called before the `tick()` that draws it |
+| `win.tick()` | advance one frame; returns `False` when the window is closed; updates `win_w` / `win_h` |
+| `win.set_visible(visible=True)` | show or hide the window |
+| `win.hwnd` | read-only property; Win32 window handle, `None` off Windows or before init |
+| `win.start_record(path="output.mp4", fps=60)` | start live recording (background encoding thread) |
+| `win.stop_record()` | finish live recording |
+| `win.build_timeline()` | build a `Timeline` from the animations recorded in schedule mode |
+| `win.sync(scene, angle=0.0)` | sync `scene` into the window each frame; used by the play/record loops, rarely called by hand |
+
+> Note: `start_record` / `stop_record` are live recording; `enable_fast_record` + the internal `_finish_fast_record` are the offline fast path. Do not mix either with `fast_record_scene`'s automatic finish-up.
+
 See also: [First Scene](02-First-Scene.md) · [Recording Video](04-Recording-Video.md) · [Scene Basics](../01-Scenes-and-Cameras/Scenes/01-Scene-Basics.md)

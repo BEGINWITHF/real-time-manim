@@ -334,7 +334,7 @@ def enable_fast_record(self, path, fps=60, segment=None, hidden=True, count_only
 
 本小节不出片：它的每个参数都和 `fast_record_scene` 同名同义，画面效果见上面的对应样例。
 
-> 提醒：直接用这一层要自己负责收尾——`MLWindow.close()` 本身**不做录制编码收尾**，**直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾**，必须自己调 `win._finish_fast_record()`；忘调它（走 `fast_record_scene` 时即忘调 `win.close()`）ffmpeg 管道就不关，视频不完整/不存在。
+> 提醒：直接用这一层要自己负责收尾——`MLWindow.close()` 本身**不做录制编码收尾**，**直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾**，必须调用内部收尾方法 `win._finish_fast_record()`（内部 API，普通场景不需要）；忘调它（走 `fast_record_scene` 时即忘调 `win.close()`）ffmpeg 管道就不关，视频不完整/不存在。
 >
 > 另外 `segment` 模式写出的 BMP 文件名是 `frame_000000.bmp` 起步，自己按需排序。
 

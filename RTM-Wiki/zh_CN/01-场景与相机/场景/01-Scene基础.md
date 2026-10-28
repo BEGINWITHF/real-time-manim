@@ -1,3 +1,4 @@
+# Scene 基础
 
 一个 RTM 脚本 = 一个继承 `Scene` 的类 + 覆写 `construct()`。`setup()` 先跑，用来准备公共对象；`construct()` 再跑，你的动画全写在这里。
 
