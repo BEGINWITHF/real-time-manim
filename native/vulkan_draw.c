@@ -24,6 +24,10 @@ void Render_SetBackgroundColor(float r, float g, float b) {
 float g_vertices[MAX_VERTICES * 6];
 uint32_t g_vertex_count = 0;
 
+/* Depth-tested triangle mesh batch, filled by platform AddMesh(). */
+float g_mesh_vertices[MAX_MESH_VERTS * 7];
+uint32_t g_mesh_vertex_count = 0;
+
 void BuildVerticesFromRects(const Rect *rects, int count);
 void BuildVerticesFromCircles(const Circle *circles, int count);
 void BuildVerticesFromLines(const LineObj *lines, int count);
@@ -93,6 +97,10 @@ void Render_DrawScene(const Rect* rects, int rect_count,
     if (g_vertex_count > 0) {
         update_vertex_buffer(g_vertices, g_vertex_count * 6 * sizeof(float));
     }
+    if (g_mesh_vertex_count > 0) {
+        update_mesh_vertex_buffer(g_mesh_vertices,
+                                  g_mesh_vertex_count * 7 * sizeof(float));
+    }
 }
 
 void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
@@ -102,7 +110,10 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
 
     vkBeginCommandBuffer(cmd_buf, &begin_info);
 
-    VkClearValue clear_color = {{{g_clear_rgb[0], g_clear_rgb[1], g_clear_rgb[2], 1.0f}}};
+    VkClearValue clear_values[3];
+    clear_values[0].color = (VkClearColorValue){{g_clear_rgb[0], g_clear_rgb[1], g_clear_rgb[2], 1.0f}};
+    clear_values[1].color = clear_values[0].color;   /* resolve target: ignored */
+    clear_values[2].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
     VkRenderPassBeginInfo render_pass_info = {0};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_info.renderPass = g_render_pass;
@@ -110,18 +121,28 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
     render_pass_info.renderArea.offset.x = 0;
     render_pass_info.renderArea.offset.y = 0;
     render_pass_info.renderArea.extent = g_swapchain_ext;
-    render_pass_info.clearValueCount = 1;
-    render_pass_info.pClearValues = &clear_color;
+    render_pass_info.clearValueCount = 3;
+    render_pass_info.pClearValues = clear_values;
 
     vkCmdBeginRenderPass(cmd_buf, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
-
-    vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipeline);
 
     VkViewport vp = {0, 0, (float)g_swapchain_ext.width, (float)g_swapchain_ext.height, 0, 1};
     vkCmdSetViewport(cmd_buf, 0, 1, &vp);
 
     VkRect2D sc = {{0, 0}, g_swapchain_ext};
     vkCmdSetScissor(cmd_buf, 0, 1, &sc);
+
+    /* Depth-tested mesh first; legacy painter primitives then draw on top with
+       depth test disabled, preserving their exact submission order. */
+    if (g_mesh_vertex_count > 0 && g_mesh_pipeline != VK_NULL_HANDLE) {
+        vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline);
+        VkBuffer mesh_buffers[] = { g_mesh_vert_buf };
+        VkDeviceSize mesh_offsets[] = { 0 };
+        vkCmdBindVertexBuffers(cmd_buf, 0, 1, mesh_buffers, mesh_offsets);
+        vkCmdDraw(cmd_buf, g_mesh_vertex_count, 1, 0, 0);
+    }
+
+    vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipeline);
 
     VkBuffer vertex_buffers[] = { g_vert_buf };
     VkDeviceSize offsets[] = { 0 };

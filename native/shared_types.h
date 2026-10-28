@@ -13,6 +13,11 @@
 #define MAX_POLYGON_VERTS 64
 #endif
 
+/* Depth-tested mesh batch: x,y,z,r,g,b,a per vertex. */
+#ifndef MAX_MESH_VERTS
+#define MAX_MESH_VERTS 262144
+#endif
+
 /* Multisample anti-aliasing.  manim's Cairo renderer antialiases every edge;
    this renderer rasterised hard-edged, which is the whole reason shapes came
    out with ~0.91 px of ink where CE spreads the same line over two rows (the

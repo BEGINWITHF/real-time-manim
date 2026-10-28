@@ -205,6 +205,7 @@ _LAZY_EXPORTS = {
     "Timeline": ("real_time_manim.timeline", "Timeline"),
     "FrameServer": ("real_time_manim.frames", "FrameServer"),
     "FramePreview": ("real_time_manim.preview", "FramePreview"),
+    "MeshBatch": ("real_time_manim.mesh", "MeshBatch"),
     "fast_record_scene": ("real_time_manim.record", "fast_record_scene"),
     "record_scene": ("real_time_manim.record", "record_scene"),
     "restore_tex_cache": ("real_time_manim.util", "restore_tex_cache"),
@@ -227,6 +228,7 @@ def __getattr__(name):
 
 __all__ = sorted(
     {name for name in dir(_manim) if not name.startswith("_")}
-    | {"__version__", "MANIM_BUNDLE_VERSION", "Typst", "MathTypst", "TypstMath"}
+    | {"__version__", "MANIM_BUNDLE_VERSION", "Typst", "MathTypst", "TypstMath",
+       "MeshBatch"}
     | set(_LAZY_EXPORTS)
 )

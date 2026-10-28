@@ -434,6 +434,23 @@ class CoreMixin:
         set_viewport_from_scene(scene)
         self.dll.ClearShapes()
         self._publish_background_color(scene)
+
+        # Optional depth-tested mesh batch.  It is submitted before the legacy
+        # painter primitives (native draws mesh first), so a mesh can occlude
+        # itself per pixel while 2D overlays still paint on top.
+        mesh = getattr(self, "_mesh", None)
+        if mesh is not None:
+            from real_time_manim.camera_state import get_viewport
+            built = mesh.build_vertices(get_viewport(), self.win_w, self.win_h)
+            if built is not None:
+                count, vertices = built
+                add_mesh = self.dll.AddMesh
+                add_mesh.argtypes = [
+                    ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_float),
+                ]
+                add_mesh.restype = None
+                add_mesh(int(count), vertices)
         # Phase 5.4: a custom camera's frame comes back as pixels, not geometry.
         if self._rasterise_custom_camera(scene):
             return
