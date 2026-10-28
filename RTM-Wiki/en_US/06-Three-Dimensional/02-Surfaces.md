@@ -193,6 +193,80 @@ What this code does: on the left a shrunk full torus (ring radius 1.6, tube radi
 > - The default `major_radius=3` is wider than the frame; shrink it to your scene when you actually use it.
 > - Recoloring is the same as `Sphere`: only `.set_color(...)` works.
 
+## Depth mesh: `MeshBatch` (advanced)
+
+`Surface` faces are painted in painter order by default. That order cannot resolve a surface crossing itself or a rim passing through a face. `MeshBatch` sends quads through the GPU depth buffer instead.
+
+```python
+import numpy as np
+
+from real_time_manim import DEGREES, MeshBatch, ThreeDScene
+from real_time_manim.vulkan_bind import MLWindow, Wait
+
+class MeshDemo(ThreeDScene):
+    def construct(self):
+        win = MLWindow(960, 540)   # open an RTM window
+        win.scene = self
+        self.set_camera_orientation(phi=58 * DEGREES, theta=0)
+
+        quads = np.array([
+            [[-1.5, -1.5, -0.6], [1.5, -1.5, -0.6],
+             [1.5, 1.5, -0.6], [-1.5, 1.5, -0.6]],
+            [[-0.8, -0.8, 0.6], [0.8, -0.8, 0.6],
+             [0.8, 0.8, 0.6], [-0.8, 0.8, 0.6]],
+        ], dtype=float)                              # (Q, 4, 3), world coords
+        colors = np.array([
+            [[0.2, 0.4, 1.0, 1.0]] * 4,
+            [[1.0, 0.5, 0.1, 1.0]] * 4,
+        ], dtype=np.float32)                         # (Q, 4, 4), RGBA
+
+        mesh = MeshBatch()
+        mesh.append(quads, colors)
+        win.set_mesh(mesh)                           # submitted every frame
+        win.play(Wait(0.8))
+        win.close()
+```
+
+The orange quad sits at `z = 0.6` and the blue one at `z = -0.6`; depth testing makes orange occlude blue. To use this with a `Surface`, put each face's four corners into `quads`.
+
+### `MeshBatch`
+
+| Member | Meaning |
+| --- | --- |
+| `MeshBatch()` | empty batch |
+| `append(quads, colors)` | append quads; returns self |
+| `quads` | `(Q, 4, 3)` float, four corners in world coordinates |
+| `colors` | `(Q, 4, 4)` float, RGBA per corner in 0–1 |
+| `build_vertices(viewport, width, height)` | called by the window each frame; projects to NDC + depth (rarely called by hand) |
+
+Attach it to the window:
+
+| Method | Meaning |
+| --- | --- |
+| `win.set_mesh(mesh)` | submit this frame's mesh; `None` is the same as `clear_mesh()` |
+| `win.clear_mesh()` | detach the mesh and return to the painter |
+
+### Limits
+
+- Quads only; split triangles yourself or use the automatic `Surface` path.
+- One batch holds at most `MAX_MESH_VERTS = 262144` vertices, about 43690 quads.
+- `append` appends; `win.set_mesh` submits the current batch each frame and does not stack calls.
+- The mesh is drawn first and 2D afterwards, so text, formulas and images always sit on top.
+- Overlapping translucent quads remain an approximation; there is no per-pixel sort.
+- Every camera move re-projects the batch on the CPU, which costs time on large meshes.
+
+### Automatic depth (experimental)
+
+Since RTM 2.0.3 an eligible `Surface` can use the depth buffer without writing `MeshBatch` by hand:
+
+```powershell
+$env:RTM_AUTO_DEPTH = "1"
+```
+
+Eligibility: a 3D camera, a top-level `Surface`, opaque faces, `shade_in_3d=False`, stroke colour equal to fill, and no other lit 3D geometry in the frame.
+
+It fixes occlusion; it does not remove the Python cost of per-face `set_fill` / `set_stroke`. For many faces, update colours in one array write instead, or use `MeshBatch`.
+
 ---
 
 See also: [Basic 3D Objects (1)](01-Basic-3D-Objects.md) · [Polyhedra](03-Polyhedra.md)

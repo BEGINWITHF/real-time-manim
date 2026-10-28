@@ -12,7 +12,7 @@
 - Pin titles/labels with `self.add_fixed_in_frame_mobjects(title)` (pins position + orientation, and adds to the scene) or `self.add_fixed_orientation_mobjects(label)` (orientation only, stays in 3D). See `scene-camera.md`.
 - **Surface-subclass color caveat (shared with CE)**: `Cone`/`Cylinder`/`Sphere`/`Torus`/`Surface` swallow a `color=` constructor kwarg — `Mobject.__init__` applies it, then the checkerboard faces overwrite it. Color them after construction: `obj.set_color(GREEN)`, or pass `checkerboard_colors=False, fill_color=...`.
 - Shading model (RTM): a face is lit only when the active camera is a 3D camera (a camera rotation is set), `shade_in_3d` is `True` on the mobject, and the camera has a `light_source`. RTM reproduces CE's per-face shading natively; with no 3D camera or `shade_in_3d=False` every face is a flat color.
-- Paint order (RTM): under `ThreeDCamera`, mobjects are re-sorted by camera-space depth (not document order); `z_index` still participates first.
+- Paint order (RTM): under `ThreeDCamera`, mobjects are re-sorted by camera-space depth (not document order); `z_index` still participates first. Explicit `MeshBatch` geometry bypasses this sort and uses the native depth buffer instead (see below).
 
 ## Primitives
 
@@ -317,6 +317,47 @@ def __init__(self, major_radius: float = 3, minor_radius: float = 1, u_range: tu
 
 - `notes`: `u` = around the ring, `v` = around the tube; do not swap. Stored as `self.R` / `self.r`.
 - `see`: ../zh_CN/06-三维/02-三维表面.md
+
+## Depth mesh (`MeshBatch`)
+
+`real_time_manim.mesh.MeshBatch` — explicit depth-tested quads, exported from
+`real_time_manim`. Use it when painter order cannot resolve self-occlusion
+(cells of one surface, a rim crossing the surface, folded sheets).
+
+```python
+class MeshBatch:
+    def __init__(self)
+    def append(self, quads, colors) -> Self
+    def build_vertices(self, viewport, width, height) -> tuple[int, ndarray] | None
+```
+
+- `quads`: `(Q, 4, 3)` float, four corners in world coordinates.
+- `colors`: `(Q, 4, 4)` float, RGBA per corner in 0–1.
+- Attach with `win.set_mesh(mesh)`; detach with `win.clear_mesh()` or
+  `win.set_mesh(None)`. `sync()` calls `build_vertices` once per frame and
+  hands the result to native `AddMesh(vertex_count, x,y,z,rgba)`.
+- Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
+  mesh is recorded **before** the painter primitives, so 2D overlays stay on
+  top regardless of 3D depth.
+- Limits: quads only, `MAX_MESH_VERTS = 262144` vertices (~43690 quads), one
+  batch per frame (`AddMesh` overwrites, it does not append), no per-pixel
+  transparency sort, CPU re-projection every frame.
+
+### Automatic depth (`RTM_AUTO_DEPTH=1`)
+
+Opt-in prototype (2.0.3) that routes eligible `Surface` roots through the same
+depth buffer with no scene-code change.
+
+- Eligibility is checked per frame: 3D camera, top-level `Surface`, every face
+  opaque and `shade_in_3d=False`, stroke invisible or equal to fill, no other
+  lit 3D geometry, no manual `win._mesh`.
+- One failed condition falls back to the painter for the **whole frame**;
+  partial routing would break cross-object ordering.
+- It fixes occlusion only. Per-face `set_fill` / `set_stroke` in the scene still
+  runs in Python; a 3888-face surface updated per frame stayed slow in
+  measurement. Use batched array writes for speed.
+- `RTM_AUTO_DEPTH_DEBUG=1` prints `[auto-depth] roots=... verts=...`.
+- Windows tested; macOS `AddMesh` exists but was not built/tested.
 
 ## Polyhedra
 

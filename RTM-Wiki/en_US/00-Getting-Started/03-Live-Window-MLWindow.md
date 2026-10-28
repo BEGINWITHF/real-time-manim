@@ -53,6 +53,23 @@ No parameters. Closes the window and ends rendering (`_unregister()` + `Vulkan_S
 
 **The encoding finish-up for recording is not inside `MLWindow.close`**: it is done by the `record._AutoRecord` installed by `fast_record_scene` / `record_scene`, which runs `_finish_fast_record()` / `stop_record()` before calling `close()` (`record.py:181-186`, `window/recording.py:217-221`). Calling `enable_fast_record(...)` + `win.close()` by hand does not finish up; you must call `win._finish_fast_record()` yourself.
 
+### `MLWindow.set_mesh` / `MLWindow.clear_mesh`
+
+```python
+def set_mesh(self, mesh): ...
+def clear_mesh(self): ...
+```
+
+`set_mesh(mesh)` hands a `MeshBatch` to the window. It is submitted before the painter primitives every frame, so the GPU depth buffer resolves 3D self-occlusion. `set_mesh(None)` or `clear_mesh()` detaches it.
+
+```python
+mesh = MeshBatch()
+mesh.append(quads, colors)     # (Q, 4, 3) world coords + (Q, 4, 4) RGBA
+win.set_mesh(mesh)
+```
+
+See [Surfaces · depth mesh](../06-Three-Dimensional/02-Surfaces.md) for the quad format, limits and a full example.
+
 ### Waiting hint for the first formula compile
 
 Rendering a LaTeX / Typst formula for the first time invokes the compiler and may stall for a second or two. If a **visible** window already exists at that point, RTM pops up a small always-on-top window that clearly tells you it is waiting for the compile and not stuck:
