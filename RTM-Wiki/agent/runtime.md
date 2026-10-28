@@ -7,7 +7,7 @@
 
 | Item | Value |
 | --- | --- |
-| Package | `real-time-manim` (import `real_time_manim`), version `2.0.0` (`pyproject.toml`) |
+| Package | `real-time-manim` (import `real_time_manim`), version `2.0.4` (`pyproject.toml`) |
 | Python | `>=3.11` |
 | Windows 10/11 | wheel ships `vulkan_core.dll` + window icon; no build |
 | macOS | build native lib first (below) |

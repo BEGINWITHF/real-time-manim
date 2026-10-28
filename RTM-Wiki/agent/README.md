@@ -26,7 +26,7 @@ fast_record_scene(MyScene, "out.mp4")
 
 ## 1. What RTM is (facts)
 
-- Package `real-time-manim`; import name `real_time_manim`; version `2.0.0` (`pyproject.toml`).
+- Package `real-time-manim`; import name `real_time_manim`; version `2.0.4` (`pyproject.toml`).
 - A **Vulkan real-time rendering backend** for ManimCE. Not a Manim fork: it **drives** ManimCE's `Mobject`/`VMobject`/`Animation` data model.
 - **Bundles ManimCE 0.21.0** (`real_time_manim/manim/`, `MANIM_BUNDLE_VERSION`). `import real_time_manim` re-exports the whole ManimCE namespace.
 - **No `manim` CLI**. pip library + Python API only.
@@ -53,6 +53,7 @@ fast_record_scene(MyScene, "out.mp4")
 | `fast_record_scene` / `record_scene` | `from real_time_manim.record import ...` | Also lazily available at top level |
 | `FrameServer` | `from real_time_manim.frames import FrameServer` | Arbitrary-frame export |
 | `FramePreview` | `from real_time_manim.preview import FramePreview` | Frame-scrub preview |
+| `MeshBatch` | `from real_time_manim import MeshBatch` | Depth-tested quads; attach with `win.set_mesh(mesh)` |
 | `Timeline` | `from real_time_manim.timeline import Timeline` | Schedule mode (record first, render later) |
 | `Typst` / `TypstMath` / `MathTypst` | `from real_time_manim import Typst, TypstMath` | Typst typesetting |
 | RTM rate functions | `from real_time_manim import rate_functions` (module) | Shadows the ManimCE export of the same name |

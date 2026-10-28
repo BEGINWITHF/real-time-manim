@@ -328,7 +328,7 @@ def __init__(self, major_radius: float = 3, minor_radius: float = 1, u_range: tu
 class MeshBatch:
     def __init__(self)
     def append(self, quads, colors) -> Self
-    def build_vertices(self, viewport, width, height) -> tuple[int, ndarray] | None
+    def build_vertices(self, viewport, width, height) -> tuple[int, ctypes pointer] | None
 ```
 
 - `quads`: `(Q, 4, 3)` float, four corners in world coordinates.
