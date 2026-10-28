@@ -544,6 +544,37 @@ class CoreMixin:
         # its roots whole, in document order -- the pre-existing fast path.
         viewport = get_viewport()
         is_3d = viewport is not None and getattr(viewport, "rotation", None) is not None
+
+        # Experimental automatic depth path: opaque, flat-shaded Surface roots
+        # go through the native depth buffer while their manim code stays
+        # untouched.  Opt-in only (RTM_AUTO_DEPTH=1) and only when the whole
+        # frame is eligible -- see window/depth_mesh.py.
+        auto_ids = set()
+        if is_3d and mesh is None:
+            from real_time_manim.window import depth_mesh
+            if depth_mesh.enabled():
+                eligible = depth_mesh.collect_roots(roots, fixed_ids)
+                if eligible:
+                    built = depth_mesh.build_vertices(
+                        eligible, viewport, self.win_w, self.win_h)
+                    if built is not None:
+                        count, vertices = built
+                        add_mesh = self.dll.AddMesh
+                        add_mesh.argtypes = [
+                            ctypes.c_int,
+                            ctypes.POINTER(ctypes.c_float),
+                        ]
+                        add_mesh.restype = None
+                        add_mesh(
+                            int(count),
+                            vertices.ctypes.data_as(
+                                ctypes.POINTER(ctypes.c_float)),
+                        )
+                        auto_ids = {id(root) for root in eligible}
+                        if os.environ.get("RTM_AUTO_DEPTH_DEBUG"):
+                            print("[auto-depth] roots=%d verts=%d"
+                                  % (len(eligible), count), flush=True)
+
         # ``Camera(use_z_index=False)`` turns CE's z sort off too.
         z_mode = bool(getattr(cam, "use_z_index", True)) and scan_z_index(roots)
         # A root that is also somebody's child paints inside that container, so
@@ -561,7 +592,7 @@ class CoreMixin:
         self._paint_queue = queue
         try:
             for idx, mob in enumerate(roots):
-                if skip_ids and id(mob) in skip_ids:
+                if (skip_ids and id(mob) in skip_ids) or id(mob) in auto_ids:
                     continue
                 if walk and idx not in cam_images and id(mob) not in fixed_ids:
                     self._send(mob, angle, parent_alpha=1.0)
