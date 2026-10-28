@@ -53,6 +53,23 @@ def close(self):
 
 **录制的编码收尾不在 `MLWindow.close` 里**：它由 `fast_record_scene` / `record_scene` 安装的 `record._AutoRecord` 在调用 `close()` 前先执行 `_finish_fast_record()` / `stop_record()`（`record.py:181-186`、`window/recording.py:217-221`）。直接手调 `enable_fast_record(...)` + `win.close()` 不会收尾，必须自己调 `win._finish_fast_record()`。
 
+### `MLWindow.set_mesh` / `MLWindow.clear_mesh`
+
+```python
+def set_mesh(self, mesh): ...
+def clear_mesh(self): ...
+```
+
+`set_mesh(mesh)` 把一个 `MeshBatch` 交给窗口，每帧在 painter 图元之前提交，用 GPU 深度缓冲解决 3D 自遮挡。`set_mesh(None)` 或 `clear_mesh()` 摘掉。
+
+```python
+mesh = MeshBatch()
+mesh.append(quads, colors)     # (Q, 4, 3) 世界坐标 + (Q, 4, 4) RGBA
+win.set_mesh(mesh)
+```
+
+面片格式、限制和完整示例见[三维表面 · 深度网格](../06-三维/02-三维表面.md)。
+
 ### 首次编译公式的等待提示
 
 首次渲染 LaTeX / Typst 公式要调用编译器，可能卡住一两秒。这时若已有**可见**窗口，RTM 会弹出一个置顶小窗，明确告诉你在等编译、不是卡住：

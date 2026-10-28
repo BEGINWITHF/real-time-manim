@@ -6,7 +6,7 @@ RTM installs as a pip library; it has no `manim` command line. Once it is instal
 >
 > **Exception**: if the process does `import manim` **first**, then `manim` keeps using that external copy and prints a `RuntimeWarning` when the version does not match; class identity then differs from the copy bundled with RTM — just `import real_time_manim` first.
 >
-> Version reference: the bundled ManimCE is **0.21.0** (`real_time_manim.MANIM_BUNDLE_VERSION`, MIT, see `UPSTREAM.md` in the repo); the project version is **2.0.0** (`pyproject.toml`).
+> Version reference: the bundled ManimCE is **0.21.0** (`real_time_manim.MANIM_BUNDLE_VERSION`, MIT, see `UPSTREAM.md` in the repo); the project version is **2.0.4** (`pyproject.toml`).
 
 ## Parameters
 

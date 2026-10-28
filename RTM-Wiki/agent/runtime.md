@@ -7,7 +7,7 @@
 
 | Item | Value |
 | --- | --- |
-| Package | `real-time-manim` (import `real_time_manim`), version `2.0.0` (`pyproject.toml`) |
+| Package | `real-time-manim` (import `real_time_manim`), version `2.0.4` (`pyproject.toml`) |
 | Python | `>=3.11` |
 | Windows 10/11 | wheel ships `vulkan_core.dll` + window icon; no build |
 | macOS | build native lib first (below) |
@@ -135,6 +135,23 @@ def close(self)
   - **Required** at the end of `construct()`; without it nothing is flushed and the run may not exit.
   - Does **not** finish a record by itself. `fast_record_scene` / `record_scene` install `record._AutoRecord`, which runs `_finish_fast_record()` / `stop_record()` *before* the real `close()`. If you call `enable_fast_record(...)` manually you must call `win._finish_fast_record()` yourself.
   - If `_defer_close` is True (schedule mode) `close()` returns without shutting down.
+
+### `MLWindow.set_mesh` / `MLWindow.clear_mesh`
+
+```python
+def set_mesh(self, mesh)
+def clear_mesh(self)
+```
+
+- `ret`: none.
+- `args`: `mesh` — a `real_time_manim.mesh.MeshBatch`, or `None` to detach (`clear_mesh()` is the explicit form).
+- `notes`:
+  - Stores `win._mesh`; `sync()` submits it before the painter primitives, so the native depth buffer resolves per-pixel occlusion.
+  - 2D overlays (text, formulas, images) paint after the mesh, i.e. always on top.
+  - `mesh.build_vertices(get_viewport(), win_w, win_h)` runs once per frame; cost scales with quad count.
+  - Limits: quads only, `MAX_MESH_VERTS = 262144` vertices (~43690 quads), no per-pixel transparency sort, one batch per frame.
+  - `RTM_AUTO_DEPTH=1` is the automatic alternative for eligible `Surface` roots; it does not remove per-face `set_fill` cost.
+- `see`: ../zh_CN/06-三维/02-三维表面.md
 
 ### `MLWindow.screenshot`
 
