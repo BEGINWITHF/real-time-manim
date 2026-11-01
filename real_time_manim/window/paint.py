@@ -57,25 +57,32 @@ def _gradient_flat_shape(mob):
 
 class PaintMixin:
 
-    def _root_paint(self, cam, roots, idx, mob, angle, fixed_ids, cam_images):
+    def _root_paint(self, cam, roots, idx, mob, angle, fixed_ids, cam_images,
+                    skip_family=None):
         """The whole-root paint as one deferred unit (see ``_PaintQueue``)."""
         from real_time_manim.camera_state import (
             set_viewport, get_viewport, Viewport, DEFAULT_FRAME_HEIGHT)
 
         def paint():
-            if idx in cam_images:
-                # An image that reads the camera's array only shows what was
-                # already drawn into it (report R10-5).
-                self._rasterise_camera_prefix(cam, roots, idx)
-            if id(mob) in fixed_ids:
-                saved = get_viewport()
-                set_viewport(Viewport((0.0, 0.0), DEFAULT_FRAME_HEIGHT))
-                try:
+            # Members whose last occurrence is in a later root are skipped
+            # here, exactly like CE's remove_list_redundancies.
+            self._skip_family_ids = skip_family
+            try:
+                if idx in cam_images:
+                    # An image that reads the camera's array only shows what was
+                    # already drawn into it (report R10-5).
+                    self._rasterise_camera_prefix(cam, roots, idx)
+                if id(mob) in fixed_ids:
+                    saved = get_viewport()
+                    set_viewport(Viewport((0.0, 0.0), DEFAULT_FRAME_HEIGHT))
+                    try:
+                        self._send(mob, angle, parent_alpha=1.0)
+                    finally:
+                        set_viewport(saved)
+                else:
                     self._send(mob, angle, parent_alpha=1.0)
-                finally:
-                    set_viewport(saved)
-            else:
-                self._send(mob, angle, parent_alpha=1.0)
+            finally:
+                self._skip_family_ids = None
 
         return paint
 
@@ -433,6 +440,11 @@ class PaintMixin:
         if stack is None:
             stack = self._send_stack = set()
         key = id(args[0]) if args else None
+        # CE's flattened family keeps only the last occurrence of a shared
+        # member; sync() passes the ids that belong to a later root.
+        skip = getattr(self, '_skip_family_ids', None)
+        if skip and key in skip:
+            return
         if key in stack:
             return
         stack.add(key)

@@ -87,7 +87,7 @@ class _PaintQueue:
     face, because it scores ``inf``), and ``z_index`` wins over position
     everywhere.  The family pre-order is CE's tie-break of last resort; it is
     looked up from ``index``, which ``sync`` builds exactly the way
-    ``extract_mobject_family_members`` does (first occurrence of a shared
+    ``extract_mobject_family_members`` does (last occurrence of a shared
     member wins).  The visit counter only ranks units the map does not know.
     """
 
@@ -286,40 +286,48 @@ def scan_z_index(roots):
 
 
 def family_index(roots):
-    """``id(mobject) -> position in CE's flattened family``, first wins.
+    """``id(mobject) -> position in CE's flattened family``, last wins.
 
     Mirrors ``extract_mobject_family_members``: walk each root in scene order,
-    pre-order through its family, and keep the first occurrence of a member
-    that two roots share.  The index is what turns RTM's visit order into CE's
-    order for a member whose scene root is not its family root (a child listed
-    on its own *before* the group that contains it: CE paints it where the
-    group's family reaches it, RTM used to paint it where it listed it).
+    pre-order through its family, then ``remove_list_redundancies`` -- which
+    keeps the LAST occurrence of a member.  The index is what turns RTM's visit
+    order into CE's order for a member whose scene root is not its family root
+    (a child listed on its own before the group that contains it: CE paints it
+    where the group's family reaches it, RTM used to paint it where it listed
+    it).
     """
-    index = {}
+    flat = []
     for root in roots:
         stack = [root]
         while stack:
             mob = stack.pop()
-            index.setdefault(id(mob), len(index))
+            flat.append(id(mob))
             subs = getattr(mob, "submobjects", None)
             if subs:
                 stack.extend(reversed(subs))
-    return index
+
+    # CE's remove_list_redundancies keeps the last occurrence, in reverse order.
+    seen = set()
+    deduped = []
+    for nid in reversed(flat):
+        if nid in seen:
+            continue
+        seen.add(nid)
+        deduped.append(nid)
+    deduped.reverse()
+    return {nid: i for i, nid in enumerate(deduped)}
 
 
 def foreground_mobjects_of(scene):
-    """The trailing CE render list entries: ``list_update(mobjects, foreground)``.
+    """``scene.foreground_mobjects``, for CE's ``list_update`` call.
 
-    ``CairoRenderer.update_frame`` captures ``scene.mobjects`` followed by any
-    ``foreground_mobjects`` that are not in it already, so an explicitly
-    foreground mobject paints last -- on top -- even if nothing ever put it in
-    ``scene.mobjects``.  RTM reads the scene list only, which drops those.
+    ``CairoRenderer.update_frame`` passes ``list_update(scene.mobjects,
+    scene.foreground_mobjects)``: every foreground mobject is removed from its
+    old position and appended at the end.  Returning the list unchanged is
+    essential -- filtering out members already in ``scene.mobjects`` (the old
+    behaviour) kept them at their old position instead of moving them on top.
     """
-    fg = getattr(scene, "foreground_mobjects", None) or ()
-    if not fg:
-        return ()
-    known = {id(root) for root in scene.mobjects}
-    return tuple(m for m in fg if id(m) not in known)
+    return tuple(getattr(scene, "foreground_mobjects", None) or ())
 
 
 def foreground_to_front(scene):

@@ -17,7 +17,7 @@ def record_scene(scene, out_path=None, *, fps=60, overwrite=True, cleanup=True, 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `scene` | `type \| instance \| Callable[[], None]` | — | a `Scene` subclass, a `Scene` instance, or a zero-argument callable |
-| `out_path` | `str \| None` | `None` → `~/Downloads/output.mp4` | target `.mp4`; when a scene opens several windows, `_partN` is appended automatically |
+| `out_path` | `str \| None` | `None` → `~/Downloads/output.mp4` | target `.mp4`; the native backend supports one window per process, so `_partN` is reserved for a future multi-window backend |
 | `fps` | `int` | `60` (forced) | frame rate of the live capture; every frame the play loop draws is captured exactly once |
 | `overwrite` | `bool` | `True` | when `False`, an existing `out_path` is not overwritten |
 | `cleanup` | `bool` | `True` (recommended) | delete the temporary manim `media/` directory after recording; `False` keeps it |
