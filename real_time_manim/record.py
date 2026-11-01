@@ -24,9 +24,10 @@ close.  The two map onto the engine's two built-in recorders:
 
 Each function takes rich keyword arguments so the capture/encode step is
 customisable (fps, window visibility, count-only probe, BMP segment mode,
-overwrite policy, verbosity).  A scene that opens several windows yields one
-file per window (``out.mp4``, ``out_part2.mp4``, ...).  Every helper returns a
-small dict describing the files it produced so scripts can act on the result.
+overwrite policy, verbosity).  The native backend supports one window per
+process; the ``_partN`` suffix helper remains for a future multi-window
+backend.  Every helper returns a small dict describing the files it produced
+so scripts can act on the result.
 """
 from __future__ import annotations
 
@@ -113,8 +114,12 @@ def _as_runner(scene: Union[type, Any, Callable[[], None]]) -> Callable[[], None
 
 
 def _window_out(out_path: str, index: int) -> str:
-    """Per-window output path; first window uses ``out_path``, later ones get
-    a ``_partN`` suffix so a scene opening several windows never clobbers."""
+    """Per-window output path; first window uses ``out_path``.
+
+    Later windows get a ``_partN`` suffix.  The current native backend allows
+    one window per process (``MLWindow`` rejects a second one), so this is a
+    defensive helper for a future multi-window backend, not a working feature.
+    """
     if index == 0:
         return out_path
     root, ext = os.path.splitext(out_path)
@@ -698,7 +703,8 @@ def record_scene(scene: Union[type, Any, Callable[[], None]],
         Scene subclass, Scene instance, or no-arg callable to run.
     out_path:
         Destination ``.mp4``.  Defaults to ``~/Downloads/output.mp4`` when
-        omitted (a scene opening several windows appends ``_partN``).
+        omitted.  One window per process is supported; ``_partN`` is reserved
+        for a future multi-window backend.
     fps:
         Capture frame rate passed to ``start_record``.
     overwrite:

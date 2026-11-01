@@ -10,6 +10,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import numpy as np
+from manim.utils.iterables import list_update
 
 from real_time_manim.window.paint_order import (
     _PaintQueue,
@@ -53,7 +54,21 @@ class CoreMixin:
             w, h = self.SUPPORTED_WIDTH, self.SUPPORTED_HEIGHT
         if hidden is None:
             hidden = bool(getattr(type(self), '_hidden_default', False))
+
+        # Native Vulkan state is process-global (g_inst/g_dev/g_swapchain), so
+        # a second window must not silently tear down the first.  Fail loudly
+        # until the native layer grows a per-window context.
+        active = [w for w in type(self)._registry
+                  if not getattr(w, '_closed', False)]
+        if active:
+            raise RuntimeError(
+                "RTM supports one MLWindow per process; close the existing "
+                "window before creating another. Multi-window recording is "
+                "not supported by the native backend yet."
+            )
+
         self.hidden = bool(hidden)
+        self._closed = False
         self.win_w = w
         self.win_h = h
         self.frame_count = 0
@@ -65,7 +80,6 @@ class CoreMixin:
         self._sched = []          # list of (start_seconds, animation)
         self._cursor = 0.0        # current end of the recorded timeline
         self._defer_close = bool(getattr(type(self), '_schedule_mode', False))
-        type(self)._registry.append(self)
         self._recording = False
         self._record_dir = None
         self._record_frame_idx = 0
@@ -242,17 +256,29 @@ class CoreMixin:
             _init_ex.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
 
         init_ex = _init_ex
-        if self.hidden and init_ex is not None:
-            # Create the window without ever showing it: offline work (frame
-            # export, fast record) must not pop a window onto the desktop.
-            if not init_ex(w, h, 1):
-                raise RuntimeError("Vulkan_InitEx failed")
-        else:
-            if self.dll.Vulkan_Init(w, h) != 1:
-                raise RuntimeError("Vulkan_Init failed")
-            if self.hidden:
-                # Older DLL without hidden creation: hide right after building.
-                self.set_visible(False)
+        try:
+            if self.hidden and init_ex is not None:
+                # Create the window without ever showing it: offline work
+                # (frame export, fast record) must not pop a window up.
+                if not init_ex(w, h, 1):
+                    raise RuntimeError("Vulkan_InitEx failed")
+            else:
+                if self.dll.Vulkan_Init(w, h) != 1:
+                    raise RuntimeError("Vulkan_Init failed")
+                if self.hidden:
+                    # Older DLL without hidden creation: hide right after
+                    # building.
+                    self.set_visible(False)
+        except Exception:
+            # Native init can fail after creating the window/instance.  Tear
+            # the partial state down before propagating, so the registry and
+            # the process don't keep a half-initialized window.
+            try:
+                self.dll.Vulkan_Shutdown()
+            except Exception:
+                pass
+            raise
+        type(self)._registry.append(self)
 
     @property
     def hwnd(self):
@@ -468,58 +494,35 @@ class CoreMixin:
         if self._rasterise_custom_camera(scene):
             return
         skip_ids = getattr(self, '_skip_mob_ids', None)
-        # Also skip any root that is a descendant of another root (prevents
-        # double render).  One walk of every family, not a root-pairs cross
-        # product: the old form re-walked the whole tree once per (i, j) pair,
-        # which is O(n^2 * family) -- a scene with a few hundred roots in
-        # `scene.mobjects` spent more time here than it did drawing.
-        #
-        # A root always contains itself, so "some OTHER root also contains this
-        # id" is exactly "the id was seen under two or more roots".  Skipping on
-        # that condition removes the DESCENDANT and keeps the ancestor, which is
-        # what CE's ``remove_list_redundancies`` does (it keeps the first
-        # occurrence, the one inside the container).
-        # CE renders ``scene.mobjects`` plus the foreground mobjects that are
-        # not already there (``CairoRenderer.update_frame``), so they belong
-        # at the end of the list this frame is painted from.
-        roots = list(scene.mobjects) + list(foreground_mobjects_of(scene))
-        # A member listed twice is painted once, at its first occurrence
-        # (``remove_list_redundancies``); without this the descendant skip
-        # below would find "other is r" and drop it from BOTH positions.
-        unique_roots = []
-        _seen_roots = set()
-        for _r in roots:
-            if id(_r) in _seen_roots:
-                continue
-            _seen_roots.add(id(_r))
-            unique_roots.append(_r)
-        roots = unique_roots
-        del unique_roots, _seen_roots
+        # CE's render list is ``list_update(scene.mobjects,
+        # scene.foreground_mobjects)``: a foreground mobject is removed from
+        # its old slot and appended, so it paints last.  Concatenating the two
+        # lists without ``list_update`` left duplicates at their old position.
+        roots = list_update(list(scene.mobjects),
+                            list(foreground_mobjects_of(scene)))
+
         def _family_ids(node):
             stack = [node]
             while stack:
                 cur = stack.pop()
                 yield id(cur)
                 stack.extend(getattr(cur, 'submobjects', []) or ())
-        extra_skip = set()
-        _owner = {}                 # id -> index of the first root that owns it
-        _shared = set()             # ids owned by two or more roots
+
+        # CE flattens every root family and then calls
+        # ``remove_list_redundancies``, which keeps the LAST occurrence.  A
+        # shared child (or a root also nested in another root) therefore
+        # belongs to the last root that reaches it, not the first.
+        last_owner = {}
         for _i, _r in enumerate(roots):
             for _nid in _family_ids(_r):
-                prev = _owner.get(_nid)
-                if prev is None:
-                    _owner[_nid] = _i
-                elif prev != _i:
-                    _shared.add(_nid)
-        for _r in roots:
-            if id(_r) in _shared:
-                extra_skip.add(id(_r))
-        # A root that is skipped because another root already holds it does not
-        # paint where it sits in the list: CE drops that occurrence entirely
-        # (``remove_list_redundancies`` keeps the first one, inside the
-        # container), so the frame has to be ordered by family position instead
-        # of by list position -- see ``family_index``.
-        descendant_roots = set(extra_skip)
+                last_owner[_nid] = _i
+
+        # A root whose id appears later (as a child of another root or a
+        # duplicate list entry) is painted at that later occurrence, not here.
+        descendant_roots = {
+            id(_r) for _i, _r in enumerate(roots)
+            if last_owner.get(id(_r), _i) != _i
+        }
         # ``MovingCamera.frame`` is *not* special-cased here: in CE it is an
         # ordinary mobject that only shows up when the scene explicitly adds
         # it (its default frame has zero stroke/fill, so nothing is painted),
@@ -527,12 +530,8 @@ class CoreMixin:
         # it outright, which made ``self.add(self.camera.frame)`` a no-op
         # compared with CE; only do that for frames that are not scene
         # content, i.e. never add it implicitly -- see the sync() caller.
-        if skip_ids is None:
-            skip_ids = extra_skip
-        else:
-            skip_ids |= extra_skip
         # Same-font Text roots on one visual line that need baseline alignment.
-        self._row_text_ids = self._text_row_ids(scene, skip_ids)
+        self._row_text_ids = self._text_row_ids(scene, skip_ids or set())
         # manim's ThreeDCamera leaves fixed-in-frame mobjects unprojected
         # (transform_points_pre_display returns their points unchanged), so a
         # 3D scene's title/caption stays put instead of being rotated away.  RTM
@@ -607,13 +606,24 @@ class CoreMixin:
             for idx, mob in enumerate(roots):
                 if (skip_ids and id(mob) in skip_ids) or id(mob) in auto_ids:
                     continue
+                # This occurrence lost to a later one; do not paint it here.
+                if last_owner.get(id(mob), idx) != idx:
+                    continue
+                skip_family = {
+                    nid for nid in _family_ids(mob)
+                    if last_owner.get(nid, idx) != idx
+                }
                 if walk and idx not in cam_images and id(mob) not in fixed_ids:
-                    self._send(mob, angle, parent_alpha=1.0)
+                    self._skip_family_ids = skip_family
+                    try:
+                        self._send(mob, angle, parent_alpha=1.0)
+                    finally:
+                        self._skip_family_ids = None
                     continue
                 queue.add(
                     depth_key(mob, viewport),
                     self._root_paint(cam, roots, idx, mob, angle, fixed_ids,
-                                     cam_images),
+                                     cam_images, skip_family),
                     mob,
                 )
         finally:

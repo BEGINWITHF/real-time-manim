@@ -319,10 +319,31 @@ class RecordingMixin:
         self._set_unpaced(not visible)
 
     def close(self):
+        if getattr(self, '_closed', False):
+            return                    # idempotent: second close is a no-op
         if getattr(self, '_defer_close', False):
             return                    # keep the window alive for on-demand frames
-        self._unregister()
-        self.dll.Vulkan_Shutdown()
+
+        failure = None
+        try:
+            # Stop a live recorder first: its thread reads the swapchain and
+            # writes to ffmpeg, so Vulkan must not be shut down underneath it.
+            if getattr(self, '_recording', False):
+                self.stop_record()
+            # A manual enable_fast_record() has the same ordering rule.  The
+            # helper path already finished before close(), so this is a no-op.
+            if getattr(self, '_fast_record', False):
+                self._finish_fast_record()
+        except Exception as exc:      # noqa: BLE001 - re-raised after cleanup
+            failure = exc
+        finally:
+            self._unregister()
+            try:
+                self.dll.Vulkan_Shutdown()
+            finally:
+                self._closed = True
+        if failure is not None:
+            raise failure
 
     def _unregister(self):
         """Drop this window from the class registry.

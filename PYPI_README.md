@@ -101,8 +101,9 @@ record_scene(MyScene, "live.mp4")             # capture a visible window in real
 
 Both accept a `Scene` subclass, a `Scene` instance or a no-arg callable, and
 return a dict `{out_path, windows, files, with_audio}`. With `out_path` omitted
-the output lands at `~/Downloads/output.mp4`; a scene that opens several windows
-gets `_part2`, `_part3`, … suffixes.
+the output lands at `~/Downloads/output.mp4`. The native backend supports one
+window per process; `_partN` suffixes are reserved for a future multi-window
+backend.
 
 ---
 
