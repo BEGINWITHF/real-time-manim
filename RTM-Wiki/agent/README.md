@@ -26,7 +26,7 @@ fast_record_scene(MyScene, "out.mp4")
 
 ## 1. What RTM is (facts)
 
-- Package `real-time-manim`; import name `real_time_manim`; version `2.0.4` (`pyproject.toml`).
+- Package `real-time-manim`; import name `real_time_manim`; version `2.0.5` (`pyproject.toml`).
 - A **Vulkan real-time rendering backend** for ManimCE. Not a Manim fork: it **drives** ManimCE's `Mobject`/`VMobject`/`Animation` data model.
 - **Bundles ManimCE 0.21.0** (`real_time_manim/manim/`, `MANIM_BUNDLE_VERSION`). `import real_time_manim` re-exports the whole ManimCE namespace.
 - **No `manim` CLI**. pip library + Python API only.
