@@ -501,7 +501,11 @@ class PaintMixin:
 
     def _batch_quad_ok(self, mob):
         """True when `_send_quad_batch` reproduces `_send_vmobject` exactly."""
-        if type(mob) is not VMobject or mob.submobjects:
+        if mob.submobjects or not isinstance(mob, VMobject):
+            return False
+        if isinstance(mob, (Circle, Line, Square, Rectangle, Ellipse, Dot,
+                            Arc, Polygon, Polygram, Arrow, DashedLine, Point,
+                            MathTexPart)):
             return False
         d = mob.__dict__
         if ('_transforming' in d or '_rotation_about_point' in d
@@ -531,13 +535,16 @@ class PaintMixin:
             return False
         if srgbas is None or len(srgbas) != 1:
             return False
-        if not np.any(np.asarray(frgbas[0][:3], dtype=float)):
+        fa_max = float(np.asarray(frgbas)[:, 3].max())
+        sw_manim = get_stroke_w(mob)
+        if fa_max > 0.001 and not np.any(np.asarray(frgbas[0][:3], dtype=float)):
             return False
-        if not np.any(np.asarray(srgbas[0][:3], dtype=float)):
+        if sw_manim > 0.0 and not np.any(np.asarray(srgbas[0][:3],
+                                                    dtype=float)):
             return False
         return self._edges_are_straight(pts)
 
-    def _run_state(self, mobs):
+    def _run_state(self, mobs, a=1.0):
         """Cheap signature of a whole homogeneous run (for batch replay)."""
         pts = np.stack([m.points for m in mobs])
         fr = np.stack([np.asarray(m.fill_rgbas[0], dtype=float)
@@ -545,7 +552,8 @@ class PaintMixin:
         sr = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
                        for m in mobs])
         sw = np.array([get_stroke_w(m) for m in mobs], dtype=float)
-        anim = np.array([get_anim_opacity(m) for m in mobs], dtype=float)
+        anim = np.array([get_anim_opacity(m) for m in mobs],
+                        dtype=float) * a
         vp = get_viewport()
         if vp is None:
             vp_key = None
@@ -559,19 +567,19 @@ class PaintMixin:
         return (pts.shape, pts.tobytes(), fr.tobytes(), sr.tobytes(),
                 sw.tobytes(), anim.tobytes(), vp_key)
 
-    def _send_quad_batch(self, mobs):
+    def _send_quad_batch(self, mobs, a=1.0):
         """Vectorised fill+stroke send for a run of closed flat quads."""
         try:
-            sig = self._run_state(mobs)
+            sig = self._run_state(mobs, a)
         except Exception:
             sig = None
         if sig is None:
-            return self._send_quad_batch_uncached(mobs)
+            return self._send_quad_batch_uncached(mobs, a)
         return self._replay_or_record(
             mobs[0], sig, '_rtm_quad_run',
-            lambda: self._send_quad_batch_uncached(mobs))
+            lambda: self._send_quad_batch_uncached(mobs, a))
 
-    def _send_quad_batch_uncached(self, mobs):
+    def _send_quad_batch_uncached(self, mobs, a=1.0):
         w, h = self.win_w, self.win_h
         n = len(mobs)
         pts_all = np.stack([m.points for m in mobs])
@@ -598,7 +606,7 @@ class PaintMixin:
                            for m in mobs])
         so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
                        for m in mobs])
-        anim = np.array([get_anim_opacity(m) for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
         fa = frgbas[:, 3]
         fri = np.round(frgbas[:, 0] * 255).astype(np.int64)
         fgi = np.round(frgbas[:, 1] * 255).astype(np.int64)
@@ -647,6 +655,116 @@ class PaintMixin:
                 coords_fill, coords_stroke, alphas_ct)
         except Exception:
             pass
+
+    def _batch_dash_ok(self, mob):
+        """True when `_send_dash_batch` reproduces a one-cubic dash sender."""
+        if type(mob) is not Circle or mob.submobjects:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        if len(mob.points) != 4:
+            return False
+        frgbas = d.get('fill_rgbas')
+        if frgbas is not None and len(frgbas):
+            try:
+                if float(np.asarray(frgbas)[:, 3].max()) > 0.001:
+                    return False
+            except Exception:
+                return False
+        try:
+            if float(np.asarray(mob.stroke_rgbas)[:, 3].max()) <= 0.0:
+                return False
+        except Exception:
+            return False
+        return get_stroke_w(mob) > 0.0
+
+    def _send_dash_batch(self, mobs, a=1.0):
+        """Vectorised send for a run of stroke-only one-cubic dashes."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        pts = np.stack([m.points for m in mobs])
+        flat3 = pts.reshape(-1, 3)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + flat3[:, 0] * scale
+            sy = cy - flat3[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(flat3[:, 0], flat3[:, 1], flat3[:, 2],
+                                       w, h)
+        xy = np.stack([sx, sy], axis=1).reshape(n, 4, 2)
+        # same sampling rule as _small_path_chords
+        p0 = xy[:, 0]
+        p1 = xy[:, 1]
+        p2 = xy[:, 2]
+        p3 = xy[:, 3]
+        chord = np.linalg.norm(p3 - p0, axis=1)
+        cpoly = (np.linalg.norm(p1 - p0, axis=1)
+                 + np.linalg.norm(p2 - p1, axis=1)
+                 + np.linalg.norm(p3 - p2, axis=1))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            dvx = p3[:, 0] - p0[:, 0]
+            dvy = p3[:, 1] - p0[:, 1]
+            off1 = np.abs(dvx * (p0[:, 1] - p1[:, 1])
+                          - (p0[:, 0] - p1[:, 0]) * dvy) / chord
+            off2 = np.abs(dvx * (p0[:, 1] - p2[:, 1])
+                          - (p0[:, 0] - p2[:, 0]) * dvy) / chord
+        straight = (chord > 1e-9) & (np.maximum(off1, off2) <= 0.75)
+        est = (cpoly + chord) * 0.5
+        segs = np.maximum(8, np.minimum(256, np.ceil(est / 3.0))).astype(int)
+        segs = np.where(straight, 1, segs)
+        srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                           for m in mobs])
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        px = np.array([self._stroke_width(m) for m in mobs])
+        alpha = np.minimum(1.0, so * anim)
+        r = np.round(srgbas[:, 0] * 255).astype(np.int64)
+        g = np.round(srgbas[:, 1] * 255).astype(np.int64)
+        b = np.round(srgbas[:, 2] * 255).astype(np.int64)
+        layer_cache = {}
+        dll = self.dll
+        for i in range(n):
+            steps = int(segs[i])
+            key = (round(float(px[i]), 9), round(float(alpha[i]), 9))
+            layers = layer_cache.get(key)
+            if layers is None:
+                layers = tuple(self._stroke_layers(float(px[i]),
+                                                   float(alpha[i])))
+                layer_cache[key] = layers
+            ri, gi, bi = int(r[i]), int(g[i]), int(b[i])
+            if steps <= 1:
+                qx = (float(p0[i, 0]), float(p3[i, 0]))
+                qy = (float(p0[i, 1]), float(p3[i, 1]))
+            else:
+                t = np.linspace(0.0, 1.0, steps + 1)
+                u = 1.0 - t
+                bx = (u ** 3 * p0[i, 0] + 3 * u ** 2 * t * p1[i, 0]
+                      + 3 * u * t ** 2 * p2[i, 0] + t ** 3 * p3[i, 0])
+                by = (u ** 3 * p0[i, 1] + 3 * u ** 2 * t * p1[i, 1]
+                      + 3 * u * t ** 2 * p2[i, 1] + t ** 3 * p3[i, 1])
+                qx = bx.tolist()
+                qy = by.tolist()
+            for k in range(steps):
+                x1, y1 = qx[k], qy[k]
+                x2, y2 = qx[k + 1], qy[k + 1]
+                for _wd, _al in layers:
+                    dll.AddLine(x1, y1, x2, y2, _wd, ri, gi, bi, _al)
 
     def _fast_leaf(self, mob, a, w, h, rot, parent_offset):
         """Send a plain full-progress leaf without the generic dispatch chain.
@@ -1397,6 +1515,32 @@ class PaintMixin:
             num_subs = len(subs)
             about = getattr(mob, '_rotation_about_point', None)
             is_3d = getattr(mob, '_rotation_3d', False)
+            if (collect is None and not is_3d and not is_text
+                    and rot == 0.0 and parent_offset is None
+                    and about is None
+                    and not getattr(mob, '_transforming', False)
+                    and mob.__dict__.get('_grow_scale', 1.0) == 1.0
+                    and mob.__dict__.get('_grow_point') is None
+                    and len(subs) >= 4):
+                try:
+                    if all(self._batch_dash_ok(s) for s in subs):
+                        self._send_dash_batch(subs, a)
+                        return
+                except Exception:
+                    pass
+            if (collect is None and not is_3d and not is_text
+                    and rot == 0.0 and parent_offset is None
+                    and about is None
+                    and not getattr(mob, '_transforming', False)
+                    and mob.__dict__.get('_grow_scale', 1.0) == 1.0
+                    and mob.__dict__.get('_grow_point') is None
+                    and len(subs) >= 4):
+                try:
+                    if all(self._batch_quad_ok(s) for s in subs):
+                        self._send_quad_batch(subs, a)
+                        return
+                except Exception:
+                    pass
             # A container with no geometry of its own (a Surface, most VGroups)
             # has nothing to shift: its own-points centre equals the family
             # centre, so its children inherit exactly `parent_offset`.  Skip
@@ -1967,6 +2111,26 @@ class PaintMixin:
         if (not _skip_children
                 and not isinstance(mob, (Text, VGroup, Group, MathTexPart, Arrow, DashedLine))
                 and hasattr(mob, 'submobjects') and mob.submobjects):
+            if (collect is None and rot == 0.0 and parent_offset is None
+                    and not is_text
+                    and not getattr(mob, '_transforming', False)
+                    and len(mob.submobjects) >= 4):
+                try:
+                    if all(self._batch_dash_ok(s) for s in mob.submobjects):
+                        self._send_dash_batch(mob.submobjects, a)
+                        return
+                except Exception:
+                    pass
+            if (collect is None and rot == 0.0 and parent_offset is None
+                    and not is_text
+                    and not getattr(mob, '_transforming', False)
+                    and len(mob.submobjects) >= 4):
+                try:
+                    if all(self._batch_quad_ok(s) for s in mob.submobjects):
+                        self._send_quad_batch(mob.submobjects, a)
+                        return
+                except Exception:
+                    pass
             for _i, sub in depth_order(mob.submobjects):
                 # The sender above drew `mob` with its `_grow_scale`; the
                 # children are drawn by their own senders, so hand the state
