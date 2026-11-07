@@ -7,6 +7,8 @@ z_index, family pre-order, visit order)."""
 import ctypes
 import math
 
+from real_time_manim.render.util import path_center
+
 
 
 # native AddPolygon stores at most this many vertices and silently drops any
@@ -52,7 +54,10 @@ def depth_key(mob, viewport):
         # point to the group's centre.  Using get_center() here silently
         # ignored that group anchor and reordered those mobjects differently
         # from CE.
-        c = mob.get_z_index_reference_point()
+        group = getattr(mob, "z_index_group", mob)
+        # A face with no explicit group is its own reference point: the bbox
+        # centre is exactly get_center() but avoids the critical-point walk.
+        c = path_center(mob) if group is mob else group.get_center()
     except Exception:
         return math.inf
     return float(rot[2][0] * c[0] + rot[2][1] * c[1] + rot[2][2] * c[2])
@@ -135,8 +140,11 @@ class _PaintQueue:
                     while j < n_units and units[j][5] == batch:
                         j += 1
                     if j - i >= 4:
-                        self.owner._send_quad_batch(
-                            [units[k][6] for k in range(i, j)], batch[1])
+                        run = [units[k][6] for k in range(i, j)]
+                        if batch[0] == 'poly':
+                            self.owner._send_polygon_batch(run, batch[1])
+                        else:
+                            self.owner._send_quad_batch(run, batch[1])
                         i = j
                         continue
                 units[i][4]()

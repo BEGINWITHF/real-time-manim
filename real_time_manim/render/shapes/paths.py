@@ -474,7 +474,12 @@ class PathMixin:
         # hexagrams in 08_geometry.PolygramFamily came out as a zigzag).  Every
         # group becomes its own closed subpath -- one group, i.e. every other
         # shape, takes exactly the code path it took before.
-        groups = self._polygram_groups(mob, verts)
+        if type(mob).__name__ in ('Square', 'Rectangle'):
+            # One contour, always: `_polygram_groups` walks every vertex to
+            # discover subpaths, which cost more than drawing a cube face.
+            groups = [verts]
+        else:
+            groups = self._polygram_groups(mob, verts)
         flats = [self._polygon_flat(g, w, h, parent_offset, rot, sx, sy)
                  for g in groups]
         windows = self._group_windows(flats, progress_lower, progress_upper)

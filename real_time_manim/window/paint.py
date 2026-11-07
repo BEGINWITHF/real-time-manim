@@ -272,7 +272,12 @@ class PaintMixin:
             mob.__dict__[last_key] = sig
         except Exception:
             pass
-        send()
+        prev = getattr(self, '_paint_unstable', False)
+        self._paint_unstable = True
+        try:
+            send()
+        finally:
+            self._paint_unstable = prev
         return True
 
     def _cached_sender_leaf(self, mob, sig, send):
@@ -282,6 +287,10 @@ class PaintMixin:
     def _cached_vmobject_leaf(self, mob, a, w, h, rot, parent_offset,
                               is_text=False):
         """`_send_vmobject` with a replay cache for a static leaf."""
+        if getattr(self, '_paint_unstable', False):
+            self._send_vmobject(mob, a, w, h, parent_offset, rot,
+                                is_text=is_text)
+            return True
         sig = self._leaf_state(mob, a, w, h, rot, parent_offset) + (
             id(self.dll),)
         return self._replay_or_record(
@@ -765,6 +774,164 @@ class PaintMixin:
                 x2, y2 = qx[k + 1], qy[k + 1]
                 for _wd, _al in layers:
                     dll.AddLine(x1, y1, x2, y2, _wd, ri, gi, bi, _al)
+
+    def _batch_poly_ok(self, mob):
+        """True when a lit `Square` face can use the flat AddPolygon batch."""
+        if not isinstance(mob, (Square, Rectangle)) or mob.submobjects:
+            return False
+        if not getattr(mob, 'shade_in_3d', False):
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        if get_stroke_w(mob) > 0.0:
+            return False
+        if getattr(mob, 'background_stroke_width', 0):
+            return False
+        frgbas = d.get('fill_rgbas')
+        if frgbas is None or len(frgbas) != 1:
+            return False
+        if float(np.asarray(frgbas)[:, 3].max()) <= 0.001:
+            return False
+        verts = mob.get_vertices()
+        return verts is not None and len(verts) == 4
+
+    @staticmethod
+    def _unit_normals_batch(v1, v2, tol=1e-6):
+        """Vectorised `_unit_normal` for an array of tangent pairs."""
+        n = len(v1)
+        out = np.zeros((n, 3), dtype=float)
+        div1 = np.max(np.abs(v1), axis=1)
+        div2 = np.max(np.abs(v2), axis=1)
+        both = (div1 == 0.0) & (div2 == 0.0)
+        out[both] = (0.0, -1.0, 0.0)
+        only2 = (div1 == 0.0) & (div2 != 0.0)
+        out[only2] = v2[only2] / div2[only2, None]
+        only1 = (div1 != 0.0) & (div2 == 0.0)
+        out[only1] = v1[only1] / div1[only1, None]
+        bothnz = (div1 != 0.0) & (div2 != 0.0)
+        if np.any(bothnz):
+            u1 = v1[bothnz] / div1[bothnz, None]
+            u2 = v2[bothnz] / div2[bothnz, None]
+            cp = np.cross(u1, u2)
+            cp_norm = np.sqrt(np.sum(cp * cp, axis=1))
+            ok = cp_norm > tol
+            idx = np.flatnonzero(bothnz)
+            out[idx[ok]] = cp[ok] / cp_norm[ok, None]
+            aligned = idx[~ok]
+            if len(aligned):
+                u = u1[~ok]
+                flat = (np.abs(u[:, 0]) < tol) & (np.abs(u[:, 1]) < tol)
+                for k, row in enumerate(aligned):
+                    if flat[k]:
+                        out[row] = (0.0, -1.0, 0.0)
+                        continue
+                    ux, uy, uz = u[k]
+                    cp2 = np.array([-ux * uz, -uy * uz, ux * ux + uy * uy])
+                    nn = float(np.sqrt(np.sum(cp2 * cp2)))
+                    out[row] = cp2 / nn if nn > 0 else (0.0, -1.0, 0.0)
+        only = only1 | only2
+        if np.any(only):
+            idx = np.flatnonzero(only)
+            u = out[idx].copy()
+            flat = (np.abs(u[:, 0]) < tol) & (np.abs(u[:, 1]) < tol)
+            for k, row in enumerate(idx):
+                if flat[k]:
+                    out[row] = (0.0, -1.0, 0.0)
+                    continue
+                ux, uy, uz = u[k]
+                cp2 = np.array([-ux * uz, -uy * uz, ux * ux + uy * uy])
+                nn = float(np.sqrt(np.sum(cp2 * cp2)))
+                out[row] = cp2 / nn if nn > 0 else (0.0, -1.0, 0.0)
+        # The `u` fallback for aligned rows still needs the 90-degree turn.
+        return out
+
+    def _lit_colors_batch(self, mobs):
+        """Per-face `shaded_fill_rgb` for an array of 16-point quads."""
+        vp = get_viewport()
+        light = getattr(vp, "light_source", None)
+        if vp is None or vp.rotation is None or light is None:
+            return None
+        pts = np.stack([m.points for m in mobs])
+        rgbas = np.stack([np.asarray(m.fill_rgbas[0][:3], dtype=float)
+                          for m in mobs])
+        npts = pts.shape[1]
+        end = ((npts - 1) // 6) * 3
+        n0 = self._unit_normals_batch(pts[:, 3] - pts[:, 0],
+                                      pts[:, npts - 4] - pts[:, 0])
+        n1 = self._unit_normals_batch(pts[:, end + 3] - pts[:, end],
+                                      pts[:, 3] - pts[:, end])
+        light = np.asarray(light, dtype=float)
+
+        def shade(points, normals):
+            to_light = light[None, :] - points
+            norm = np.linalg.norm(to_light, axis=1)
+            good = norm > 1e-12
+            unit = np.zeros_like(to_light)
+            unit[good] = to_light[good] / norm[good, None]
+            d = np.sum(normals * unit, axis=1)
+            term = 0.5 * d ** 3
+            term = np.where(term < 0.0, term * 0.5, term)
+            return rgbas + term[:, None]
+
+        lit = np.clip((shade(pts[:, 0], n0) + shade(pts[:, end], n1)) / 2.0,
+                      0.0, 1.0) * 255.0
+        return lit.astype(np.int64)
+
+    def _send_polygon_batch(self, mobs, a=1.0):
+        """Vectorised AddPolygon send for a run of lit flat Square faces."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        pts = np.stack([np.asarray(m.get_vertices(), dtype=float)
+                        for m in mobs])
+        flat3 = pts.reshape(-1, 3)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + flat3[:, 0] * scale
+            sy = cy - flat3[:, 1] * scale
+            cxs = cx + pts[:, :, 0].mean(axis=1) * scale
+            cys = cy - pts[:, :, 1].mean(axis=1) * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(flat3[:, 0], flat3[:, 1], flat3[:, 2],
+                                       w, h)
+            cxs, cys = vp.project_points(pts[:, :, 0].mean(axis=1),
+                                         pts[:, :, 1].mean(axis=1),
+                                         pts[:, :, 2].mean(axis=1), w, h)
+        xy = np.stack([sx, sy], axis=1).astype(np.float32)
+        coords = (ctypes.c_float * xy.size).from_buffer_copy(
+            np.ascontiguousarray(xy.reshape(-1)))
+        fo = np.array([float(np.asarray(m.fill_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        cols = self._lit_colors_batch(mobs)
+        if cols is None:
+            cols = np.array([self._fill_color(m) for m in mobs],
+                            dtype=np.int64)
+        ptr_t = ctypes.POINTER(ctypes.c_float)
+        stride = 4 * 2 * 4
+        dll = self.dll
+        for i in range(n):
+            vp_i = ctypes.cast(ctypes.byref(coords, i * stride), ptr_t)
+            dll.AddPolygon(
+                float(cxs[i]), float(cys[i]),
+                int(cols[i, 0]), int(cols[i, 1]), int(cols[i, 2]),
+                0, 0, 0, 0.0, 4, vp_i,
+                1.0, float(anim[i] * fo[i]), 1)
+        try:
+            mobs[0].__dict__['_rtm_poly_buffers'] = coords
+        except Exception:
+            pass
 
     def _fast_leaf(self, mob, a, w, h, rot, parent_offset):
         """Send a plain full-progress leaf without the generic dispatch chain.
@@ -1661,9 +1828,11 @@ class PaintMixin:
                 _b = None
                 if (collect is not None and effective_sub_offset is None
                         and sub_rot == 0.0 and not sub_is_text
-                        and not getattr(mob, '_transforming', False)
-                        and self._batch_quad_ok(sub)):
-                    _b = ('quad', float(effective_alpha))
+                        and not getattr(mob, '_transforming', False)):
+                    if self._batch_poly_ok(sub):
+                        _b = ('poly', float(effective_alpha))
+                    elif self._batch_quad_ok(sub):
+                        _b = ('quad', float(effective_alpha))
                 self._send(sub, sub_rot, parent_alpha=effective_alpha, parent_offset=effective_sub_offset, parent_transforming=getattr(mob, '_transforming', False) or parent_transforming, parent_is_text=is_text, _batch=_b)
                 release_grow(getattr(self, '_paint_queue', None), sub,
                              need_gs, need_gp)
@@ -1686,9 +1855,11 @@ class PaintMixin:
                 need_gs, need_gp = lend_grow(mob, sub)
                 _b = None
                 if (parent_offset is None and rot == 0.0
-                        and not parent_transforming
-                        and self._batch_quad_ok(sub)):
-                    _b = ('quad', float(a))
+                        and not parent_transforming):
+                    if self._batch_poly_ok(sub):
+                        _b = ('poly', float(a))
+                    elif self._batch_quad_ok(sub):
+                        _b = ('quad', float(a))
                 self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
                            parent_transforming=parent_transforming,
                            parent_is_text=is_text, _batch=_b)

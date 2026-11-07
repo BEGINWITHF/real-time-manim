@@ -531,7 +531,17 @@ class CoreMixin:
         # compared with CE; only do that for frames that are not scene
         # content, i.e. never add it implicitly -- see the sync() caller.
         # Same-font Text roots on one visual line that need baseline alignment.
-        self._row_text_ids = self._text_row_ids(scene, skip_ids or set())
+        # Once every visible Text root has cached its baseline verdict, the
+        # row scan cannot change any of them -- skip the family walk.
+        need_rows = bool(skip_ids)
+        if not need_rows:
+            for _m in scene.mobjects:
+                if (type(_m).__name__ == 'Text'
+                        and '_baseline_dy' not in _m.__dict__):
+                    need_rows = True
+                    break
+        self._row_text_ids = (self._text_row_ids(scene, skip_ids or set())
+                              if need_rows else set())
         # manim's ThreeDCamera leaves fixed-in-frame mobjects unprojected
         # (transform_points_pre_display returns their points unchanged), so a
         # 3D scene's title/caption stays put instead of being rotated away.  RTM
