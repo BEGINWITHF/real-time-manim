@@ -171,6 +171,43 @@ class Viewport:
         cx, cy = self.center
         return float(w / 2.0 + (x - cx) * s), float(h / 2.0 - (y - cy) * s)
 
+    def project_points(self, xs, ys, zs, w, h):
+        """Vectorised ``project`` for arrays of points.
+
+        Same arithmetic and order as :meth:`project`; used by the VMobject
+        sender so a dense path does not call into Python once per point when a
+        camera viewport is active.
+        """
+        xs = np.asarray(xs, dtype=np.float64)
+        ys = np.asarray(ys, dtype=np.float64)
+        zs = np.asarray(zs, dtype=np.float64)
+        s = screen_scale(w, h, self.height)
+        if self.rotation is None:
+            cx, cy = self.center
+            return (w / 2.0 + (xs - cx) * s,
+                    h / 2.0 - (ys - cy) * s)
+        r = np.asarray(self.rotation, dtype=np.float64)
+        ox, oy, oz = self.frame_center
+        p = np.column_stack((xs - ox, ys - oy, zs - oz))
+        q = p @ r.T
+        qx, qy, rz = q[:, 0], q[:, 1], q[:, 2]
+        distance = self.focal_distance
+        if distance and abs(distance) > 1e-6:
+            if self.exponential:
+                factor = np.exp(rz / distance)
+                negative = rz < 0.0
+                if np.any(negative):
+                    denom = distance - rz[negative]
+                    factor[negative] = np.where(
+                        np.abs(denom) > 1e-6, distance / denom, 1.0)
+            else:
+                denom = distance - rz
+                factor = np.where(np.abs(denom) > 1e-6,
+                                  distance / denom, 1.0)
+            qx = qx * factor
+            qy = qy * factor
+        return w / 2.0 + qx * s, h / 2.0 - qy * s
+
     def __repr__(self):                          # pragma: no cover - debugging aid
         return f"Viewport(center={self.center}, height={self.height})"
 

@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 
+from real_time_manim.camera_state import get_viewport
 from real_time_manim.render.util import (affine_frame_map, get_opacity,
                                          path_center, point_path_bounds,
                                          shaded_fill_rgb,
@@ -598,29 +599,57 @@ class VMobjectMixin:
                                     affine[2])
             else:
                 # A camera viewport (MovingCamera / 3D) maps each point itself.
-                _project = screen_projector(w, h)
-                for pi, p in enumerate(pts):
-                    px, py = p[0], p[1]
-                    pz = float(p[2]) if len(p) > 2 else 0.0
+                # Vectorise the common case: a 50k-point path under a 3D
+                # camera otherwise makes 50k Python calls per frame.
+                _vp = get_viewport()
+                if _vp is not None and hasattr(_vp, "project_points"):
+                    pts_arr = np.asarray(pts, dtype=np.float64)
+                    px = pts_arr[:, 0].copy()
+                    py = pts_arr[:, 1].copy()
+                    if pts_arr.shape[1] > 2:
+                        pz = pts_arr[:, 2]
+                    else:
+                        pz = np.zeros(len(px), dtype=np.float64)
                     if grow_scale != 1.0 and grow_pt is not None:
                         px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                         py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                    dx, dy = px - cx, py - cy
+                    dx = px - cx
+                    dy = py - cy
                     px = dx * cos_a - dy * sin_a + cx
                     py = dx * sin_a + dy * cos_a + cy
                     if parent_offset is not None:
-                        px += parent_offset[0]
-                        py += parent_offset[1]
-                    py += b_dy
-                    # z must reach the viewport: a ThreeDCamera rotates the
-                    # point before the screen mapping, so dropping it flattens
-                    # every 3D VMobject (a Surface collapsed into thin stray
-                    # strips).  native AddBezierPath reads stride-3 points but
-                    # only x,y, so the third slot stays 0 here.
-                    sx, sy = _project(px, py, pz)
-                    flat[pi * 3] = sx
-                    flat[pi * 3 + 1] = sy
-                    flat[pi * 3 + 2] = 0.0
+                        px = px + parent_offset[0]
+                        py = py + parent_offset[1]
+                    py = py + b_dy
+                    sx, sy = _vp.project_points(px, py, pz, w, h)
+                    view = np.frombuffer(flat, dtype=np.float32).reshape(-1, 3)
+                    view[:len(px), 0] = sx
+                    view[:len(px), 1] = sy
+                    view[:len(px), 2] = 0.0
+                else:
+                    _project = screen_projector(w, h)
+                    for pi, p in enumerate(pts):
+                        px, py = p[0], p[1]
+                        pz = float(p[2]) if len(p) > 2 else 0.0
+                        if grow_scale != 1.0 and grow_pt is not None:
+                            px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                            py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                        dx, dy = px - cx, py - cy
+                        px = dx * cos_a - dy * sin_a + cx
+                        py = dx * sin_a + dy * cos_a + cy
+                        if parent_offset is not None:
+                            px += parent_offset[0]
+                            py += parent_offset[1]
+                        py += b_dy
+                        # z must reach the viewport: a ThreeDCamera rotates the
+                        # point before the screen mapping, so dropping it flattens
+                        # every 3D VMobject (a Surface collapsed into thin stray
+                        # strips).  native AddBezierPath reads stride-3 points but
+                        # only x,y, so the third slot stays 0 here.
+                        sx, sy = _project(px, py, pz)
+                        flat[pi * 3] = sx
+                        flat[pi * 3 + 1] = sy
+                        flat[pi * 3 + 2] = 0.0
 
         n = len(flat) // 3
         if n < 8:
