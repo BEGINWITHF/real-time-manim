@@ -113,6 +113,7 @@ class PaintMixin:
         pts = mob.points
         frgbas = mob.__dict__.get('fill_rgbas')
         srgbas = mob.__dict__.get('stroke_rgbas')
+        prgbas = mob.__dict__.get('rgbas')
         sw = mob.__dict__.get('stroke_width')
         if isinstance(sw, (int, float)):
             swk = float(sw)
@@ -123,6 +124,12 @@ class PaintMixin:
                 swk = repr(sw)
         vp = get_viewport()
         gp = mob.__dict__.get('_grow_point')
+        try:
+            black_fill = (frgbas is None or len(frgbas) == 0
+                          or not np.any(frgbas[:, :3]))
+        except Exception:
+            black_fill = True
+        color_key = (id(mob.__dict__.get('color')) if black_fill else None)
         if vp is None:
             vp_key = None
         else:
@@ -138,6 +145,7 @@ class PaintMixin:
             pts.shape, pts.tobytes(),
             None if frgbas is None else (frgbas.shape, frgbas.tobytes()),
             None if srgbas is None else (srgbas.shape, srgbas.tobytes()),
+            None if prgbas is None else (prgbas.shape, prgbas.tobytes()),
             swk, float(a), float(rot),
             None if parent_offset is None
             else tuple(float(v) for v in parent_offset),
@@ -150,7 +158,7 @@ class PaintMixin:
             mob.__dict__.get('_vulkan_progress_upper'),
             mob.__dict__.get('_vulkan_progress_lower'),
             mob.__dict__.get('_vulkan_points_partial', False),
-            repr(getattr(mob, 'color', None)),
+            color_key,
         )
 
     def _family_state(self, root, angle):
@@ -176,6 +184,7 @@ class PaintMixin:
             pts = m.points
             frgbas = m.__dict__.get('fill_rgbas')
             srgbas = m.__dict__.get('stroke_rgbas')
+            prgbas = m.__dict__.get('rgbas')
             sw = m.__dict__.get('stroke_width')
             if isinstance(sw, (int, float)):
                 swk = float(sw)
@@ -190,10 +199,17 @@ class PaintMixin:
                 la_key = None if la is None else np.asarray(la).tobytes()
             except Exception:
                 la_key = repr(la)
+            try:
+                black_fill = (frgbas is None or len(frgbas) == 0
+                              or not np.any(frgbas[:, :3]))
+            except Exception:
+                black_fill = True
+            color_key = (id(m.__dict__.get('color')) if black_fill else None)
             parts.append((
                 id(m), pts.shape, pts.tobytes(),
                 None if frgbas is None else (frgbas.shape, frgbas.tobytes()),
                 None if srgbas is None else (srgbas.shape, srgbas.tobytes()),
+                None if prgbas is None else (prgbas.shape, prgbas.tobytes()),
                 swk, get_anim_opacity(m), get_anim_rotation(m),
                 m.__dict__.get('_grow_scale', 1.0),
                 None if gp is None else tuple(float(v) for v in gp),
@@ -207,7 +223,7 @@ class PaintMixin:
                 bool(m.__dict__.get('_transforming', False)),
                 bool(m.__dict__.get('_write_active', False)),
                 la_key,
-                repr(getattr(m, 'color', None)),
+                color_key,
             ))
         return (float(angle), vp_key, tuple(parts))
 
@@ -236,6 +252,25 @@ class PaintMixin:
             mob._rtm_root_cache = (sig, rec.calls)
         except Exception:
             pass
+
+    def _cached_sender_leaf(self, mob, sig, send):
+        """Replay a leaf sender's recorded native calls when nothing changed."""
+        cached = mob.__dict__.get('_rtm_sender_cache')
+        if cached is not None and cached[0] == sig:
+            for fn, args in cached[1]:
+                fn(*args)
+            return True
+        rec = _ReplayDLL(self.dll)
+        self.dll = rec
+        try:
+            send()
+        finally:
+            self.dll = rec.real
+        try:
+            mob._rtm_sender_cache = (sig, rec.calls)
+        except Exception:
+            pass
+        return True
 
     def _cached_vmobject_leaf(self, mob, a, w, h, rot, parent_offset,
                               is_text=False):
@@ -293,6 +328,48 @@ class PaintMixin:
                     return False
                 self._send_line(mob, a, w, h, -rot, parent_offset)
                 return True
+            if isinstance(mob, Arc) and not isinstance(mob, Circle):
+                try:
+                    arc_fill = float(mob.fill_rgbas[:, 3].max())
+                except Exception:
+                    arc_fill = 0.0
+                if arc_fill > 0.0:
+                    return self._cached_vmobject_leaf(
+                        mob, a, w, h, rot, parent_offset)
+                sig = self._leaf_state(mob, a, w, h, rot, parent_offset) + (
+                    id(self.dll),
+                    getattr(mob, 'radius', None),
+                    getattr(mob, 'start_angle', None),
+                    getattr(mob, 'angle', None),
+                )
+                return self._cached_sender_leaf(
+                    mob, sig,
+                    lambda: self._send_arc(mob, a, w, h, -rot,
+                                           parent_offset))
+            if isinstance(mob, (Polygon, Polygram)):
+                sig = self._leaf_state(mob, a, w, h, rot, parent_offset) + (
+                    id(self.dll),)
+                verts = mob.get_vertices()
+                too_many = (verts is not None
+                            and len(verts) > NATIVE_MAX_POLYGON_VERTS)
+                flat_poly = self._edges_are_straight(mob.points)
+                if (too_many or fill_gradient_stops(mob) is not None
+                        or not flat_poly):
+                    send = lambda: self._send_vmobject(
+                        mob, a, w, h, parent_offset, rot)
+                else:
+                    send = lambda: self._send_polygon(
+                        mob, verts, a, rot_override=-rot,
+                        parent_offset=parent_offset)
+                return self._cached_sender_leaf(mob, sig, send)
+            if isinstance(mob, PMobject):
+                sig = self._leaf_state(mob, a, w, h, rot,
+                                       parent_offset) + (id(self.dll),)
+                return self._cached_sender_leaf(
+                    mob, sig,
+                    lambda: self._send_point_cloud(
+                        mob, a, w, h, rot=-rot,
+                        parent_offset=parent_offset))
             if (isinstance(mob, VMobject)
                     and not isinstance(mob, (Circle, Line, Square, Rectangle,
                                              Ellipse, Dot, Arc, Polygon,
