@@ -74,6 +74,42 @@ def _mitre_room_filter(pts, half_w):
     if m < 3:
         return pts + ([pts[0]] if closed else [])
 
+    # Dense paths are mostly straight, short chords: every corner already has
+    # room, but the scalar loop below still calls room() twice per edge and is
+    # O(n) per rescan (and O(n^2) if any merge happens).  Check the whole path
+    # with one vectorised pass first; only take the repair loop when a short
+    # run actually needs its neighbours merged.
+    try:
+        ring = np.asarray(pts[:-1] if closed else pts, dtype=np.float64)
+        if len(ring) >= 3:
+            prev = np.roll(ring, 1, axis=0)
+            nxt = np.roll(ring, -1, axis=0)
+            ax = ring[:, 0] - prev[:, 0]
+            ay = ring[:, 1] - prev[:, 1]
+            bx = nxt[:, 0] - ring[:, 0]
+            by = nxt[:, 1] - ring[:, 1]
+            la = np.hypot(ax, ay)
+            lb = np.hypot(bx, by)
+            denom = la * lb
+            cosang = np.zeros(len(ring), dtype=np.float64)
+            valid = (la > 1e-9) & (lb > 1e-9)
+            cosang[valid] = (ax[valid] * bx[valid] +
+                             ay[valid] * by[valid]) / denom[valid]
+            room = np.zeros(len(ring), dtype=np.float64)
+            mask = cosang > -0.875
+            room[mask] = half_w * np.sqrt(
+                np.maximum(0.0, (1.0 - cosang[mask]) /
+                           (1.0 + cosang[mask])))
+            if not closed:
+                room[0] = 0.0
+                room[-1] = 0.0
+            run = np.hypot(ring[1:, 0] - ring[:-1, 0],
+                           ring[1:, 1] - ring[:-1, 1])
+            if np.all(run >= room[:-1] + room[1:]):
+                return pts
+    except Exception:
+        pass
+
     def run_len(i, j):
         return math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1])
 
@@ -132,6 +168,61 @@ def _mitre_room_filter(pts, half_w):
     if closed and m >= 2:
         pts.append(pts[0])
     return pts
+
+
+def _submit_flat_stroke(self, flat, n, progress_lower, progress_upper,
+                        stroke_w, stroke_alpha, stroke_point_alpha,
+                        stroke_width_alpha, sri, sgi, sbi):
+    """Submit a full, all-straight cubic path as a few numpy-backed strips.
+
+    Dense ``set_points_as_corners`` paths are thousands of collinear cubics.
+    The general walk below samples each one, appends Python tuples and then
+    copies every point into a ctypes array.  When every cubic is flat and the
+    path is fully revealed, its polyline is exactly the sequence of cubic
+    endpoints, so one vector pass produces the same geometry.
+    """
+    seg_count = n // 4
+    if seg_count < 1 or progress_lower > 1e-9 or progress_upper < 1.0 - 1e-9:
+        return False
+    arr = np.ctypeslib.as_array(flat).reshape(-1, 3)[:seg_count * 4]
+    p0 = arr[0::4, :2].astype(np.float64)
+    p1 = arr[1::4, :2].astype(np.float64)
+    p2 = arr[2::4, :2].astype(np.float64)
+    p3 = arr[3::4, :2].astype(np.float64)
+    cpoly = (np.linalg.norm(p1 - p0, axis=1)
+             + np.linalg.norm(p2 - p1, axis=1)
+             + np.linalg.norm(p3 - p2, axis=1))
+    chord = np.linalg.norm(p3 - p0, axis=1)
+    if not np.all(cpoly - chord <= 0.5):
+        return False
+
+    jumps = np.linalg.norm(p0[1:] - p3[:-1], axis=1) > math.sqrt(40.0)
+    starts = np.r_[0, np.flatnonzero(jumps) + 1]
+    ends = np.r_[np.flatnonzero(jumps) + 1, seg_count]
+    half_w = int(stroke_w) * 0.5 + 0.5
+    alpha = min(1.0, stroke_alpha * stroke_point_alpha * stroke_width_alpha)
+    for start, end in zip(starts, ends):
+        run = np.empty((end - start + 1, 2), dtype=np.float64)
+        run[0] = p0[start]
+        run[1:] = p3[start:end]
+        keep = np.ones(len(run), dtype=bool)
+        keep[1:] = np.any(run[1:] != run[:-1], axis=1)
+        run = run[keep]
+        run = _mitre_room_filter(run, half_w)
+        if len(run) < 2:
+            continue
+        coords = np.ascontiguousarray(run, dtype=np.float32)
+        alphas = np.full(len(coords), alpha, dtype=np.float32)
+        # ctypes arrays (not a temporary numpy pointer): the DLL copies during
+        # the call, but call recorders in tests keep the argument alive and may
+        # read it after `_send` returns.
+        coords_ct = (ctypes.c_float * (len(coords) * 2))(
+            *coords.reshape(-1))
+        alphas_ct = (ctypes.c_float * len(alphas))(*alphas)
+        self.dll.AddLineStrip(
+            coords_ct, alphas_ct,
+            len(coords), int(stroke_w), sri, sgi, sbi, 1.0)
+    return True
 
 
 def _cut_cubics_at(flat, n, progress):
@@ -849,7 +940,11 @@ class VMobjectMixin:
             stroke_w = 2.0
             do_stroke = True
 
-        arr = (ctypes.c_float * len(flat))(*flat)
+        # `flat` is already a ctypes float array filled by the vector path (or
+        # the per-point viewport branch).  Native accepts it directly; the old
+        # `(c_float * len)(*flat)` copy unpacked every float in Python, which
+        # dominated a 50k-point path.
+        arr = flat
         n = (n // 4) * 4
         _grad = shaded_fill_gradient(mob, w, h)
         if _grad is not None:
@@ -898,6 +993,11 @@ class VMobjectMixin:
         )
 
         if do_stroke:
+            if _submit_flat_stroke(
+                    self, flat, n, progress_lower, progress_upper,
+                    stroke_w, stroke_alpha, stroke_point_alpha,
+                    stroke_width_alpha, sri, sgi, sbi):
+                return
             seg_count = n // 4
             # Cut the window at an EXACT fraction of a segment, never at whole
             # segments.  `int(seg_count * progress)` advanced the reveal one
@@ -954,7 +1054,16 @@ class VMobjectMixin:
                          + math.hypot(p3x-p2x, p3y-p2y))
                 chord = math.hypot(p3x-p0x, p3y-p0y)
                 est = (cpoly + chord) * 0.5
-                seg_samples = int(max(8.0, min(256.0, math.ceil(est / STEP_PX))))
+                # `set_points_as_corners` (and every sampled polyline) makes
+                # collinear cubics: cpoly == chord.  The old 8-sample floor
+                # spent 8 points on a sub-pixel chord -- a 50k-point path
+                # produced ~400k strip vertices per frame.  A flat cubic needs
+                # only its endpoints; keep the length-aware count for curves.
+                if cpoly - chord <= 0.5:
+                    seg_samples = 1
+                else:
+                    seg_samples = int(max(8.0, min(256.0,
+                                                 math.ceil(est / STEP_PX))))
                 # The window's ends land INSIDE a segment: the first visible
                 # segment starts at t_start, the last one stops at t_end.
                 # Evaluating the cubic there makes the pen tip move
