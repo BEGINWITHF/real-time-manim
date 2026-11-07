@@ -628,7 +628,10 @@ class CoreMixin:
                         kind = self._batch_circle_ok
                         send = self._send_circle_batch
                         if not kind(mob):
-                            kind = None
+                            kind = self._batch_quad_ok
+                            send = self._send_quad_batch
+                            if not kind(mob):
+                                kind = None
                     if kind is not None:
                         j = idx
                         run = []

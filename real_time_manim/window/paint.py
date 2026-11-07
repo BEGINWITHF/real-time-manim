@@ -499,6 +499,155 @@ class PaintMixin:
                     dll.AddLineStrip(base, None, segs + 1, _w,
                                      int(r[i]), int(g[i]), int(b[i]), _al)
 
+    def _batch_quad_ok(self, mob):
+        """True when `_send_quad_batch` reproduces `_send_vmobject` exactly."""
+        if type(mob) is not VMobject or mob.submobjects:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d or '_write_active' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        if getattr(mob, 'shade_in_3d', False):
+            return False
+        if getattr(mob, 'background_stroke_width', 0):
+            return False
+        pts = mob.points
+        if len(pts) != 16:
+            return False
+        if not (abs(pts[0][0] - pts[-1][0]) < 1e-6
+                and abs(pts[0][1] - pts[-1][1]) < 1e-6):
+            return False
+        frgbas = d.get('fill_rgbas')
+        srgbas = d.get('stroke_rgbas')
+        if frgbas is None or len(frgbas) != 1:
+            return False
+        if srgbas is None or len(srgbas) != 1:
+            return False
+        if not np.any(np.asarray(frgbas[0][:3], dtype=float)):
+            return False
+        if not np.any(np.asarray(srgbas[0][:3], dtype=float)):
+            return False
+        return self._edges_are_straight(pts)
+
+    def _run_state(self, mobs):
+        """Cheap signature of a whole homogeneous run (for batch replay)."""
+        pts = np.stack([m.points for m in mobs])
+        fr = np.stack([np.asarray(m.fill_rgbas[0], dtype=float)
+                       for m in mobs])
+        sr = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                       for m in mobs])
+        sw = np.array([get_stroke_w(m) for m in mobs], dtype=float)
+        anim = np.array([get_anim_opacity(m) for m in mobs], dtype=float)
+        vp = get_viewport()
+        if vp is None:
+            vp_key = None
+        else:
+            vp_key = (
+                vp.center, vp.height, vp.unit_height,
+                None if vp.rotation is None
+                else np.asarray(vp.rotation, dtype=float).tobytes(),
+                vp.frame_center, vp.focal_distance, vp.exponential,
+            )
+        return (pts.shape, pts.tobytes(), fr.tobytes(), sr.tobytes(),
+                sw.tobytes(), anim.tobytes(), vp_key)
+
+    def _send_quad_batch(self, mobs):
+        """Vectorised fill+stroke send for a run of closed flat quads."""
+        try:
+            sig = self._run_state(mobs)
+        except Exception:
+            sig = None
+        if sig is None:
+            return self._send_quad_batch_uncached(mobs)
+        return self._replay_or_record(
+            mobs[0], sig, '_rtm_quad_run',
+            lambda: self._send_quad_batch_uncached(mobs))
+
+    def _send_quad_batch_uncached(self, mobs):
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        pts_all = np.stack([m.points for m in mobs])
+        flat3 = pts_all.reshape(-1, 3)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + flat3[:, 0] * scale
+            sy = cy - flat3[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(flat3[:, 0], flat3[:, 1], flat3[:, 2],
+                                       w, h)
+        flat = np.zeros((len(flat3), 3), dtype=np.float32)
+        flat[:, 0] = sx
+        flat[:, 1] = sy
+        flat = flat.reshape(n, 16, 3)
+        # stroke walks the cubic end anchors (p3 of each cubic) after p0.
+        stroke_idx = np.array([0, 3, 7, 11, 15], dtype=np.intp)
+        stroke_xy = flat[:, stroke_idx, :2]
+        frgbas = np.stack([np.asarray(m.fill_rgbas[0], dtype=float)
+                           for m in mobs])
+        srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                           for m in mobs])
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs])
+        fa = frgbas[:, 3]
+        fri = np.round(frgbas[:, 0] * 255).astype(np.int64)
+        fgi = np.round(frgbas[:, 1] * 255).astype(np.int64)
+        fbi = np.round(frgbas[:, 2] * 255).astype(np.int64)
+        sri = np.round(srgbas[:, 0] * 255).astype(np.int64)
+        sgi = np.round(srgbas[:, 1] * 255).astype(np.int64)
+        sbi = np.round(srgbas[:, 2] * 255).astype(np.int64)
+        px = np.array([self._stroke_width(m) for m in mobs])
+        stroke_w = np.where(px > 0, np.maximum(1.0, px), 0.0)
+        fill_alpha = np.minimum(1.0, fa)
+        vis_fill = np.minimum(1.0, fa * anim)
+        show_fill = vis_fill > 0.01
+        alphas = np.minimum(1.0, so * anim)
+        do_stroke = (alphas > 0.01) & (px > 0)
+        coords_fill = (ctypes.c_float * flat.size).from_buffer_copy(
+            np.ascontiguousarray(flat.reshape(-1)))
+        coords_stroke = (ctypes.c_float * stroke_xy.size).from_buffer_copy(
+            np.ascontiguousarray(stroke_xy.reshape(-1)))
+        alph = np.repeat(alphas.astype(np.float32)[:, None], 5, axis=1)
+        alphas_ct = (ctypes.c_float * alph.size).from_buffer_copy(
+            np.ascontiguousarray(alph.reshape(-1)))
+        ptr_t = ctypes.POINTER(ctypes.c_float)
+        dll = self.dll
+        stride_f = 16 * 3 * 4
+        stride_s = 5 * 2 * 4
+        stride_a = 5 * 4
+        for i in range(n):
+            fp = ctypes.cast(ctypes.byref(coords_fill, i * stride_f), ptr_t)
+            dll.AddBezierPath(
+                fp, 16,
+                int(sri[i]), int(sgi[i]), int(sbi[i]), float(stroke_w[i]),
+                int(fri[i]), int(fgi[i]), int(fbi[i]), float(fill_alpha[i]),
+                1.0, 0, 1 if show_fill[i] else 0, float(anim[i]),
+                int(fri[i]), int(fgi[i]), int(fbi[i]),
+                0.0, 0.0, 0.0, 0.0)
+            if do_stroke[i]:
+                sp = ctypes.cast(ctypes.byref(coords_stroke, i * stride_s),
+                                 ptr_t)
+                ap = ctypes.cast(ctypes.byref(alphas_ct, i * stride_a), ptr_t)
+                dll.AddLineStrip(sp, ap, 5, int(stroke_w[i]),
+                                 int(sri[i]), int(sgi[i]), int(sbi[i]), 1.0)
+        # The replay cache stores the cast pointers above; keep their backing
+        # arrays alive as long as that cache lives.
+        try:
+            mobs[0].__dict__['_rtm_quad_buffers'] = (
+                coords_fill, coords_stroke, alphas_ct)
+        except Exception:
+            pass
+
     def _fast_leaf(self, mob, a, w, h, rot, parent_offset):
         """Send a plain full-progress leaf without the generic dispatch chain.
 
