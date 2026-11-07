@@ -376,13 +376,18 @@ class ArrowMixin:
 
     def _send_line(self, mob, a, w, h, rot, parent_offset=None):
         sig = None
+        stable = False
         try:
             sig = self._line_state(mob, a, w, h, rot, parent_offset) + (
                 id(self.dll),)
-            cached = mob.__dict__.get('_rtm_line_cache')
-            if cached is not None and cached[0] == sig:
-                self._replay_line(cached[1])
-                return
+            stable = mob.__dict__.get('_rtm_line_last') == sig
+            if stable:
+                cached = mob.__dict__.get('_rtm_line_cache')
+                if cached is not None and cached[0] == sig:
+                    self._replay_line(cached[1])
+                    return
+            else:
+                mob.__dict__['_rtm_line_last'] = sig
         except Exception:
             sig = None
         # The endpoints must come from the path itself.  `TipableVMobject`
@@ -584,7 +589,7 @@ class ArrowMixin:
                                        0, 0, 0, 0.0, 1.0, a)
             except Exception:
                 pass
-        if sig is not None:
+        if sig is not None and stable:
             try:
                 mob._rtm_line_cache = (
                     sig,

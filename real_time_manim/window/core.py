@@ -607,6 +607,7 @@ class CoreMixin:
         queue = None if direct else _PaintQueue(viewport, index, z_mode)
         saved_queue = getattr(self, "_paint_queue", None)
         self._paint_queue = None if direct else queue
+        batch_until = 0
         try:
             for idx, mob in enumerate(roots):
                 if (skip_ids and id(mob) in skip_ids) or id(mob) in auto_ids:
@@ -619,6 +620,33 @@ class CoreMixin:
                     if last_owner.get(nid, idx) != idx
                 }
                 if direct:
+                    if idx < batch_until:
+                        continue
+                    kind = self._batch_line_ok
+                    send = self._send_line_batch
+                    if not kind(mob):
+                        kind = self._batch_circle_ok
+                        send = self._send_circle_batch
+                        if not kind(mob):
+                            kind = None
+                    if kind is not None:
+                        j = idx
+                        run = []
+                        while j < len(roots):
+                            cand = roots[j]
+                            if ((skip_ids and id(cand) in skip_ids)
+                                    or id(cand) in auto_ids
+                                    or last_owner.get(id(cand), j) != j
+                                    or j in cam_images
+                                    or id(cand) in fixed_ids
+                                    or not kind(cand)):
+                                break
+                            run.append(cand)
+                            j += 1
+                        if len(run) >= 4:
+                            send(run)
+                            batch_until = j
+                            continue
                     if (skip_family or idx in cam_images
                             or id(mob) in fixed_ids or not mob.submobjects):
                         self._root_paint(cam, roots, idx, mob, angle,
