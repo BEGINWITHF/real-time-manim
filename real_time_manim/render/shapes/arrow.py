@@ -380,11 +380,12 @@ class ArrowMixin:
         else:
             sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
-            cx, cy, cz = path_center(mob)
-            if parent_offset is not None:
-                cx += parent_offset[0]; cy += parent_offset[1]
-            scx, scy = manim_to_screen(cx, cy, w, h, cz)
-        if not pivoted:
+            if rot != 0.0:
+                cx, cy, cz = path_center(mob)
+                if parent_offset is not None:
+                    cx += parent_offset[0]; cy += parent_offset[1]
+                scx, scy = manim_to_screen(cx, cy, w, h, cz)
+        if not pivoted and rot != 0.0:
             sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
             sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
         r, g, b = self._stroke_color(mob)

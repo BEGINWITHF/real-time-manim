@@ -154,20 +154,21 @@ class PointMixin:
         else:
             sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
-            if used_full:
-                # `s`/`e` are the uncut line and already carry grow + offset,
-                # so their midpoint is the line's centre; `get_center()` would
-                # measure the bbox of the CUT dashes instead.
-                cvec = (s + e) / 2.0
-                cx, cy, cz = float(cvec[0]), float(cvec[1]), float(cvec[2])
-            else:
-                cx, cy, cz = path_center(mob)
-                if parent_offset is not None:
-                    cx += parent_offset[0]
-                    cy += parent_offset[1]
-            scx, scy = manim_to_screen(cx, cy, w, h, cz)
-            sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
-            sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
+            if rot != 0.0:
+                if used_full:
+                    # `s`/`e` are the uncut line and already carry grow + offset,
+                    # so their midpoint is the line's centre; `get_center()` would
+                    # measure the bbox of the CUT dashes instead.
+                    cvec = (s + e) / 2.0
+                    cx, cy, cz = float(cvec[0]), float(cvec[1]), float(cvec[2])
+                else:
+                    cx, cy, cz = path_center(mob)
+                    if parent_offset is not None:
+                        cx += parent_offset[0]
+                        cy += parent_offset[1]
+                scx, scy = manim_to_screen(cx, cy, w, h, cz)
+                sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
+                sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
         so = get_opacity(mob, 'stroke', 1.0)
         if so <= 0:
             return

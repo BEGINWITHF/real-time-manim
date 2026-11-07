@@ -726,26 +726,50 @@ class VMobjectMixin:
             b_dy = float(getattr(mob, '_baseline_dy', 0.0) or 0.0)
             affine = affine_frame_map(w, h)
             if affine is not None:
-                # No camera viewport: the whole conversion is affine, so one
-                # numpy pass replaces the per-point loop and its per-point
-                # projection call.  Same operations in the same order, all in
-                # double precision, so the coordinates are bit-identical.
-                pts_arr = np.asarray(pts, dtype=np.float64)
-                px = pts_arr[:, 0]
-                py = pts_arr[:, 1]
-                if grow_scale != 1.0 and grow_pt is not None:
-                    px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
-                    py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                dx = px - cx
-                dy = py - cy
-                px = dx * cos_a - dy * sin_a + cx
-                py = dx * sin_a + dy * cos_a + cy
-                if parent_offset is not None:
-                    px = px + parent_offset[0]
-                    py = py + parent_offset[1]
-                py = py + b_dy
-                store_screen_points(flat, px, py, affine[0], affine[1],
-                                    affine[2])
+                # No camera viewport: the whole conversion is affine.  A dense
+                # path gets one numpy pass, but for a quad/glyph-sized path the
+                # ~10 small-array temporaries cost more than the points
+                # themselves -- use the scalar equivalent below 64 points.
+                if len(pts) <= 64:
+                    s_frame, ax, ay = affine
+                    for pi in range(len(pts)):
+                        p = pts[pi]
+                        px = float(p[0])
+                        py = float(p[1])
+                        if grow_scale != 1.0 and grow_pt is not None:
+                            px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                            py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                        if rot != 0.0:
+                            dx = px - cx
+                            dy = py - cy
+                            px = dx * cos_a - dy * sin_a + cx
+                            py = dx * sin_a + dy * cos_a + cy
+                        if parent_offset is not None:
+                            px = px + parent_offset[0]
+                            py = py + parent_offset[1]
+                        py = py + b_dy
+                        flat[pi * 3] = ax + px * s_frame
+                        flat[pi * 3 + 1] = ay - py * s_frame
+                        flat[pi * 3 + 2] = 0.0
+                else:
+                    # Same operations in the same order, all in double
+                    # precision, so the coordinates are bit-identical.
+                    pts_arr = np.asarray(pts, dtype=np.float64)
+                    px = pts_arr[:, 0]
+                    py = pts_arr[:, 1]
+                    if grow_scale != 1.0 and grow_pt is not None:
+                        px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                        py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                    dx = px - cx
+                    dy = py - cy
+                    px = dx * cos_a - dy * sin_a + cx
+                    py = dx * sin_a + dy * cos_a + cy
+                    if parent_offset is not None:
+                        px = px + parent_offset[0]
+                        py = py + parent_offset[1]
+                    py = py + b_dy
+                    store_screen_points(flat, px, py, affine[0], affine[1],
+                                        affine[2])
             else:
                 # A camera viewport (MovingCamera / 3D) maps each point itself.
                 # Vectorise the common case: a 50k-point path under a 3D
@@ -887,19 +911,27 @@ class VMobjectMixin:
             frgbas = mob.get_fill_rgbas()
             if len(frgbas) > 0:
                 _fa_measured = True
-                # manim keeps a *gradient* fill as several stops -- e.g.
-                # `set_sheen(0.4, RIGHT)` leaves [dim, bright].  Reading only
-                # stop 0 painted every gradient/sheen fill at its darkest stop
-                # (~25% dim): measured on VobjectManagerPathOperations the same
-                # region read '.' (52-78) in RTM against ':' (78-104) in CE,
-                # which straddles the lit threshold (luma>55) and cost 60% of
-                # the lit count.  Average the stops; a flat fill has all stops
-                # equal, so nothing else moves.
-                _stops = list(frgbas)
-                fr = sum(float(s[0]) for s in _stops) / len(_stops)
-                fg = sum(float(s[1]) for s in _stops) / len(_stops)
-                fb = sum(float(s[2]) for s in _stops) / len(_stops)
-                fa = max(float(s[3]) for s in _stops)
+                if len(frgbas) == 1:
+                    # Flat fill (the overwhelming majority): no list/sums.
+                    _s0 = frgbas[0]
+                    fr = float(_s0[0])
+                    fg = float(_s0[1])
+                    fb = float(_s0[2])
+                    fa = float(_s0[3])
+                else:
+                    # manim keeps a *gradient* fill as several stops -- e.g.
+                    # `set_sheen(0.4, RIGHT)` leaves [dim, bright].  Reading only
+                    # stop 0 painted every gradient/sheen fill at its darkest stop
+                    # (~25% dim): measured on VobjectManagerPathOperations the same
+                    # region read '.' (52-78) in RTM against ':' (78-104) in CE,
+                    # which straddles the lit threshold (luma>55) and cost 60% of
+                    # the lit count.  Average the stops; a flat fill has all stops
+                    # equal, so nothing else moves.
+                    _stops = list(frgbas)
+                    fr = sum(float(s[0]) for s in _stops) / len(_stops)
+                    fg = sum(float(s[1]) for s in _stops) / len(_stops)
+                    fb = sum(float(s[2]) for s in _stops) / len(_stops)
+                    fa = max(float(s[3]) for s in _stops)
         except Exception:
             pass
         if fr == 0 and fg == 0 and fb == 0 and not _black_fill_is_real(mob):
