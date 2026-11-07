@@ -117,6 +117,17 @@ def point_path_bounds(mob):
     truncate the points and carry their partial state in the channel alone
     (``animations/create.py``), so they must keep composing as before.
     """
+    # These channels are always instance attributes, and `getattr` on a
+    # missing one runs Mobject.__getattr__ (which synthesises get_*/set_*
+    # methods and raises).  Read __dict__ directly on the hot per-leaf path.
+    d = getattr(mob, "__dict__", None)
+    if d is not None:
+        if "_vulkan_progress_upper" in d:
+            return (float(d.get("_vulkan_progress_lower", 0.0)),
+                    float(d["_vulkan_progress_upper"]))
+        if d.get("_vulkan_points_partial", False):
+            return 0.0, 1.0
+        return 0.0, float(d.get("_vulkan_progress", 1.0))
     if hasattr(mob, "_vulkan_progress_upper"):
         return (float(getattr(mob, "_vulkan_progress_lower", 0.0)),
                 float(getattr(mob, "_vulkan_progress_upper", 1.0)))

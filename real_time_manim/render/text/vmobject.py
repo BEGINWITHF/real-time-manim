@@ -718,12 +718,13 @@ class VMobjectMixin:
             # per 150 frames of a three-Text scene).  The consumers only index
             # it, so a ctypes array is both the destination and the result.
             flat = (ctypes.c_float * (len(pts) * 3))()
-            grow_scale = getattr(mob, '_grow_scale', 1.0)
-            grow_pt = getattr(mob, '_grow_point', None)
+            _ch = mob.__dict__
+            grow_scale = _ch.get('_grow_scale', 1.0)
+            grow_pt = _ch.get('_grow_point')
             # Approach-A baseline shift, set on text characters at draw time so
             # a descender-heavy word is lowered onto its shared baseline without
             # ever mutating the mobject's points (no positional jitter).
-            b_dy = float(getattr(mob, '_baseline_dy', 0.0) or 0.0)
+            b_dy = float(_ch.get('_baseline_dy', 0.0) or 0.0)
             affine = affine_frame_map(w, h)
             if affine is not None:
                 # No camera viewport: the whole conversion is affine.  A dense

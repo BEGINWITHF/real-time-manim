@@ -55,6 +55,27 @@ def _gradient_flat_shape(mob):
         return False
 
 
+class _ReplayDLL:
+    """Records native calls made by one leaf so a static frame can replay them."""
+
+    __slots__ = ("real", "calls")
+
+    def __init__(self, real):
+        self.real = real
+        self.calls = []
+
+    def __getattr__(self, name):
+        real = self.real
+        calls = self.calls
+        fn = getattr(real, name)
+
+        def call(*args):
+            calls.append((fn, args))
+            return fn(*args)
+
+        return call
+
+
 class PaintMixin:
 
     def _root_paint(self, cam, roots, idx, mob, angle, fixed_ids, cam_images,
@@ -85,6 +106,206 @@ class PaintMixin:
                 self._skip_family_ids = None
 
         return paint
+
+    @staticmethod
+    def _leaf_state(mob, a, w, h, rot, parent_offset):
+        """Everything that can change a plain VMobject's native calls."""
+        pts = mob.points
+        frgbas = mob.__dict__.get('fill_rgbas')
+        srgbas = mob.__dict__.get('stroke_rgbas')
+        sw = mob.__dict__.get('stroke_width')
+        if isinstance(sw, (int, float)):
+            swk = float(sw)
+        else:
+            try:
+                swk = np.asarray(sw).tobytes()
+            except Exception:
+                swk = repr(sw)
+        vp = get_viewport()
+        gp = mob.__dict__.get('_grow_point')
+        if vp is None:
+            vp_key = None
+        else:
+            rot_key = (None if vp.rotation is None
+                       else np.asarray(vp.rotation, dtype=float).tobytes())
+            light = vp.light_source
+            light_key = (None if light is None
+                         else np.asarray(light, dtype=float).tobytes())
+            vp_key = (vp.center, vp.height, vp.unit_height, rot_key,
+                      vp.frame_center, vp.focal_distance, vp.exponential,
+                      light_key)
+        return (
+            pts.shape, pts.tobytes(),
+            None if frgbas is None else (frgbas.shape, frgbas.tobytes()),
+            None if srgbas is None else (srgbas.shape, srgbas.tobytes()),
+            swk, float(a), float(rot),
+            None if parent_offset is None
+            else tuple(float(v) for v in parent_offset),
+            w, h, vp_key,
+            mob.__dict__.get('_grow_scale', 1.0),
+            None if gp is None else tuple(float(v) for v in gp),
+            mob.__dict__.get('_rotation_about_point') is not None,
+            float(mob.__dict__.get('_baseline_dy', 0.0) or 0.0),
+            float(mob.__dict__.get('_vulkan_progress', 1.0)),
+            mob.__dict__.get('_vulkan_progress_upper'),
+            mob.__dict__.get('_vulkan_progress_lower'),
+            mob.__dict__.get('_vulkan_points_partial', False),
+            repr(getattr(mob, 'color', None)),
+        )
+
+    def _family_state(self, root, angle):
+        """A signature of everything that can change a whole subtree's paint."""
+        vp = get_viewport()
+        if vp is None:
+            vp_key = None
+        else:
+            light = vp.light_source
+            vp_key = (
+                vp.center, vp.height, vp.unit_height,
+                None if vp.rotation is None
+                else np.asarray(vp.rotation, dtype=float).tobytes(),
+                vp.frame_center, vp.focal_distance, vp.exponential,
+                None if light is None
+                else np.asarray(light, dtype=float).tobytes(),
+            )
+        parts = []
+        stack = [root]
+        while stack:
+            m = stack.pop()
+            stack.extend(getattr(m, 'submobjects', ()) or ())
+            pts = m.points
+            frgbas = m.__dict__.get('fill_rgbas')
+            srgbas = m.__dict__.get('stroke_rgbas')
+            sw = m.__dict__.get('stroke_width')
+            if isinstance(sw, (int, float)):
+                swk = float(sw)
+            else:
+                try:
+                    swk = np.asarray(sw).tobytes()
+                except Exception:
+                    swk = repr(sw)
+            gp = m.__dict__.get('_grow_point')
+            la = m.__dict__.get('_letter_alphas')
+            try:
+                la_key = None if la is None else np.asarray(la).tobytes()
+            except Exception:
+                la_key = repr(la)
+            parts.append((
+                id(m), pts.shape, pts.tobytes(),
+                None if frgbas is None else (frgbas.shape, frgbas.tobytes()),
+                None if srgbas is None else (srgbas.shape, srgbas.tobytes()),
+                swk, get_anim_opacity(m), get_anim_rotation(m),
+                m.__dict__.get('_grow_scale', 1.0),
+                None if gp is None else tuple(float(v) for v in gp),
+                m.__dict__.get('_rotation_about_point') is not None,
+                float(m.__dict__.get('_baseline_dy', 0.0) or 0.0),
+                float(m.__dict__.get('_vulkan_progress', 1.0)),
+                m.__dict__.get('_vulkan_progress_upper'),
+                m.__dict__.get('_vulkan_progress_lower'),
+                m.__dict__.get('_vulkan_points_partial', False),
+                bool(getattr(m, '_is_text', False)),
+                bool(m.__dict__.get('_transforming', False)),
+                bool(m.__dict__.get('_write_active', False)),
+                la_key,
+                repr(getattr(m, 'color', None)),
+            ))
+        return (float(angle), vp_key, tuple(parts))
+
+    def _paint_root_cached(self, cam, roots, idx, mob, angle, fixed_ids,
+                           cam_images, skip_family):
+        """Paint one direct-mode root, replaying a static subtree's calls."""
+        paint = self._root_paint(cam, roots, idx, mob, angle, fixed_ids,
+                                 cam_images, skip_family)
+        try:
+            sig = self._family_state(mob, angle) + (id(self.dll),)
+        except Exception:
+            paint()
+            return
+        cached = mob.__dict__.get('_rtm_root_cache')
+        if cached is not None and cached[0] == sig:
+            for fn, args in cached[1]:
+                fn(*args)
+            return
+        rec = _ReplayDLL(self.dll)
+        self.dll = rec
+        try:
+            paint()
+        finally:
+            self.dll = rec.real
+        try:
+            mob._rtm_root_cache = (sig, rec.calls)
+        except Exception:
+            pass
+
+    def _cached_vmobject_leaf(self, mob, a, w, h, rot, parent_offset,
+                              is_text=False):
+        """`_send_vmobject` with a replay cache for a static leaf."""
+        sig = self._leaf_state(mob, a, w, h, rot, parent_offset) + (
+            id(self.dll),)
+        cached = mob.__dict__.get('_rtm_vm_cache')
+        if cached is not None and cached[0] == sig:
+            for fn, args in cached[1]:
+                fn(*args)
+            return True
+        rec = _ReplayDLL(self.dll)
+        self.dll = rec
+        try:
+            self._send_vmobject(mob, a, w, h, parent_offset, rot,
+                                is_text=is_text)
+        finally:
+            self.dll = rec.real
+        try:
+            mob._rtm_vm_cache = (sig, rec.calls)
+        except Exception:
+            pass
+        return True
+
+    def _fast_leaf(self, mob, a, w, h, rot, parent_offset):
+        """Send a plain full-progress leaf without the generic dispatch chain.
+
+        Returns True when it painted.  The caller guarantees direct paint (no
+        depth/z queue), no transform, no text and no children, so the long
+        subclass chain below can only land in the same sender.
+        """
+        d = mob.__dict__
+        if '_vulkan_progress_upper' in d:
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        try:
+            if isinstance(mob, Circle) and not isinstance(mob, Dot):
+                rgbas = getattr(mob, 'fill_rgbas', None)
+                if rgbas is not None and len(rgbas) > 1:
+                    return False
+                vp = get_viewport()
+                if vp is not None and vp.rotation is not None:
+                    return False
+                if self._circle_round_radius(mob) is None:
+                    # An open circle arc (a dash segment, a partial sweep)
+                    # takes the point path, exactly like the Circle branch in
+                    # _send_impl.
+                    return self._cached_vmobject_leaf(
+                        mob, a, w, h, rot, parent_offset)
+                self._send_circle(mob, a, w, h, -rot, parent_offset)
+                return True
+            if isinstance(mob, Line) and not isinstance(mob, (Arrow, DashedLine)):
+                if not self._path_is_a_straight_cubic(mob):
+                    return False
+                self._send_line(mob, a, w, h, -rot, parent_offset)
+                return True
+            if (isinstance(mob, VMobject)
+                    and not isinstance(mob, (Circle, Line, Square, Rectangle,
+                                             Ellipse, Dot, Arc, Polygon,
+                                             Polygram, Arrow, DashedLine,
+                                             Point, MathTexPart))):
+                # Plain VMobject and simple VMobject subclasses (a Surface's
+                # ThreeDVMobject faces, vectorized points) all end in
+                # `_send_vmobject` in the generic chain.
+                return self._cached_vmobject_leaf(
+                    mob, a, w, h, rot, parent_offset)
+        except Exception:
+            return False
+        return False
 
     def _paint_order(self, items):
         """Sibling paint order; the collection pass skips the depth sort.
@@ -658,6 +879,15 @@ class PaintMixin:
 
         is_text = isinstance(mob, Text) or getattr(mob, '_is_text', False) or parent_is_text
 
+        # Common 2D leaves: skip the long subclass chain and style probes
+        # below.  Only when the frame is painting directly (no depth/z queue)
+        # and nothing routes the mobject through a special branch.
+        if (collect is None and not parent_transforming and not is_text
+                and not mob.__dict__.get('_transforming', False)
+                and not mob.submobjects
+                and self._fast_leaf(mob, a, w, h, rot, parent_offset)):
+            return
+
         if _gradient_flat_shape(mob):
             self._send_vmobject(mob, a, w, h,
                                 None if is_text else parent_offset, rot,
@@ -688,7 +918,23 @@ class PaintMixin:
                 self._send_text_write(mob, mob._letter_alphas, w, h, a,
                                       parent_offset)
             else:
-                self._send_vmobject(mob, a, w, h, parent_offset, 0.0, is_text=is_text)
+                # One cached send per glyph: `_send_vmobject`'s own
+                # no-points branch does exactly this walk.
+                pg_gs = getattr(mob, '_grow_scale', None)
+                pg_gp = getattr(mob, '_grow_point', None)
+                for sub in mob.submobjects:
+                    need_gs = pg_gs is not None and not hasattr(sub, '_grow_scale')
+                    need_gp = pg_gp is not None and not hasattr(sub, '_grow_point')
+                    if need_gs:
+                        sub._grow_scale = pg_gs
+                    if need_gp:
+                        sub._grow_point = pg_gp
+                    self._cached_vmobject_leaf(
+                        sub, a, w, h, 0.0, parent_offset, is_text=True)
+                    if need_gs:
+                        del sub._grow_scale
+                    if need_gp:
+                        del sub._grow_point
             return
 
         # MathTexPart is a VMobject (not VGroup) but holds Text submobjects

@@ -619,8 +619,15 @@ class CoreMixin:
                     if last_owner.get(nid, idx) != idx
                 }
                 if direct:
-                    self._root_paint(cam, roots, idx, mob, angle, fixed_ids,
-                                     cam_images, skip_family)()
+                    if (skip_family or idx in cam_images
+                            or id(mob) in fixed_ids or not mob.submobjects):
+                        self._root_paint(cam, roots, idx, mob, angle,
+                                         fixed_ids, cam_images,
+                                         skip_family)()
+                    else:
+                        self._paint_root_cached(cam, roots, idx, mob, angle,
+                                                fixed_ids, cam_images,
+                                                skip_family)
                     continue
                 if walk and idx not in cam_images and id(mob) not in fixed_ids:
                     self._skip_family_ids = skip_family

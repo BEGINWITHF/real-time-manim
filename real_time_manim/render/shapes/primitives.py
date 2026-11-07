@@ -1,10 +1,31 @@
 """The four convex primitives: square, rectangle, ellipse and circle."""
 
+import ctypes
 import math
+
 import numpy as np
+from real_time_manim.camera_state import get_viewport
 from real_time_manim.render.util import (manim_to_screen, get_stroke_w,
                                          get_opacity, point_path_bounds,
                                          path_center, curve_segments)
+
+
+_UNIT_CIRCLE = {}
+
+
+def _unit_circle(segs):
+    """Cached ``(cos, sin)`` for the segs+1 points of a full ring.
+
+    Built with ``math.cos`` so the values are bit-identical to the per-point
+    loop it replaces.
+    """
+    cached = _UNIT_CIRCLE.get(segs)
+    if cached is None:
+        angles = [2.0 * math.pi * j / segs for j in range(segs + 1)]
+        cached = (np.array([math.cos(a) for a in angles], dtype=np.float64),
+                  np.array([math.sin(a) for a in angles], dtype=np.float64))
+        _UNIT_CIRCLE[segs] = cached
+    return cached
 
 
 class PrimitiveMixin:
@@ -14,15 +35,16 @@ class PrimitiveMixin:
         cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
-        about = getattr(mob, '_rotation_about_point', None)
+        about = mob.__dict__.get('_rotation_about_point')
         if about is not None:
             neg_rot = -rot
             dx, dy = cx - about[0], cy - about[1]
             c, sn = math.cos(neg_rot), math.sin(neg_rot)
             cx = about[0] + dx * c - dy * sn
             cy = about[1] + dx * sn + dy * c
-        grow_scale = getattr(mob, '_grow_scale', 1.0)
-        grow_pt = getattr(mob, '_grow_point', None)
+        _ch = mob.__dict__
+        grow_scale = _ch.get('_grow_scale', 1.0)
+        grow_pt = _ch.get('_grow_point')
         if grow_scale != 1.0 and grow_pt is not None:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
@@ -88,15 +110,16 @@ class PrimitiveMixin:
         cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
-        about = getattr(mob, '_rotation_about_point', None)
+        about = mob.__dict__.get('_rotation_about_point')
         if about is not None:
             neg_rot = -rot
             dx, dy = cx - about[0], cy - about[1]
             c, sn = math.cos(neg_rot), math.sin(neg_rot)
             cx = about[0] + dx * c - dy * sn
             cy = about[1] + dx * sn + dy * c
-        grow_scale = getattr(mob, '_grow_scale', 1.0)
-        grow_pt = getattr(mob, '_grow_point', None)
+        _ch = mob.__dict__
+        grow_scale = _ch.get('_grow_scale', 1.0)
+        grow_pt = _ch.get('_grow_point')
         if grow_scale != 1.0 and grow_pt is not None:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
@@ -161,15 +184,16 @@ class PrimitiveMixin:
         cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
-        about = getattr(mob, '_rotation_about_point', None)
+        about = mob.__dict__.get('_rotation_about_point')
         if about is not None:
             neg_rot = -rot
             dx, dy = cx - about[0], cy - about[1]
             c, sn = math.cos(neg_rot), math.sin(neg_rot)
             cx = about[0] + dx * c - dy * sn
             cy = about[1] + dx * sn + dy * c
-        grow_scale = getattr(mob, '_grow_scale', 1.0)
-        grow_pt = getattr(mob, '_grow_point', None)
+        _ch = mob.__dict__
+        grow_scale = _ch.get('_grow_scale', 1.0)
+        grow_pt = _ch.get('_grow_point')
         if grow_scale != 1.0 and grow_pt is not None:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
@@ -294,6 +318,28 @@ class PrimitiveMixin:
 
     @staticmethod
     def _circle_round_radius(mob):
+        """Cached :meth:`_circle_round_radius_uncached` for one mobject.
+
+        The roundness test samples every cubic, which is pure waste for the
+        same static Circle on every frame.  Compare the full point array (a
+        few hundred bytes) before recomputing; any in-place or reassigned
+        transform invalidates it.
+        """
+        try:
+            pts = getattr(mob, "points", None)
+            if pts is None or len(pts) < 4:
+                return None
+            cached = getattr(mob, "_rtm_round_cache", None)
+            if cached is not None and np.array_equal(cached[0], pts):
+                return cached[1]
+            r = PrimitiveMixin._circle_round_radius_uncached(pts)
+            mob._rtm_round_cache = (np.array(pts, copy=True), r)
+            return r
+        except Exception:
+            return None
+
+    @staticmethod
+    def _circle_round_radius_uncached(pts):
         """The shared anchor radius while the path still IS one circle, else None.
 
         `_send_circle` strokes a native disc from ONE radius, which is only
@@ -335,7 +381,6 @@ class PrimitiveMixin:
         ``points[0] == points[-1]`` (`[0, 1]` above: 8 anchors, closed).
         """
         try:
-            pts = getattr(mob, "points", None)
             if pts is None or len(pts) < 4:
                 return None
             anchors = np.asarray(pts[0::4], dtype=float)
@@ -368,19 +413,77 @@ class PrimitiveMixin:
         except Exception:
             return None
 
+    @staticmethod
+    def _circle_state(mob, a, w, h, rot, parent_offset):
+        """Everything that can change `_send_circle`'s native calls."""
+        pts = mob.points
+        frgbas = mob.__dict__.get('fill_rgbas')
+        srgbas = mob.__dict__.get('stroke_rgbas')
+        sw = mob.__dict__.get('stroke_width')
+        if isinstance(sw, (int, float)):
+            swk = float(sw)
+        else:
+            try:
+                swk = np.asarray(sw).tobytes()
+            except Exception:
+                swk = repr(sw)
+        vp = get_viewport()
+        gp = mob.__dict__.get('_grow_point')
+        return (
+            pts.shape, pts.tobytes(),
+            None if frgbas is None else (frgbas.shape, frgbas.tobytes()),
+            None if srgbas is None else (srgbas.shape, srgbas.tobytes()),
+            swk, float(a), float(rot),
+            None if parent_offset is None
+            else tuple(float(v) for v in parent_offset),
+            w, h,
+            None if vp is None
+            else (vp.center, vp.height, vp.unit_height,
+                  None if vp.rotation is None
+                  else np.asarray(vp.rotation, dtype=float).tobytes(),
+                  vp.frame_center, vp.focal_distance, vp.exponential),
+            mob.__dict__.get('_grow_scale', 1.0),
+            None if gp is None else tuple(float(v) for v in gp),
+            mob.__dict__.get('_rotation_about_point') is not None,
+            mob.__dict__.get('_vulkan_progress', 1.0),
+            mob.__dict__.get('_vulkan_progress_upper'),
+            mob.__dict__.get('_vulkan_progress_lower'),
+            mob.__dict__.get('_vulkan_points_partial', False),
+        )
+
+    def _replay_circle(self, payload):
+        (sx, sy, sr, fr, fg, fb, fill_alpha, progress,
+         layers, coords, n, cr, cg, cb) = payload
+        dll = self.dll
+        dll.AddCircle(sx, sy, sr, fr, fg, fb, 0, 0, 0, 0.0, progress,
+                      fill_alpha)
+        for _w, _al in layers:
+            dll.AddLineStrip(coords, None, n, _w, cr, cg, cb, _al)
+
     def _send_circle(self, mob, a, w, h, rot, parent_offset=None):
+        sig = None
+        try:
+            sig = self._circle_state(mob, a, w, h, rot, parent_offset) + (
+                id(self.dll),)
+            cached = mob.__dict__.get('_rtm_circle_cache')
+            if cached is not None and cached[0] == sig:
+                self._replay_circle(cached[1])
+                return
+        except Exception:
+            sig = None
         cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
-        about = getattr(mob, '_rotation_about_point', None)
+        about = mob.__dict__.get('_rotation_about_point')
         if about is not None:
             neg_rot = -rot
             dx, dy = cx - about[0], cy - about[1]
             c, sn = math.cos(neg_rot), math.sin(neg_rot)
             cx = about[0] + dx * c - dy * sn
             cy = about[1] + dx * sn + dy * c
-        grow_scale = getattr(mob, '_grow_scale', 1.0)
-        grow_pt = getattr(mob, '_grow_point', None)
+        _ch = mob.__dict__
+        grow_scale = _ch.get('_grow_scale', 1.0)
+        grow_pt = _ch.get('_grow_point')
         if grow_scale != 1.0 and grow_pt is not None:
             cx = grow_pt[0] + (cx - grow_pt[0]) * grow_scale
             cy = grow_pt[1] + (cy - grow_pt[1]) * grow_scale
@@ -404,7 +507,8 @@ class PrimitiveMixin:
         if progress <= 0:
             return
         fr, fg, fb = self._fill_color(mob)
-        self.dll.AddCircle(float(sx), float(sy), float(sr), fr, fg, fb, 0, 0, 0, 0.0, progress, a * fo)
+        fill_alpha = a * fo
+        self.dll.AddCircle(float(sx), float(sy), float(sr), fr, fg, fb, 0, 0, 0, 0.0, progress, fill_alpha)
         sw_manim = get_stroke_w(mob)
         if so > 0 and sw_manim > 0:
             cr, cg, cb = self._stroke_color(mob)
@@ -419,28 +523,52 @@ class PrimitiveMixin:
             # was a 48-gon with a 4.6 px sagitta.  48 at the default zoom, so an
             # unzoomed frame is unchanged.
             segs = curve_segments(sr)
-            circumference = 2.0 * math.pi * sr
-            drawn = circumference * progress
-            accumulated = 0.0
-            prev_angle_rad = rot
-            pts = [
-                sx + math.cos(prev_angle_rad) * sr,
-                sy - math.sin(prev_angle_rad) * sr,
-            ]
-            for j in range(1, segs + 1):
-                if accumulated >= drawn:
-                    break
-                cur_angle_rad = rot + 2.0 * math.pi * j / segs
-                px = sx + math.cos(cur_angle_rad) * sr
-                py = sy - math.sin(cur_angle_rad) * sr
-                seg_len = math.sqrt((px - pts[-2]) ** 2 + (py - pts[-1]) ** 2)
-                if accumulated + seg_len <= drawn:
-                    pts.append(px); pts.append(py)
-                    accumulated += seg_len
-                else:
-                    frac = (drawn - accumulated) / seg_len if seg_len > 0 else 0
-                    pts.append(pts[-2] + (px - pts[-2]) * frac)
-                    pts.append(pts[-1] + (py - pts[-1]) * frac)
-                    accumulated = drawn
-            # One strip, not segs separate quads: see _emit_stroke_strip.
-            self._emit_stroke_strip(pts, sw, cr, cg, cb, a)
+            if progress >= 1.0 - 1e-12 and rot == 0.0:
+                # Full, unrotated ring: use the cached unit circle instead of
+                # 2*segs trig calls and a Python list per frame.
+                c, s = _unit_circle(segs)
+                xy = np.empty((segs + 1, 2), dtype=np.float32)
+                xy[:, 0] = sx + c * sr
+                xy[:, 1] = sy - s * sr
+                coords = (ctypes.c_float * (len(xy) * 2)).from_buffer_copy(
+                    np.ascontiguousarray(xy, dtype=np.float32))
+                layers = list(self._stroke_layers(sw, a))
+                for _w, _al in layers:
+                    self.dll.AddLineStrip(coords, None, len(xy), _w,
+                                          cr, cg, cb, _al)
+                if sig is not None:
+                    try:
+                        mob._rtm_circle_cache = (
+                            sig,
+                            (float(sx), float(sy), float(sr), fr, fg, fb,
+                             float(fill_alpha), float(progress), layers,
+                             coords, len(xy), cr, cg, cb),
+                        )
+                    except Exception:
+                        pass
+            else:
+                circumference = 2.0 * math.pi * sr
+                drawn = circumference * progress
+                accumulated = 0.0
+                prev_angle_rad = rot
+                pts = [
+                    sx + math.cos(prev_angle_rad) * sr,
+                    sy - math.sin(prev_angle_rad) * sr,
+                ]
+                for j in range(1, segs + 1):
+                    if accumulated >= drawn:
+                        break
+                    cur_angle_rad = rot + 2.0 * math.pi * j / segs
+                    px = sx + math.cos(cur_angle_rad) * sr
+                    py = sy - math.sin(cur_angle_rad) * sr
+                    seg_len = math.sqrt((px - pts[-2]) ** 2 + (py - pts[-1]) ** 2)
+                    if accumulated + seg_len <= drawn:
+                        pts.append(px); pts.append(py)
+                        accumulated += seg_len
+                    else:
+                        frac = (drawn - accumulated) / seg_len if seg_len > 0 else 0
+                        pts.append(pts[-2] + (px - pts[-2]) * frac)
+                        pts.append(pts[-1] + (py - pts[-1]) * frac)
+                        accumulated = drawn
+                # One strip, not segs separate quads: see _emit_stroke_strip.
+                self._emit_stroke_strip(pts, sw, cr, cg, cb, a)

@@ -3,6 +3,7 @@
 import ctypes
 import math
 import numpy as np
+from real_time_manim.camera_state import get_viewport
 from real_time_manim.render.util import (manim_to_screen, get_opacity,
                                          point_path_bounds, path_center)
 
@@ -46,8 +47,9 @@ class ArrowMixin:
         except Exception:
             e_line = e.copy()
             s_line = s.copy()
-        grow_scale = getattr(mob, '_grow_scale', 1.0)
-        grow_pt = getattr(mob, '_grow_point', None)
+        _ch = mob.__dict__
+        grow_scale = _ch.get('_grow_scale', 1.0)
+        grow_pt = _ch.get('_grow_point', None)
         if grow_scale != 1.0 and grow_pt is not None:
             gp = np.array(grow_pt, dtype=float)
             s = gp + (s - gp) * grow_scale
@@ -58,7 +60,7 @@ class ArrowMixin:
             off = np.array(parent_offset, dtype=float)
             s = s + off; e = e + off; e_line = e_line + off
             s_line = s_line + off
-        about = getattr(mob, '_rotation_about_point', None)
+        about = mob.__dict__.get('_rotation_about_point')
         if about is not None:
             pivot = np.array(about, dtype=float)
             neg_rot = -rot
@@ -291,7 +293,7 @@ class ArrowMixin:
             tip._grow_point = pg_gp
         try:
             if rot_orig != 0.0:
-                about = getattr(mob, '_rotation_about_point', None)
+                about = mob.__dict__.get('_rotation_about_point')
                 centre = np.array(
                     about if about is not None else path_center(mob),
                     dtype=float)
@@ -324,7 +326,65 @@ class ArrowMixin:
                     else:
                         setattr(tip, _attr, _value)
 
+    @staticmethod
+    def _line_state(mob, a, w, h, rot, parent_offset):
+        """Everything that can change `_send_line`'s native calls."""
+        pts = mob.points
+        srgbas = mob.__dict__.get('stroke_rgbas')
+        sw = mob.__dict__.get('stroke_width')
+        if isinstance(sw, (int, float)):
+            swk = float(sw)
+        else:
+            try:
+                swk = np.asarray(sw).tobytes()
+            except Exception:
+                swk = repr(sw)
+        vp = get_viewport()
+        gp = mob.__dict__.get('_grow_point')
+        return (
+            pts.shape, pts.tobytes(),
+            None if srgbas is None else (srgbas.shape, srgbas.tobytes()),
+            swk, float(a), float(rot),
+            None if parent_offset is None
+            else tuple(float(v) for v in parent_offset),
+            w, h,
+            None if vp is None
+            else (vp.center, vp.height, vp.unit_height,
+                  None if vp.rotation is None
+                  else np.asarray(vp.rotation, dtype=float).tobytes(),
+                  vp.frame_center, vp.focal_distance, vp.exponential),
+            mob.__dict__.get('_grow_scale', 1.0),
+            None if gp is None else tuple(float(v) for v in gp),
+            mob.__dict__.get('_rotation_about_point') is not None,
+            getattr(mob, 'cap_style', None),
+            mob.__dict__.get('_vulkan_progress', 1.0),
+            mob.__dict__.get('_vulkan_progress_upper'),
+            mob.__dict__.get('_vulkan_progress_lower'),
+            mob.__dict__.get('_vulkan_points_partial', False),
+        )
+
+    def _replay_line(self, payload):
+        (startx, starty, endx, endy, r, g, b, layers,
+         round_caps, caps, half, alpha) = payload
+        dll = self.dll
+        for _w, _al in layers:
+            dll.AddLine(startx, starty, endx, endy, _w, r, g, b, _al)
+        if round_caps:
+            for cx, cy in caps:
+                dll.AddCircle(float(cx), float(cy), half, int(r), int(g),
+                              int(b), 0, 0, 0, 0.0, 1.0, alpha)
+
     def _send_line(self, mob, a, w, h, rot, parent_offset=None):
+        sig = None
+        try:
+            sig = self._line_state(mob, a, w, h, rot, parent_offset) + (
+                id(self.dll),)
+            cached = mob.__dict__.get('_rtm_line_cache')
+            if cached is not None and cached[0] == sig:
+                self._replay_line(cached[1])
+                return
+        except Exception:
+            sig = None
         # The endpoints must come from the path itself.  `TipableVMobject`
         # (Line, NumberLine, anything with an arrowhead) overrides `get_end()`
         # to answer with the *tip submobject's* start -- a point that stays out
@@ -346,8 +406,9 @@ class ArrowMixin:
         else:
             s = np.array(mob.get_start(), dtype=float)
             e = np.array(mob.get_end(), dtype=float)
-        grow_scale = getattr(mob, '_grow_scale', 1.0)
-        grow_pt = getattr(mob, '_grow_point', None)
+        _ch = mob.__dict__
+        grow_scale = _ch.get('_grow_scale', 1.0)
+        grow_pt = _ch.get('_grow_point', None)
         if grow_scale != 1.0 and grow_pt is not None:
             gp = np.array(grow_pt, dtype=float)
             s = gp + (s - gp) * grow_scale
@@ -355,7 +416,7 @@ class ArrowMixin:
         if parent_offset is not None:
             off = np.array(parent_offset, dtype=float)
             s = s + off; e = e + off
-        about = getattr(mob, '_rotation_about_point', None)
+        about = mob.__dict__.get('_rotation_about_point')
         # True in the pivot branch: the manim-space turn below already IS the
         # whole rotation, so the shared screen-space `_rotate_point` tail must
         # not run again on top of it.  `_send_arrow` has always stopped at the
@@ -509,13 +570,26 @@ class ArrowMixin:
                 line_end = (ex - ux * half, ey - uy * half)
             else:
                 line_start = line_end = ((sx1 + ex) * 0.5, (sy1 + ey) * 0.5)
-        self._emit_stroke(line_start[0], line_start[1],
-                          line_end[0], line_end[1], px, r, g, b, a)
-        if cap_name == 'ROUND':
+        layers = list(self._stroke_layers(px, a))
+        for _w, _al in layers:
+            self.dll.AddLine(line_start[0], line_start[1],
+                             line_end[0], line_end[1], _w, r, g, b, _al)
+        round_caps = cap_name == 'ROUND'
+        caps = ((sx1, sy1), (ex, ey)) if round_caps else ()
+        if round_caps:
             try:
-                for cx, cy in ((sx1, sy1), (ex, ey)):
+                for cx, cy in caps:
                     self.dll.AddCircle(float(cx), float(cy), half,
                                        int(r), int(g), int(b),
                                        0, 0, 0, 0.0, 1.0, a)
+            except Exception:
+                pass
+        if sig is not None:
+            try:
+                mob._rtm_line_cache = (
+                    sig,
+                    (line_start[0], line_start[1], line_end[0], line_end[1],
+                     r, g, b, layers, round_caps, caps, half, a),
+                )
             except Exception:
                 pass
