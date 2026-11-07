@@ -1318,7 +1318,7 @@ class PaintMixin:
             return True
         return bool(mob.has_points())
 
-    def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False, _skip_children=False):
+    def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False, _skip_children=False, _batch=None):
         w, h = self.win_w, self.win_h
         own_alpha = get_anim_opacity(mob)
         a = parent_alpha * own_alpha
@@ -1418,6 +1418,7 @@ class PaintMixin:
                                    parent_transforming=parent_transforming,
                                    parent_is_text=parent_is_text),
                 mob,
+                batch=_batch,
             )
             return
 
@@ -1657,7 +1658,13 @@ class PaintMixin:
                 # so animations like Indicate that set these on the VGroup correctly
                 # scale individual characters/text pieces.
                 need_gs, need_gp = lend_grow(mob, sub)
-                self._send(sub, sub_rot, parent_alpha=effective_alpha, parent_offset=effective_sub_offset, parent_transforming=getattr(mob, '_transforming', False) or parent_transforming, parent_is_text=is_text)
+                _b = None
+                if (collect is not None and effective_sub_offset is None
+                        and sub_rot == 0.0 and not sub_is_text
+                        and not getattr(mob, '_transforming', False)
+                        and self._batch_quad_ok(sub)):
+                    _b = ('quad', float(effective_alpha))
+                self._send(sub, sub_rot, parent_alpha=effective_alpha, parent_offset=effective_sub_offset, parent_transforming=getattr(mob, '_transforming', False) or parent_transforming, parent_is_text=is_text, _batch=_b)
                 release_grow(getattr(self, '_paint_queue', None), sub,
                              need_gs, need_gp)
             return
@@ -1677,9 +1684,14 @@ class PaintMixin:
                 # one by one and must inherit the state (the loan is dropped
                 # when the queue flushes).
                 need_gs, need_gp = lend_grow(mob, sub)
+                _b = None
+                if (parent_offset is None and rot == 0.0
+                        and not parent_transforming
+                        and self._batch_quad_ok(sub)):
+                    _b = ('quad', float(a))
                 self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
                            parent_transforming=parent_transforming,
-                           parent_is_text=is_text)
+                           parent_is_text=is_text, _batch=_b)
                 release_grow(collect, sub, need_gs, need_gp)
             return
 

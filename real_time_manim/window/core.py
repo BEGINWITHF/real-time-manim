@@ -604,7 +604,8 @@ class CoreMixin:
         # per-root depth key, tuple, sort and lambda of the queue; with 10k
         # leaves that fixed cost was a measurable slice of the frame.
         direct = not walk
-        queue = None if direct else _PaintQueue(viewport, index, z_mode)
+        queue = (None if direct
+                 else _PaintQueue(viewport, index, z_mode, owner=self))
         saved_queue = getattr(self, "_paint_queue", None)
         self._paint_queue = None if direct else queue
         batch_until = 0

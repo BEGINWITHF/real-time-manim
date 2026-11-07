@@ -91,19 +91,22 @@ class _PaintQueue:
     member wins).  The visit counter only ranks units the map does not know.
     """
 
-    __slots__ = ("viewport", "units", "_seq", "index", "z_mode", "cleanup")
+    __slots__ = ("viewport", "units", "_seq", "index", "z_mode", "cleanup",
+                 "owner")
 
-    def __init__(self, viewport=None, index=None, z_mode=False):
+    def __init__(self, viewport=None, index=None, z_mode=False, owner=None):
         self.viewport = viewport
-        # (depth key, z_index, family pre-order, visit order, paint callback)
+        # (depth key, z_index, family pre-order, visit order, paint callback,
+        #  batch descriptor, mob)
         self.units = []
         self._seq = 0
         self.index = index if index is not None else {}
         self.z_mode = bool(z_mode)
         # (mobject, drop _grow_scale, drop _grow_point) undone after the paint
         self.cleanup = []
+        self.owner = owner
 
-    def add(self, key, paint, mob=None):
+    def add(self, key, paint, mob=None, batch=None):
         seq = self._seq
         self._seq = seq + 1
         if mob is None:
@@ -117,14 +120,27 @@ class _PaintQueue:
             # Outside the map: rank after everything the map does know, in the
             # order the walk met it.
             fam = len(self.index) + seq
-        self.units.append((float(key), z, int(fam), seq, paint))
+        self.units.append((float(key), z, int(fam), seq, paint, batch, mob))
 
     def flush(self):
         units = sorted(self.units, key=lambda unit: unit[:4])
         del self.units[:]
         try:
-            for *_keys, paint in units:
-                paint()
+            i = 0
+            n_units = len(units)
+            while i < n_units:
+                batch = units[i][5]
+                if batch is not None and self.owner is not None:
+                    j = i + 1
+                    while j < n_units and units[j][5] == batch:
+                        j += 1
+                    if j - i >= 4:
+                        self.owner._send_quad_batch(
+                            [units[k][6] for k in range(i, j)], batch[1])
+                        i = j
+                        continue
+                units[i][4]()
+                i += 1
         finally:
             cleanup, self.cleanup = self.cleanup, []
             for sub, drop_gs, drop_gp in cleanup:
