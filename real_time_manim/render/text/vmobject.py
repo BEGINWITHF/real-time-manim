@@ -43,6 +43,75 @@ def _black_fill_is_real(mob):
         pass
     return False
 
+_MITRE_SMALL = 128
+
+
+def _mitre_room_filter_small(pts, half_w):
+    """Scalar repair for short paths (the pre-vectorisation algorithm).
+
+    A glyph, a quad or a small circle has a few dozen joins at most, so the
+    numpy setup below costs more than the scan itself.  Used by
+    :func:`_mitre_room_filter` below the ``_MITRE_SMALL`` cutoff; the result is
+    exactly the same as the vectorised version.
+    """
+    if len(pts) < 3:
+        return pts
+    pts = list(pts)
+    closed = (abs(pts[0][0] - pts[-1][0]) < 1e-3 and
+              abs(pts[0][1] - pts[-1][1]) < 1e-3)
+    if closed:
+        pts = pts[:-1]
+    m = len(pts)
+    if m < 3:
+        return pts + ([pts[0]] if closed else [])
+
+    def run_len(i, j):
+        return math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1])
+
+    def room(i):
+        if not closed and (i == 0 or i == m - 1):
+            return 0.0
+        ip = (i - 1) % m
+        iN = (i + 1) % m
+        ax = pts[i][0] - pts[ip][0]
+        ay = pts[i][1] - pts[ip][1]
+        bx = pts[iN][0] - pts[i][0]
+        by = pts[iN][1] - pts[i][1]
+        la = math.hypot(ax, ay)
+        lb = math.hypot(bx, by)
+        if la < 1e-9 or lb < 1e-9:
+            return 0.0
+        c = (ax * bx + ay * by) / (la * lb)
+        if c < -0.875:
+            return 0.0
+        return half_w * math.sqrt(max(0.0, (1.0 - c) / (1.0 + c)))
+
+    turns = 0
+    while turns < 64 and m > 3:
+        turns += 1
+        did = False
+        for i in range(m if closed else m - 1):
+            j = (i + 1) % m
+            need = room(i) + room(j)
+            if need <= 0.0 or run_len(i, j) >= need:
+                continue
+            if not (closed or i > 0):
+                drop = j
+            elif not (closed or j < m - 1):
+                drop = i
+            else:
+                drop = j if room(j) < room(i) else i
+            pts.pop(drop)
+            m -= 1
+            did = True
+            break
+        if not did:
+            break
+    if closed and m >= 2:
+        pts.append(pts[0])
+    return pts
+
+
 def _mitre_room_filter(pts, half_w):
     """Drop the vertices that leave a corner's mitre cut without room.
 
@@ -65,6 +134,9 @@ def _mitre_room_filter(pts, half_w):
     ``pts`` is a list of (x, y) screen-space points; a closed outline
     (first == last) is treated cyclically and re-closed on return.
     """
+    if len(pts) < _MITRE_SMALL:
+        return _mitre_room_filter_small(
+            pts.tolist() if isinstance(pts, np.ndarray) else pts, half_w)
     if len(pts) < 3:
         return pts
     # `_submit_flat_stroke` already has the path as an (n, 2) array.  Keep it
@@ -242,7 +314,10 @@ def _submit_flat_stroke(self, flat, n, progress_lower, progress_upper,
     endpoints, so one vector pass produces the same geometry.
     """
     seg_count = n // 4
-    if seg_count < 1 or progress_lower > 1e-9 or progress_upper < 1.0 - 1e-9:
+    if seg_count < 256 or progress_lower > 1e-9 or progress_upper < 1.0 - 1e-9:
+        # The vector setup is per-mobject, not per-point: a five-point quad
+        # cost ~140 us in numpy while the scalar walk below draws it in a
+        # fraction of that.  Only dense flat paths take the array path.
         return False
     arr = np.ctypeslib.as_array(flat).reshape(-1, 3)[:seg_count * 4]
     p0 = arr[0::4, :2].astype(np.float64)
