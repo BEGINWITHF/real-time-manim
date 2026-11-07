@@ -5,6 +5,7 @@ vector path ends up in; `_mitre_room_filter` trims the mitre overhang
 before the points reach native."""
 
 import ctypes
+import heapq
 import math
 
 import numpy as np
@@ -66,64 +67,53 @@ def _mitre_room_filter(pts, half_w):
     """
     if len(pts) < 3:
         return pts
-    pts = list(pts)
-    closed = (abs(pts[0][0] - pts[-1][0]) < 1e-3 and
-              abs(pts[0][1] - pts[-1][1]) < 1e-3)
+    # `_submit_flat_stroke` already has the path as an (n, 2) array.  Keep it
+    # in numpy end to end: converting it to a list of row views and back cost
+    # ~10 ms/frame on an 8000-point 3D path, more than the repair itself.
+    array_in = isinstance(pts, np.ndarray)
+    if array_in:
+        xy = np.asarray(pts, dtype=np.float64)
+        closed = (len(xy) >= 3 and
+                  abs(xy[0, 0] - xy[-1, 0]) < 1e-3 and
+                  abs(xy[0, 1] - xy[-1, 1]) < 1e-3)
+        if closed:
+            xy = xy[:-1]
+        m = len(xy)
+        if m < 3:
+            return pts if not closed else np.vstack([xy, xy[:1]])
+    else:
+        pts = list(pts)
+        closed = (abs(pts[0][0] - pts[-1][0]) < 1e-3 and
+                  abs(pts[0][1] - pts[-1][1]) < 1e-3)
+        if closed:
+            pts = pts[:-1]
+        m = len(pts)
+        if m < 3:
+            return pts + ([pts[0]] if closed else [])
+        xy = np.asarray(pts, dtype=np.float64)
+    n = len(xy)
+    idx_next = np.arange(1, n + 1, dtype=np.int64)
+    idx_prev = np.arange(-1, n - 1, dtype=np.int64)
     if closed:
-        pts = pts[:-1]
-    m = len(pts)
-    if m < 3:
-        return pts + ([pts[0]] if closed else [])
+        idx_next[-1] = 0
+        idx_prev[0] = n - 1
+    else:
+        idx_next[-1] = -1
 
-    # Dense paths are mostly straight, short chords: every corner already has
-    # room, but the scalar loop below still calls room() twice per edge and is
-    # O(n) per rescan (and O(n^2) if any merge happens).  Check the whole path
-    # with one vectorised pass first; only take the repair loop when a short
-    # run actually needs its neighbours merged.
-    try:
-        ring = np.asarray(pts[:-1] if closed else pts, dtype=np.float64)
-        if len(ring) >= 3:
-            prev = np.roll(ring, 1, axis=0)
-            nxt = np.roll(ring, -1, axis=0)
-            ax = ring[:, 0] - prev[:, 0]
-            ay = ring[:, 1] - prev[:, 1]
-            bx = nxt[:, 0] - ring[:, 0]
-            by = nxt[:, 1] - ring[:, 1]
-            la = np.hypot(ax, ay)
-            lb = np.hypot(bx, by)
-            denom = la * lb
-            cosang = np.zeros(len(ring), dtype=np.float64)
-            valid = (la > 1e-9) & (lb > 1e-9)
-            cosang[valid] = (ax[valid] * bx[valid] +
-                             ay[valid] * by[valid]) / denom[valid]
-            room = np.zeros(len(ring), dtype=np.float64)
-            mask = cosang > -0.875
-            room[mask] = half_w * np.sqrt(
-                np.maximum(0.0, (1.0 - cosang[mask]) /
-                           (1.0 + cosang[mask])))
-            if not closed:
-                room[0] = 0.0
-                room[-1] = 0.0
-            run = np.hypot(ring[1:, 0] - ring[:-1, 0],
-                           ring[1:, 1] - ring[:-1, 1])
-            if np.all(run >= room[:-1] + room[1:]):
-                return pts
-    except Exception:
-        pass
-
-    def run_len(i, j):
-        return math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1])
-
-    def room(i):
+    def _room(i):
         """Axial mitre room the corner at vertex i demands of its runs."""
-        if not closed and (i == 0 or i == m - 1):
+        if i < 0:
+            return 0.0
+        if not closed and (i == 0 or i == n - 1):
             return 0.0                    # open end: plain cap, no room
-        ip = (i - 1) % m
-        iN = (i + 1) % m
-        ax = pts[i][0] - pts[ip][0]
-        ay = pts[i][1] - pts[ip][1]
-        bx = pts[iN][0] - pts[i][0]
-        by = pts[iN][1] - pts[i][1]
+        ip = int(idx_prev[i])
+        iN = int(idx_next[i])
+        if ip < 0 or iN < 0:
+            return 0.0
+        ax = xy[i, 0] - xy[ip, 0]
+        ay = xy[i, 1] - xy[ip, 1]
+        bx = xy[iN, 0] - xy[i, 0]
+        by = xy[iN, 1] - xy[i, 1]
         la = math.hypot(ax, ay)
         lb = math.hypot(bx, by)
         if la < 1e-9 or lb < 1e-9:
@@ -135,38 +125,107 @@ def _mitre_room_filter(pts, half_w):
             return 0.0
         return half_w * math.sqrt(max(0.0, (1.0 - c) / (1.0 + c)))
 
+    ip_safe = np.where(idx_prev >= 0, idx_prev, 0)
+    iN_safe = np.where(idx_next >= 0, idx_next, 0)
+    ax = xy[:, 0] - xy[ip_safe, 0]
+    ay = xy[:, 1] - xy[ip_safe, 1]
+    bx = xy[iN_safe, 0] - xy[:, 0]
+    by = xy[iN_safe, 1] - xy[:, 1]
+    la = np.hypot(ax, ay)
+    lb = np.hypot(bx, by)
+    cosang = np.zeros(n, dtype=np.float64)
+    valid = (la > 1e-9) & (lb > 1e-9)
+    cosang[valid] = ((ax[valid] * bx[valid] + ay[valid] * by[valid]) /
+                     (la[valid] * lb[valid]))
+    room = np.zeros(n, dtype=np.float64)
+    mask = valid & (cosang > -0.875)
+    room[mask] = half_w * np.sqrt(
+        np.maximum(0.0, (1.0 - cosang[mask]) / (1.0 + cosang[mask])))
+    if not closed:
+        room[0] = 0.0
+        room[-1] = 0.0
+
+    run = np.hypot(xy[iN_safe, 0] - xy[:, 0], xy[iN_safe, 1] - xy[:, 1])
+    need = room + room[iN_safe]
+    bad = (idx_next >= 0) & (need > 0.0) & (run < need)
+    if not np.any(bad):
+        if array_in:
+            return pts
+        return pts + ([pts[0]] if closed else [])
+
+    alive = np.ones(n, dtype=bool)
+    heap = [int(i) for i in np.flatnonzero(bad)]
+    heapq.heapify(heap)
+
     turns = 0
-    while turns < 64 and m > 3:
+    while heap and turns < 64 and m > 3:
+        i = heapq.heappop(heap)
+        if not alive[i]:
+            continue
+        j = int(idx_next[i])
+        if j < 0:
+            continue
+        need = room[i] + room[j]
+        if need <= 0.0:
+            continue
+        if math.hypot(xy[j, 0] - xy[i, 0], xy[j, 1] - xy[i, 1]) >= need:
+            continue
+        # Run (i, j) is too short for its two cuts: merge it into the
+        # neighbouring run whose own corner demands less, i.e. delete the
+        # vertex between the two runs -- never an open end.
+        if not closed and i == 0:
+            drop = j
+        elif not closed and j == n - 1:
+            drop = i
+        else:
+            # Delete the FLATTER of the two endpoints -- the vertex whose own
+            # corner demands less room.  Choosing by run length alone deleted
+            # the sharp corner itself whenever the run beyond it happened to
+            # be the shorter one, replacing a mitre-able 66 deg chart peak
+            # with a 5 px chamfer.
+            drop = j if room[j] < room[i] else i
+        p = int(idx_prev[drop])
+        q = int(idx_next[drop])
+        idx_next[p] = q
+        idx_prev[q] = p
+        alive[drop] = False
+        m -= 1
         turns += 1
-        did = False
-        for i in range(m if closed else m - 1):
-            j = (i + 1) % m
-            need = room(i) + room(j)
-            if need <= 0.0 or run_len(i, j) >= need:
-                continue
-            # Run (i, j) is too short for its two cuts: merge it into the
-            # neighbouring run whose own corner demands less, i.e. delete
-            # the vertex between the two runs -- never an open end.
-            if not (closed or i > 0):
-                drop = j
-            elif not (closed or j < m - 1):
-                drop = i
-            else:
-                # Delete the FLATTER of the two endpoints -- the vertex
-                # whose own corner demands less room.  Choosing by run
-                # length alone (the old `drop = i if li <= lj else j`)
-                # deleted the sharp corner itself whenever the run beyond
-                # it happened to be the shorter one, replacing a mitre-
-                # able 66 deg chart peak with a 5 px chamfer -- the
-                # corner rendered blunt where CE mitres to a point.
-                drop = j if room(j) < room(i) else i
-            pts.pop(drop)
-            m -= 1
-            did = True
-            break                    # lengths and rooms changed; rescan
-        if not did:
+        room[p] = _room(p)
+        room[q] = _room(q)
+        # Only these three edges changed: (prev(p), p) needs room[p],
+        # (p, q) is new, (q, next(q)) needs room[q].
+        heapq.heappush(heap, p)
+        pp = int(idx_prev[p])
+        if pp >= 0:
+            heapq.heappush(heap, pp)
+        heapq.heappush(heap, q)
+
+    if np.all(alive):
+        if array_in:
+            return pts
+        if closed and len(pts) >= 2:
+            pts.append(pts[0])
+        return pts
+
+    head = 0
+    if closed:
+        while not alive[head]:
+            head += 1
+    order = []
+    i = head
+    while True:
+        order.append(i)
+        i = int(idx_next[i])
+        if i < 0 or i == head:
             break
-    if closed and m >= 2:
+    if array_in:
+        out = xy[order]
+        if closed:
+            out = np.vstack([out, out[:1]])
+        return out
+    pts = [(float(xy[i, 0]), float(xy[i, 1])) for i in order]
+    if closed and len(pts) >= 2:
         pts.append(pts[0])
     return pts
 
@@ -216,10 +275,11 @@ def _submit_flat_stroke(self, flat, n, progress_lower, progress_upper,
         alphas = np.full(len(coords), alpha, dtype=np.float32)
         # ctypes arrays (not a temporary numpy pointer): the DLL copies during
         # the call, but call recorders in tests keep the argument alive and may
-        # read it after `_send` returns.
-        coords_ct = (ctypes.c_float * (len(coords) * 2))(
-            *coords.reshape(-1))
-        alphas_ct = (ctypes.c_float * len(alphas))(*alphas)
+        # read it after `_send` returns.  `from_buffer_copy` copies in C;
+        # splatting every float through `(c_float * n)(*values)` unpacked the
+        # whole path in Python once per frame.
+        coords_ct = (ctypes.c_float * coords.size).from_buffer_copy(coords)
+        alphas_ct = (ctypes.c_float * len(alphas)).from_buffer_copy(alphas)
         self.dll.AddLineStrip(
             coords_ct, alphas_ct,
             len(coords), int(stroke_w), sri, sgi, sbi, 1.0)
