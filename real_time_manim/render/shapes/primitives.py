@@ -2,14 +2,16 @@
 
 import math
 import numpy as np
-from real_time_manim.render.util import manim_to_screen, get_stroke_w, get_opacity, point_path_bounds, curve_segments
+from real_time_manim.render.util import (manim_to_screen, get_stroke_w,
+                                         get_opacity, point_path_bounds,
+                                         path_center, curve_segments)
 
 
 class PrimitiveMixin:
 
 
     def _send_square(self, mob, a, w, h, rot, parent_offset=None):
-        cx, cy, cz = mob.get_center()
+        cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
         about = getattr(mob, '_rotation_about_point', None)
@@ -83,7 +85,7 @@ class PrimitiveMixin:
                     remaining = 0
 
     def _send_rectangle(self, mob, a, w, h, rot, parent_offset=None):
-        cx, cy, cz = mob.get_center()
+        cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
         about = getattr(mob, '_rotation_about_point', None)
@@ -156,7 +158,7 @@ class PrimitiveMixin:
                     remaining = 0
 
     def _send_ellipse(self, mob, a, w, h, rot, parent_offset=None):
-        cx, cy, cz = mob.get_center()
+        cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
         about = getattr(mob, '_rotation_about_point', None)
@@ -255,7 +257,7 @@ class PrimitiveMixin:
         the mobject underwent, which the `radius` attribute does not.
         """
         try:
-            c = np.asarray(mob.get_center(), dtype=float)
+            c = np.asarray(path_center(mob), dtype=float)
             s = np.asarray(mob.get_start(), dtype=float)
             r = float(np.linalg.norm(s[:2] - c[:2]))
             if r > 0.0 and np.isfinite(r):
@@ -277,15 +279,18 @@ class PrimitiveMixin:
         if len(pts) < 4 or radius <= 0.0:
             return False
         centre = np.asarray(centre, dtype=float)[:2]
-        for cubic in pts.reshape(-1, 4, 3):
-            p0, p1, p2, p3 = (cubic[0][:2], cubic[1][:2], cubic[2][:2], cubic[3][:2])
-            for t in (0.25, 0.5, 0.75):
-                u = 1.0 - t
-                b = (u * u * u * p0 + 3.0 * u * u * t * p1
-                     + 3.0 * u * t * t * p2 + t * t * t * p3)
-                if abs(float(np.linalg.norm(b - centre)) - radius) > radius * tol:
-                    return False
-        return True
+        # Evaluate every cubic at t = .25/.5/.75 in one pass.  The scalar
+        # version ran 24 tiny numpy expressions per Circle; a 2000-circle scene
+        # spent ~120 us per shape here.
+        cubics = pts.reshape(-1, 4, 3)[:, :, :2]
+        t = np.array([0.25, 0.5, 0.75], dtype=float)[:, None]
+        u = 1.0 - t
+        b = (u ** 3 * cubics[:, 0][:, None, :]
+             + 3.0 * u ** 2 * t * cubics[:, 1][:, None, :]
+             + 3.0 * u * t ** 2 * cubics[:, 2][:, None, :]
+             + t ** 3 * cubics[:, 3][:, None, :])
+        dist = np.linalg.norm(b - centre, axis=2)
+        return bool(np.all(np.abs(dist - radius) <= radius * tol))
 
     @staticmethod
     def _circle_round_radius(mob):
@@ -364,7 +369,7 @@ class PrimitiveMixin:
             return None
 
     def _send_circle(self, mob, a, w, h, rot, parent_offset=None):
-        cx, cy, cz = mob.get_center()
+        cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]; cy += parent_offset[1]
         about = getattr(mob, '_rotation_about_point', None)

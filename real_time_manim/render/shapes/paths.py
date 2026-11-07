@@ -3,7 +3,8 @@
 import ctypes
 import math
 import numpy as np
-from real_time_manim.render.util import manim_to_screen, get_opacity, point_path_bounds
+from real_time_manim.render.util import (manim_to_screen, get_opacity,
+                                         point_path_bounds, path_center)
 from real_time_manim.animations import get_anim_rotation
 
 # native `MAX_POLYGON_VERTS` (native/shared_types.h): `AddPolygon` refuses a ring
@@ -259,12 +260,12 @@ class PathMixin:
         if progress <= 0:
             return
         try:
-            points = mob.get_points()
+            points = mob.points
         except Exception:
             points = None
         if points is None or len(points) < 4:
             return
-        cx, cy, cz = mob.get_center()
+        cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]
             cy += parent_offset[1]
@@ -433,7 +434,7 @@ class PathMixin:
         self._dbg_emit("POLY-IN", "%s nverts=%s alpha=%s" % (
             type(mob).__name__,
             (len(verts) if verts is not None else None), alpha))
-        cx, cy, cz = mob.get_center()
+        cx, cy, cz = path_center(mob)
         if parent_offset is not None:
             cx += parent_offset[0]
             cy += parent_offset[1]
@@ -506,7 +507,7 @@ class PathMixin:
         cut_path = bool(getattr(mob, "_vulkan_points_partial", False))
         if cut_path:
             try:
-                cut = np.asarray(mob.get_points())
+                cut = np.asarray(mob.points)
             except Exception:
                 cut = None
             if cut is not None and len(cut) >= 4:

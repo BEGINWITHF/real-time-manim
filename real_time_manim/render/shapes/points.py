@@ -2,7 +2,7 @@
 
 import math
 import numpy as np
-from real_time_manim.render.util import manim_to_screen, get_opacity
+from real_time_manim.render.util import manim_to_screen, get_opacity, path_center
 
 
 class PointMixin:
@@ -161,7 +161,7 @@ class PointMixin:
                 cvec = (s + e) / 2.0
                 cx, cy, cz = float(cvec[0]), float(cvec[1]), float(cvec[2])
             else:
-                cx, cy, cz = mob.get_center()
+                cx, cy, cz = path_center(mob)
                 if parent_offset is not None:
                     cx += parent_offset[0]
                     cy += parent_offset[1]
@@ -328,7 +328,7 @@ class PointMixin:
         sx, sy = manim_to_screen(cx, cy, w, h, cz)
         radius = self._dot_radius(mob, h)
         try:
-            points = mob.get_points()
+            points = mob.points
         except Exception:
             return
 

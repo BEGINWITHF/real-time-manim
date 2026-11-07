@@ -3,7 +3,8 @@
 import ctypes
 import math
 import numpy as np
-from real_time_manim.render.util import manim_to_screen, get_opacity, point_path_bounds
+from real_time_manim.render.util import (manim_to_screen, get_opacity,
+                                         point_path_bounds, path_center)
 
 # Distinguishes "this attribute was absent" from "present but None" when a
 # temporary window is put back the way it was found.
@@ -37,7 +38,7 @@ class ArrowMixin:
         # the line itself, exactly like `e_line`; for an ordinary `Arrow` (no
         # tip at its start end) it is `get_start()`, so nothing else changes.
         try:
-            _own = np.asarray(mob.get_points(), dtype=float)
+            _own = np.asarray(mob.points, dtype=float)
             _d = np.linalg.norm(_own - s, axis=1)
             e_line = np.array(_own[int(np.argmax(_d))], dtype=float)
             _d0 = np.linalg.norm(_own - e_line, axis=1)
@@ -79,7 +80,7 @@ class ArrowMixin:
             sx1, sy1 = manim_to_screen(s_line[0], s_line[1], w, h, s_line[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
             sxl, syl = manim_to_screen(e_line[0], e_line[1], w, h, e_line[2])
-            cx, cy, cz = mob.get_center()
+            cx, cy, cz = path_center(mob)
             if parent_offset is not None:
                 cx += parent_offset[0]; cy += parent_offset[1]
             scx, scy = manim_to_screen(cx, cy, w, h, cz)
@@ -127,7 +128,7 @@ class ArrowMixin:
         tip_pts = None
         if tip is not None:
             try:
-                tip_pts = tip.get_points()
+                tip_pts = tip.points
             except Exception:
                 tip_pts = None
         use_real_tip = (tip_pts is not None and len(tip_pts) >= 3
@@ -292,7 +293,7 @@ class ArrowMixin:
             if rot_orig != 0.0:
                 about = getattr(mob, '_rotation_about_point', None)
                 centre = np.array(
-                    about if about is not None else mob.get_center(),
+                    about if about is not None else path_center(mob),
                     dtype=float)
                 tc = np.array(tip.get_center(), dtype=float)
                 d = tc - centre
@@ -336,7 +337,7 @@ class ArrowMixin:
         # only a mobject with no points of its own falls back to the accessors.
         own = None
         try:
-            own = np.asarray(mob.get_points(), dtype=float)
+            own = np.asarray(mob.points, dtype=float)
         except Exception:
             own = None
         if own is not None and len(own) > 0:
@@ -379,7 +380,7 @@ class ArrowMixin:
         else:
             sx1, sy1 = manim_to_screen(s[0], s[1], w, h, s[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
-            cx, cy, cz = mob.get_center()
+            cx, cy, cz = path_center(mob)
             if parent_offset is not None:
                 cx += parent_offset[0]; cy += parent_offset[1]
             scx, scy = manim_to_screen(cx, cy, w, h, cz)
@@ -401,7 +402,7 @@ class ArrowMixin:
         # point path.  Hand those to the point path when a control point leaves
         # the chord by more than ~0.02 manim units (1.2 px at 480p).
         try:
-            _pts = mob.get_points()
+            _pts = mob.points
             if len(_pts) > 2:
                 _dx, _dy = float(e[0] - s[0]), float(e[1] - s[1])
                 _ln = math.hypot(_dx, _dy)

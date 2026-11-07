@@ -24,7 +24,7 @@ from real_time_manim.camera_state import (
 )
 from manim.mobject.text.tex_mobject import MathTexPart
 
-from real_time_manim.render.util import fill_gradient_stops, path_extent
+from real_time_manim.render.util import fill_gradient_stops, path_center, path_extent
 from real_time_manim.window.paint_order import (
     NATIVE_MAX_POLYGON_VERTS,
     container_subs,
@@ -369,7 +369,7 @@ class PaintMixin:
         same reason and belongs on the point path too.
         """
         try:
-            pts = mob.get_points()
+            pts = mob.points
         except Exception:
             return False
         return (pts is not None and len(pts) == 4
@@ -384,7 +384,7 @@ class PaintMixin:
         fill-only (measured against CE: mean|diff| 0.97, RTM's frame blank).
         """
         try:
-            pts = mob.get_points()
+            pts = mob.points
         except Exception:
             return False
         if pts is None or len(pts) < 4:
@@ -721,15 +721,26 @@ class PaintMixin:
             num_subs = len(subs)
             about = getattr(mob, '_rotation_about_point', None)
             is_3d = getattr(mob, '_rotation_3d', False)
-            vgroup_center = np.array(mob.get_center(), dtype=float)
-            try:
-                pts = mob.get_points()
-                original_center = np.array(pts.mean(axis=0) if len(pts) > 0 else mob.get_center(), dtype=float)
-            except Exception:
-                original_center = vgroup_center.copy()
-            offset = vgroup_center - original_center
-            if parent_offset is not None:
-                offset = offset + parent_offset
+            # A container with no geometry of its own (a Surface, most VGroups)
+            # has nothing to shift: its own-points centre equals the family
+            # centre, so its children inherit exactly `parent_offset`.  Skip
+            # the family-wide bounds walk; on a 10k-face Surface the old
+            # `get_center()` here cost ~100 ms/frame.
+            own_pts = mob.points
+            if len(own_pts) == 0:
+                offset = parent_offset
+            else:
+                try:
+                    # `path_center` is `get_center()`'s bounds centre built
+                    # from the family's anchors without Mobject's
+                    # critical-point machinery.
+                    vgroup_center = np.array(path_center(mob), dtype=float)
+                    original_center = np.array(own_pts.mean(axis=0), dtype=float)
+                    offset = vgroup_center - original_center
+                    if parent_offset is not None:
+                        offset = offset + parent_offset
+                except Exception:
+                    offset = parent_offset
             if is_3d:
                 for _i, sub in self._paint_order(mob.family_members_with_points()):
                     if hasattr(sub, 'points') and len(sub.points) > 0:
@@ -876,7 +887,7 @@ class PaintMixin:
             quad_edges_straight = True
             if isinstance(mob, (Square, Rectangle)):
                 try:
-                    quad_edges_straight = self._edges_are_straight(mob.get_points())
+                    quad_edges_straight = self._edges_are_straight(mob.points)
                 except Exception:
                     quad_edges_straight = True
             is_quad_morph = (isinstance(mob, (Square, Rectangle)) and vert_count <= 4
@@ -941,7 +952,7 @@ class PaintMixin:
         _quad_flat = True
         if isinstance(mob, (Square, Rectangle)) and not is_text:
             try:
-                _quad_flat = self._edges_are_straight(mob.get_points())
+                _quad_flat = self._edges_are_straight(mob.points)
             except Exception:
                 _quad_flat = True
             if _quad_flat:
@@ -958,7 +969,7 @@ class PaintMixin:
                 # `_vulkan_points_partial`); only an untracked open path is
                 # rerouted to the point path, which strokes the points that are
                 # actually there.
-                _p = mob.get_points()
+                _p = mob.points
                 if (len(_p) >= 2
                         and getattr(mob, '_vulkan_progress', None) is None
                         and not (abs(_p[0][0] - _p[-1][0]) < 1e-4
@@ -1240,7 +1251,7 @@ class PaintMixin:
             # above already uses: straight edges only.
             _flat_poly = True
             try:
-                _flat_poly = self._edges_are_straight(mob.get_points())
+                _flat_poly = self._edges_are_straight(mob.points)
             except Exception:
                 _flat_poly = True
             if _too_many or fill_gradient_stops(mob) is not None or not _flat_poly:
@@ -1264,7 +1275,9 @@ class PaintMixin:
             self._send_point(mob, a, w, h, parent_offset)
         else:
             try:
-                pts = mob.get_points()
+                # `points` directly: `get_points` is the compatibility getter
+                # and this is the leaf path for every plain VMobject.
+                pts = mob.points
                 if len(pts) >= 2:
                     self._send_vmobject(mob, a, w, h, parent_offset, rot, is_text=is_text)
             except Exception:

@@ -531,9 +531,15 @@ class VMobjectMixin:
 
     def _send_vmobject(self, mob, a, w, h, parent_offset=None, rot=0.0, is_text=False, exact_width=False):
         try:
-            pts = mob.get_points()
+            # `points` directly: `get_points` is synthesised by Mobject's
+            # compatibility __getattr__ (with a deprecation warning) and this
+            # runs once per leaf per frame.
+            pts = mob.points
         except Exception:
-            return
+            try:
+                pts = mob.get_points()
+            except Exception:
+                return
 
         if len(pts) == 0 and hasattr(mob, 'submobjects') and mob.submobjects:
             # Propagate _grow_scale/_grow_point to submobjects so animations
@@ -696,9 +702,17 @@ class VMobjectMixin:
                     sx1, sy1 = _project(px1, py1)
                     self._emit_stroke(sx0, sy0, sx1, sy1, sw, sri, sgi, sbi, a)
                 return
-            cx, cy, _ = path_center(mob)
-            cos_a = math.cos(rot)
-            sin_a = math.sin(rot)
+            if rot == 0.0:
+                # No rotation: the block below is the identity, so the
+                # expensive `path_center` (family walk + numpy bounds) has
+                # nothing to contribute.  Static leaves are the overwhelming
+                # majority in dense scenes.
+                cx = cy = 0.0
+                cos_a, sin_a = 1.0, 0.0
+            else:
+                cx, cy, _ = path_center(mob)
+                cos_a = math.cos(rot)
+                sin_a = math.sin(rot)
             # Preallocated rather than a Python list: this loop ran once per
             # point and appended three floats each time (measured 1.05M appends
             # per 150 frames of a three-Text scene).  The consumers only index

@@ -160,7 +160,12 @@ def path_extent(mob):
     """
     try:
         lo = hi = None
-        for sub in mob.get_family():
+        # A leaf is by far the common case in a scene with thousands of
+        # faces/shapes: `get_family()` builds a list (and a set through
+        # remove_list_redundancies) just to return the mobject itself.  Read
+        # its own points directly; containers keep the family walk below.
+        family = (mob,) if not getattr(mob, 'submobjects', None) else mob.get_family()
+        for sub in family:
             pts = sub.points
             n = len(pts)
             if n == 0:
