@@ -5,10 +5,12 @@ vector path ends up in; `_mitre_room_filter` trims the mitre overhang
 before the points reach native."""
 
 import ctypes
+import heapq
 import math
 
 import numpy as np
 
+from real_time_manim.camera_state import get_viewport
 from real_time_manim.render.util import (affine_frame_map, get_opacity,
                                          path_center, point_path_bounds,
                                          shaded_fill_rgb,
@@ -65,28 +67,53 @@ def _mitre_room_filter(pts, half_w):
     """
     if len(pts) < 3:
         return pts
-    pts = list(pts)
-    closed = (abs(pts[0][0] - pts[-1][0]) < 1e-3 and
-              abs(pts[0][1] - pts[-1][1]) < 1e-3)
+    # `_submit_flat_stroke` already has the path as an (n, 2) array.  Keep it
+    # in numpy end to end: converting it to a list of row views and back cost
+    # ~10 ms/frame on an 8000-point 3D path, more than the repair itself.
+    array_in = isinstance(pts, np.ndarray)
+    if array_in:
+        xy = np.asarray(pts, dtype=np.float64)
+        closed = (len(xy) >= 3 and
+                  abs(xy[0, 0] - xy[-1, 0]) < 1e-3 and
+                  abs(xy[0, 1] - xy[-1, 1]) < 1e-3)
+        if closed:
+            xy = xy[:-1]
+        m = len(xy)
+        if m < 3:
+            return pts if not closed else np.vstack([xy, xy[:1]])
+    else:
+        pts = list(pts)
+        closed = (abs(pts[0][0] - pts[-1][0]) < 1e-3 and
+                  abs(pts[0][1] - pts[-1][1]) < 1e-3)
+        if closed:
+            pts = pts[:-1]
+        m = len(pts)
+        if m < 3:
+            return pts + ([pts[0]] if closed else [])
+        xy = np.asarray(pts, dtype=np.float64)
+    n = len(xy)
+    idx_next = np.arange(1, n + 1, dtype=np.int64)
+    idx_prev = np.arange(-1, n - 1, dtype=np.int64)
     if closed:
-        pts = pts[:-1]
-    m = len(pts)
-    if m < 3:
-        return pts + ([pts[0]] if closed else [])
+        idx_next[-1] = 0
+        idx_prev[0] = n - 1
+    else:
+        idx_next[-1] = -1
 
-    def run_len(i, j):
-        return math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1])
-
-    def room(i):
+    def _room(i):
         """Axial mitre room the corner at vertex i demands of its runs."""
-        if not closed and (i == 0 or i == m - 1):
+        if i < 0:
+            return 0.0
+        if not closed and (i == 0 or i == n - 1):
             return 0.0                    # open end: plain cap, no room
-        ip = (i - 1) % m
-        iN = (i + 1) % m
-        ax = pts[i][0] - pts[ip][0]
-        ay = pts[i][1] - pts[ip][1]
-        bx = pts[iN][0] - pts[i][0]
-        by = pts[iN][1] - pts[i][1]
+        ip = int(idx_prev[i])
+        iN = int(idx_next[i])
+        if ip < 0 or iN < 0:
+            return 0.0
+        ax = xy[i, 0] - xy[ip, 0]
+        ay = xy[i, 1] - xy[ip, 1]
+        bx = xy[iN, 0] - xy[i, 0]
+        by = xy[iN, 1] - xy[i, 1]
         la = math.hypot(ax, ay)
         lb = math.hypot(bx, by)
         if la < 1e-9 or lb < 1e-9:
@@ -98,40 +125,165 @@ def _mitre_room_filter(pts, half_w):
             return 0.0
         return half_w * math.sqrt(max(0.0, (1.0 - c) / (1.0 + c)))
 
+    ip_safe = np.where(idx_prev >= 0, idx_prev, 0)
+    iN_safe = np.where(idx_next >= 0, idx_next, 0)
+    ax = xy[:, 0] - xy[ip_safe, 0]
+    ay = xy[:, 1] - xy[ip_safe, 1]
+    bx = xy[iN_safe, 0] - xy[:, 0]
+    by = xy[iN_safe, 1] - xy[:, 1]
+    la = np.hypot(ax, ay)
+    lb = np.hypot(bx, by)
+    cosang = np.zeros(n, dtype=np.float64)
+    valid = (la > 1e-9) & (lb > 1e-9)
+    cosang[valid] = ((ax[valid] * bx[valid] + ay[valid] * by[valid]) /
+                     (la[valid] * lb[valid]))
+    room = np.zeros(n, dtype=np.float64)
+    mask = valid & (cosang > -0.875)
+    room[mask] = half_w * np.sqrt(
+        np.maximum(0.0, (1.0 - cosang[mask]) / (1.0 + cosang[mask])))
+    if not closed:
+        room[0] = 0.0
+        room[-1] = 0.0
+
+    run = np.hypot(xy[iN_safe, 0] - xy[:, 0], xy[iN_safe, 1] - xy[:, 1])
+    need = room + room[iN_safe]
+    bad = (idx_next >= 0) & (need > 0.0) & (run < need)
+    if not np.any(bad):
+        if array_in:
+            return pts
+        return pts + ([pts[0]] if closed else [])
+
+    alive = np.ones(n, dtype=bool)
+    heap = [int(i) for i in np.flatnonzero(bad)]
+    heapq.heapify(heap)
+
     turns = 0
-    while turns < 64 and m > 3:
+    while heap and turns < 64 and m > 3:
+        i = heapq.heappop(heap)
+        if not alive[i]:
+            continue
+        j = int(idx_next[i])
+        if j < 0:
+            continue
+        need = room[i] + room[j]
+        if need <= 0.0:
+            continue
+        if math.hypot(xy[j, 0] - xy[i, 0], xy[j, 1] - xy[i, 1]) >= need:
+            continue
+        # Run (i, j) is too short for its two cuts: merge it into the
+        # neighbouring run whose own corner demands less, i.e. delete the
+        # vertex between the two runs -- never an open end.
+        if not closed and i == 0:
+            drop = j
+        elif not closed and j == n - 1:
+            drop = i
+        else:
+            # Delete the FLATTER of the two endpoints -- the vertex whose own
+            # corner demands less room.  Choosing by run length alone deleted
+            # the sharp corner itself whenever the run beyond it happened to
+            # be the shorter one, replacing a mitre-able 66 deg chart peak
+            # with a 5 px chamfer.
+            drop = j if room[j] < room[i] else i
+        p = int(idx_prev[drop])
+        q = int(idx_next[drop])
+        idx_next[p] = q
+        idx_prev[q] = p
+        alive[drop] = False
+        m -= 1
         turns += 1
-        did = False
-        for i in range(m if closed else m - 1):
-            j = (i + 1) % m
-            need = room(i) + room(j)
-            if need <= 0.0 or run_len(i, j) >= need:
-                continue
-            # Run (i, j) is too short for its two cuts: merge it into the
-            # neighbouring run whose own corner demands less, i.e. delete
-            # the vertex between the two runs -- never an open end.
-            if not (closed or i > 0):
-                drop = j
-            elif not (closed or j < m - 1):
-                drop = i
-            else:
-                # Delete the FLATTER of the two endpoints -- the vertex
-                # whose own corner demands less room.  Choosing by run
-                # length alone (the old `drop = i if li <= lj else j`)
-                # deleted the sharp corner itself whenever the run beyond
-                # it happened to be the shorter one, replacing a mitre-
-                # able 66 deg chart peak with a 5 px chamfer -- the
-                # corner rendered blunt where CE mitres to a point.
-                drop = j if room(j) < room(i) else i
-            pts.pop(drop)
-            m -= 1
-            did = True
-            break                    # lengths and rooms changed; rescan
-        if not did:
+        room[p] = _room(p)
+        room[q] = _room(q)
+        # Only these three edges changed: (prev(p), p) needs room[p],
+        # (p, q) is new, (q, next(q)) needs room[q].
+        heapq.heappush(heap, p)
+        pp = int(idx_prev[p])
+        if pp >= 0:
+            heapq.heappush(heap, pp)
+        heapq.heappush(heap, q)
+
+    if np.all(alive):
+        if array_in:
+            return pts
+        if closed and len(pts) >= 2:
+            pts.append(pts[0])
+        return pts
+
+    head = 0
+    if closed:
+        while not alive[head]:
+            head += 1
+    order = []
+    i = head
+    while True:
+        order.append(i)
+        i = int(idx_next[i])
+        if i < 0 or i == head:
             break
-    if closed and m >= 2:
+    if array_in:
+        out = xy[order]
+        if closed:
+            out = np.vstack([out, out[:1]])
+        return out
+    pts = [(float(xy[i, 0]), float(xy[i, 1])) for i in order]
+    if closed and len(pts) >= 2:
         pts.append(pts[0])
     return pts
+
+
+def _submit_flat_stroke(self, flat, n, progress_lower, progress_upper,
+                        stroke_w, stroke_alpha, stroke_point_alpha,
+                        stroke_width_alpha, sri, sgi, sbi):
+    """Submit a full, all-straight cubic path as a few numpy-backed strips.
+
+    Dense ``set_points_as_corners`` paths are thousands of collinear cubics.
+    The general walk below samples each one, appends Python tuples and then
+    copies every point into a ctypes array.  When every cubic is flat and the
+    path is fully revealed, its polyline is exactly the sequence of cubic
+    endpoints, so one vector pass produces the same geometry.
+    """
+    seg_count = n // 4
+    if seg_count < 1 or progress_lower > 1e-9 or progress_upper < 1.0 - 1e-9:
+        return False
+    arr = np.ctypeslib.as_array(flat).reshape(-1, 3)[:seg_count * 4]
+    p0 = arr[0::4, :2].astype(np.float64)
+    p1 = arr[1::4, :2].astype(np.float64)
+    p2 = arr[2::4, :2].astype(np.float64)
+    p3 = arr[3::4, :2].astype(np.float64)
+    cpoly = (np.linalg.norm(p1 - p0, axis=1)
+             + np.linalg.norm(p2 - p1, axis=1)
+             + np.linalg.norm(p3 - p2, axis=1))
+    chord = np.linalg.norm(p3 - p0, axis=1)
+    if not np.all(cpoly - chord <= 0.5):
+        return False
+
+    jumps = np.linalg.norm(p0[1:] - p3[:-1], axis=1) > math.sqrt(40.0)
+    starts = np.r_[0, np.flatnonzero(jumps) + 1]
+    ends = np.r_[np.flatnonzero(jumps) + 1, seg_count]
+    half_w = int(stroke_w) * 0.5 + 0.5
+    alpha = min(1.0, stroke_alpha * stroke_point_alpha * stroke_width_alpha)
+    for start, end in zip(starts, ends):
+        run = np.empty((end - start + 1, 2), dtype=np.float64)
+        run[0] = p0[start]
+        run[1:] = p3[start:end]
+        keep = np.ones(len(run), dtype=bool)
+        keep[1:] = np.any(run[1:] != run[:-1], axis=1)
+        run = run[keep]
+        run = _mitre_room_filter(run, half_w)
+        if len(run) < 2:
+            continue
+        coords = np.ascontiguousarray(run, dtype=np.float32)
+        alphas = np.full(len(coords), alpha, dtype=np.float32)
+        # ctypes arrays (not a temporary numpy pointer): the DLL copies during
+        # the call, but call recorders in tests keep the argument alive and may
+        # read it after `_send` returns.  `from_buffer_copy` copies in C;
+        # splatting every float through `(c_float * n)(*values)` unpacked the
+        # whole path in Python once per frame.
+        coords_ct = (ctypes.c_float * coords.size).from_buffer_copy(coords)
+        alphas_ct = (ctypes.c_float * len(alphas)).from_buffer_copy(alphas)
+        self.dll.AddLineStrip(
+            coords_ct, alphas_ct,
+            len(coords), int(stroke_w), sri, sgi, sbi, 1.0)
+    return True
 
 
 def _cut_cubics_at(flat, n, progress):
@@ -507,29 +659,57 @@ class VMobjectMixin:
                                     affine[2])
             else:
                 # A camera viewport (MovingCamera / 3D) maps each point itself.
-                _project = screen_projector(w, h)
-                for pi, p in enumerate(pts):
-                    px, py = p[0], p[1]
-                    pz = float(p[2]) if len(p) > 2 else 0.0
+                # Vectorise the common case: a 50k-point path under a 3D
+                # camera otherwise makes 50k Python calls per frame.
+                _vp = get_viewport()
+                if _vp is not None and hasattr(_vp, "project_points"):
+                    pts_arr = np.asarray(pts, dtype=np.float64)
+                    px = pts_arr[:, 0].copy()
+                    py = pts_arr[:, 1].copy()
+                    if pts_arr.shape[1] > 2:
+                        pz = pts_arr[:, 2]
+                    else:
+                        pz = np.zeros(len(px), dtype=np.float64)
                     if grow_scale != 1.0 and grow_pt is not None:
                         px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
                         py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                    dx, dy = px - cx, py - cy
+                    dx = px - cx
+                    dy = py - cy
                     px = dx * cos_a - dy * sin_a + cx
                     py = dx * sin_a + dy * cos_a + cy
                     if parent_offset is not None:
-                        px += parent_offset[0]
-                        py += parent_offset[1]
-                    py += b_dy
-                    # z must reach the viewport: a ThreeDCamera rotates the
-                    # point before the screen mapping, so dropping it flattens
-                    # every 3D VMobject (a Surface collapsed into thin stray
-                    # strips).  native AddBezierPath reads stride-3 points but
-                    # only x,y, so the third slot stays 0 here.
-                    sx, sy = _project(px, py, pz)
-                    flat[pi * 3] = sx
-                    flat[pi * 3 + 1] = sy
-                    flat[pi * 3 + 2] = 0.0
+                        px = px + parent_offset[0]
+                        py = py + parent_offset[1]
+                    py = py + b_dy
+                    sx, sy = _vp.project_points(px, py, pz, w, h)
+                    view = np.frombuffer(flat, dtype=np.float32).reshape(-1, 3)
+                    view[:len(px), 0] = sx
+                    view[:len(px), 1] = sy
+                    view[:len(px), 2] = 0.0
+                else:
+                    _project = screen_projector(w, h)
+                    for pi, p in enumerate(pts):
+                        px, py = p[0], p[1]
+                        pz = float(p[2]) if len(p) > 2 else 0.0
+                        if grow_scale != 1.0 and grow_pt is not None:
+                            px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                            py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                        dx, dy = px - cx, py - cy
+                        px = dx * cos_a - dy * sin_a + cx
+                        py = dx * sin_a + dy * cos_a + cy
+                        if parent_offset is not None:
+                            px += parent_offset[0]
+                            py += parent_offset[1]
+                        py += b_dy
+                        # z must reach the viewport: a ThreeDCamera rotates the
+                        # point before the screen mapping, so dropping it flattens
+                        # every 3D VMobject (a Surface collapsed into thin stray
+                        # strips).  native AddBezierPath reads stride-3 points but
+                        # only x,y, so the third slot stays 0 here.
+                        sx, sy = _project(px, py, pz)
+                        flat[pi * 3] = sx
+                        flat[pi * 3 + 1] = sy
+                        flat[pi * 3 + 2] = 0.0
 
         n = len(flat) // 3
         if n < 8:
@@ -849,7 +1029,11 @@ class VMobjectMixin:
             stroke_w = 2.0
             do_stroke = True
 
-        arr = (ctypes.c_float * len(flat))(*flat)
+        # `flat` is already a ctypes float array filled by the vector path (or
+        # the per-point viewport branch).  Native accepts it directly; the old
+        # `(c_float * len)(*flat)` copy unpacked every float in Python, which
+        # dominated a 50k-point path.
+        arr = flat
         n = (n // 4) * 4
         _grad = shaded_fill_gradient(mob, w, h)
         if _grad is not None:
@@ -898,6 +1082,11 @@ class VMobjectMixin:
         )
 
         if do_stroke:
+            if _submit_flat_stroke(
+                    self, flat, n, progress_lower, progress_upper,
+                    stroke_w, stroke_alpha, stroke_point_alpha,
+                    stroke_width_alpha, sri, sgi, sbi):
+                return
             seg_count = n // 4
             # Cut the window at an EXACT fraction of a segment, never at whole
             # segments.  `int(seg_count * progress)` advanced the reveal one
@@ -954,7 +1143,16 @@ class VMobjectMixin:
                          + math.hypot(p3x-p2x, p3y-p2y))
                 chord = math.hypot(p3x-p0x, p3y-p0y)
                 est = (cpoly + chord) * 0.5
-                seg_samples = int(max(8.0, min(256.0, math.ceil(est / STEP_PX))))
+                # `set_points_as_corners` (and every sampled polyline) makes
+                # collinear cubics: cpoly == chord.  The old 8-sample floor
+                # spent 8 points on a sub-pixel chord -- a 50k-point path
+                # produced ~400k strip vertices per frame.  A flat cubic needs
+                # only its endpoints; keep the length-aware count for curves.
+                if cpoly - chord <= 0.5:
+                    seg_samples = 1
+                else:
+                    seg_samples = int(max(8.0, min(256.0,
+                                                 math.ceil(est / STEP_PX))))
                 # The window's ends land INSIDE a segment: the first visible
                 # segment starts at t_start, the last one stops at t_end.
                 # Evaluating the cubic there makes the pen tip move
