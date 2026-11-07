@@ -599,9 +599,14 @@ class CoreMixin:
         # order (no member is reachable from two roots), so the queue falls
         # back to the visit sequence and skips the build entirely.
         index = family_index(roots) if overlap else {}
-        queue = _PaintQueue(viewport, index, z_mode)
+        # No 3D camera, no z_index and no shared member means document order
+        # already IS CE's paint order.  Painting straight through skips the
+        # per-root depth key, tuple, sort and lambda of the queue; with 10k
+        # leaves that fixed cost was a measurable slice of the frame.
+        direct = not walk
+        queue = None if direct else _PaintQueue(viewport, index, z_mode)
         saved_queue = getattr(self, "_paint_queue", None)
-        self._paint_queue = queue
+        self._paint_queue = None if direct else queue
         try:
             for idx, mob in enumerate(roots):
                 if (skip_ids and id(mob) in skip_ids) or id(mob) in auto_ids:
@@ -613,6 +618,17 @@ class CoreMixin:
                     nid for nid in _family_ids(mob)
                     if last_owner.get(nid, idx) != idx
                 }
+                if direct:
+                    if (skip_family or idx in cam_images
+                            or id(mob) in fixed_ids or not mob.submobjects):
+                        self._root_paint(cam, roots, idx, mob, angle,
+                                         fixed_ids, cam_images,
+                                         skip_family)()
+                    else:
+                        self._paint_root_cached(cam, roots, idx, mob, angle,
+                                                fixed_ids, cam_images,
+                                                skip_family)
+                    continue
                 if walk and idx not in cam_images and id(mob) not in fixed_ids:
                     self._skip_family_ids = skip_family
                     try:
@@ -628,5 +644,6 @@ class CoreMixin:
                 )
         finally:
             self._paint_queue = saved_queue
-        queue.flush()
+        if queue is not None:
+            queue.flush()
 

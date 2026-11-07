@@ -53,6 +53,12 @@ def _load(registry, attr, mob, default):
         val = None
     if val is not None:
         return val
+    # The fallback lives on the instance when the object is not weak-
+    # referenceable.  `__dict__` avoids Mobject.__getattr__ (and its
+    # synthesized get_*/set_* probe) for the normal, unset case.
+    d = getattr(mob, "__dict__", None)
+    if d is not None:
+        return d.get(attr, default)
     return getattr(mob, attr, default)
 
 

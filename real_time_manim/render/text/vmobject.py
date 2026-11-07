@@ -43,6 +43,75 @@ def _black_fill_is_real(mob):
         pass
     return False
 
+_MITRE_SMALL = 128
+
+
+def _mitre_room_filter_small(pts, half_w):
+    """Scalar repair for short paths (the pre-vectorisation algorithm).
+
+    A glyph, a quad or a small circle has a few dozen joins at most, so the
+    numpy setup below costs more than the scan itself.  Used by
+    :func:`_mitre_room_filter` below the ``_MITRE_SMALL`` cutoff; the result is
+    exactly the same as the vectorised version.
+    """
+    if len(pts) < 3:
+        return pts
+    pts = list(pts)
+    closed = (abs(pts[0][0] - pts[-1][0]) < 1e-3 and
+              abs(pts[0][1] - pts[-1][1]) < 1e-3)
+    if closed:
+        pts = pts[:-1]
+    m = len(pts)
+    if m < 3:
+        return pts + ([pts[0]] if closed else [])
+
+    def run_len(i, j):
+        return math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1])
+
+    def room(i):
+        if not closed and (i == 0 or i == m - 1):
+            return 0.0
+        ip = (i - 1) % m
+        iN = (i + 1) % m
+        ax = pts[i][0] - pts[ip][0]
+        ay = pts[i][1] - pts[ip][1]
+        bx = pts[iN][0] - pts[i][0]
+        by = pts[iN][1] - pts[i][1]
+        la = math.hypot(ax, ay)
+        lb = math.hypot(bx, by)
+        if la < 1e-9 or lb < 1e-9:
+            return 0.0
+        c = (ax * bx + ay * by) / (la * lb)
+        if c < -0.875:
+            return 0.0
+        return half_w * math.sqrt(max(0.0, (1.0 - c) / (1.0 + c)))
+
+    turns = 0
+    while turns < 64 and m > 3:
+        turns += 1
+        did = False
+        for i in range(m if closed else m - 1):
+            j = (i + 1) % m
+            need = room(i) + room(j)
+            if need <= 0.0 or run_len(i, j) >= need:
+                continue
+            if not (closed or i > 0):
+                drop = j
+            elif not (closed or j < m - 1):
+                drop = i
+            else:
+                drop = j if room(j) < room(i) else i
+            pts.pop(drop)
+            m -= 1
+            did = True
+            break
+        if not did:
+            break
+    if closed and m >= 2:
+        pts.append(pts[0])
+    return pts
+
+
 def _mitre_room_filter(pts, half_w):
     """Drop the vertices that leave a corner's mitre cut without room.
 
@@ -65,6 +134,9 @@ def _mitre_room_filter(pts, half_w):
     ``pts`` is a list of (x, y) screen-space points; a closed outline
     (first == last) is treated cyclically and re-closed on return.
     """
+    if len(pts) < _MITRE_SMALL:
+        return _mitre_room_filter_small(
+            pts.tolist() if isinstance(pts, np.ndarray) else pts, half_w)
     if len(pts) < 3:
         return pts
     # `_submit_flat_stroke` already has the path as an (n, 2) array.  Keep it
@@ -242,7 +314,10 @@ def _submit_flat_stroke(self, flat, n, progress_lower, progress_upper,
     endpoints, so one vector pass produces the same geometry.
     """
     seg_count = n // 4
-    if seg_count < 1 or progress_lower > 1e-9 or progress_upper < 1.0 - 1e-9:
+    if seg_count < 256 or progress_lower > 1e-9 or progress_upper < 1.0 - 1e-9:
+        # The vector setup is per-mobject, not per-point: a five-point quad
+        # cost ~140 us in numpy while the scalar walk below draws it in a
+        # fraction of that.  Only dense flat paths take the array path.
         return False
     arr = np.ctypeslib.as_array(flat).reshape(-1, 3)[:seg_count * 4]
     p0 = arr[0::4, :2].astype(np.float64)
@@ -456,9 +531,15 @@ class VMobjectMixin:
 
     def _send_vmobject(self, mob, a, w, h, parent_offset=None, rot=0.0, is_text=False, exact_width=False):
         try:
-            pts = mob.get_points()
+            # `points` directly: `get_points` is synthesised by Mobject's
+            # compatibility __getattr__ (with a deprecation warning) and this
+            # runs once per leaf per frame.
+            pts = mob.points
         except Exception:
-            return
+            try:
+                pts = mob.get_points()
+            except Exception:
+                return
 
         if len(pts) == 0 and hasattr(mob, 'submobjects') and mob.submobjects:
             # Propagate _grow_scale/_grow_point to submobjects so animations
@@ -621,42 +702,75 @@ class VMobjectMixin:
                     sx1, sy1 = _project(px1, py1)
                     self._emit_stroke(sx0, sy0, sx1, sy1, sw, sri, sgi, sbi, a)
                 return
-            cx, cy, _ = path_center(mob)
-            cos_a = math.cos(rot)
-            sin_a = math.sin(rot)
+            if rot == 0.0:
+                # No rotation: the block below is the identity, so the
+                # expensive `path_center` (family walk + numpy bounds) has
+                # nothing to contribute.  Static leaves are the overwhelming
+                # majority in dense scenes.
+                cx = cy = 0.0
+                cos_a, sin_a = 1.0, 0.0
+            else:
+                cx, cy, _ = path_center(mob)
+                cos_a = math.cos(rot)
+                sin_a = math.sin(rot)
             # Preallocated rather than a Python list: this loop ran once per
             # point and appended three floats each time (measured 1.05M appends
             # per 150 frames of a three-Text scene).  The consumers only index
             # it, so a ctypes array is both the destination and the result.
             flat = (ctypes.c_float * (len(pts) * 3))()
-            grow_scale = getattr(mob, '_grow_scale', 1.0)
-            grow_pt = getattr(mob, '_grow_point', None)
+            _ch = mob.__dict__
+            grow_scale = _ch.get('_grow_scale', 1.0)
+            grow_pt = _ch.get('_grow_point')
             # Approach-A baseline shift, set on text characters at draw time so
             # a descender-heavy word is lowered onto its shared baseline without
             # ever mutating the mobject's points (no positional jitter).
-            b_dy = float(getattr(mob, '_baseline_dy', 0.0) or 0.0)
+            b_dy = float(_ch.get('_baseline_dy', 0.0) or 0.0)
             affine = affine_frame_map(w, h)
             if affine is not None:
-                # No camera viewport: the whole conversion is affine, so one
-                # numpy pass replaces the per-point loop and its per-point
-                # projection call.  Same operations in the same order, all in
-                # double precision, so the coordinates are bit-identical.
-                pts_arr = np.asarray(pts, dtype=np.float64)
-                px = pts_arr[:, 0]
-                py = pts_arr[:, 1]
-                if grow_scale != 1.0 and grow_pt is not None:
-                    px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
-                    py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
-                dx = px - cx
-                dy = py - cy
-                px = dx * cos_a - dy * sin_a + cx
-                py = dx * sin_a + dy * cos_a + cy
-                if parent_offset is not None:
-                    px = px + parent_offset[0]
-                    py = py + parent_offset[1]
-                py = py + b_dy
-                store_screen_points(flat, px, py, affine[0], affine[1],
-                                    affine[2])
+                # No camera viewport: the whole conversion is affine.  A dense
+                # path gets one numpy pass, but for a quad/glyph-sized path the
+                # ~10 small-array temporaries cost more than the points
+                # themselves -- use the scalar equivalent below 64 points.
+                if len(pts) <= 64:
+                    s_frame, ax, ay = affine
+                    for pi in range(len(pts)):
+                        p = pts[pi]
+                        px = float(p[0])
+                        py = float(p[1])
+                        if grow_scale != 1.0 and grow_pt is not None:
+                            px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                            py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                        if rot != 0.0:
+                            dx = px - cx
+                            dy = py - cy
+                            px = dx * cos_a - dy * sin_a + cx
+                            py = dx * sin_a + dy * cos_a + cy
+                        if parent_offset is not None:
+                            px = px + parent_offset[0]
+                            py = py + parent_offset[1]
+                        py = py + b_dy
+                        flat[pi * 3] = ax + px * s_frame
+                        flat[pi * 3 + 1] = ay - py * s_frame
+                        flat[pi * 3 + 2] = 0.0
+                else:
+                    # Same operations in the same order, all in double
+                    # precision, so the coordinates are bit-identical.
+                    pts_arr = np.asarray(pts, dtype=np.float64)
+                    px = pts_arr[:, 0]
+                    py = pts_arr[:, 1]
+                    if grow_scale != 1.0 and grow_pt is not None:
+                        px = grow_pt[0] + (px - grow_pt[0]) * grow_scale
+                        py = grow_pt[1] + (py - grow_pt[1]) * grow_scale
+                    dx = px - cx
+                    dy = py - cy
+                    px = dx * cos_a - dy * sin_a + cx
+                    py = dx * sin_a + dy * cos_a + cy
+                    if parent_offset is not None:
+                        px = px + parent_offset[0]
+                        py = py + parent_offset[1]
+                    py = py + b_dy
+                    store_screen_points(flat, px, py, affine[0], affine[1],
+                                        affine[2])
             else:
                 # A camera viewport (MovingCamera / 3D) maps each point itself.
                 # Vectorise the common case: a 50k-point path under a 3D
@@ -798,19 +912,27 @@ class VMobjectMixin:
             frgbas = mob.get_fill_rgbas()
             if len(frgbas) > 0:
                 _fa_measured = True
-                # manim keeps a *gradient* fill as several stops -- e.g.
-                # `set_sheen(0.4, RIGHT)` leaves [dim, bright].  Reading only
-                # stop 0 painted every gradient/sheen fill at its darkest stop
-                # (~25% dim): measured on VobjectManagerPathOperations the same
-                # region read '.' (52-78) in RTM against ':' (78-104) in CE,
-                # which straddles the lit threshold (luma>55) and cost 60% of
-                # the lit count.  Average the stops; a flat fill has all stops
-                # equal, so nothing else moves.
-                _stops = list(frgbas)
-                fr = sum(float(s[0]) for s in _stops) / len(_stops)
-                fg = sum(float(s[1]) for s in _stops) / len(_stops)
-                fb = sum(float(s[2]) for s in _stops) / len(_stops)
-                fa = max(float(s[3]) for s in _stops)
+                if len(frgbas) == 1:
+                    # Flat fill (the overwhelming majority): no list/sums.
+                    _s0 = frgbas[0]
+                    fr = float(_s0[0])
+                    fg = float(_s0[1])
+                    fb = float(_s0[2])
+                    fa = float(_s0[3])
+                else:
+                    # manim keeps a *gradient* fill as several stops -- e.g.
+                    # `set_sheen(0.4, RIGHT)` leaves [dim, bright].  Reading only
+                    # stop 0 painted every gradient/sheen fill at its darkest stop
+                    # (~25% dim): measured on VobjectManagerPathOperations the same
+                    # region read '.' (52-78) in RTM against ':' (78-104) in CE,
+                    # which straddles the lit threshold (luma>55) and cost 60% of
+                    # the lit count.  Average the stops; a flat fill has all stops
+                    # equal, so nothing else moves.
+                    _stops = list(frgbas)
+                    fr = sum(float(s[0]) for s in _stops) / len(_stops)
+                    fg = sum(float(s[1]) for s in _stops) / len(_stops)
+                    fb = sum(float(s[2]) for s in _stops) / len(_stops)
+                    fa = max(float(s[3]) for s in _stops)
         except Exception:
             pass
         if fr == 0 and fg == 0 and fb == 0 and not _black_fill_is_real(mob):

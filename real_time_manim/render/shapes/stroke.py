@@ -5,6 +5,9 @@ Fill/stroke colour extraction, the stroke-width ladder and the two
 
 import ctypes
 import math
+
+import numpy as np
+
 from real_time_manim.render.util import rotate_point, get_fill_rgb, get_fill_rgb_raw, get_stroke_rgb, get_stroke_w, shaded_fill_rgb
 
 
@@ -220,6 +223,20 @@ class StrokeMixin:
             return
         n = len(pts) // 2
         coords = (ctypes.c_float * len(pts))(*[float(v) for v in pts])
+        for _w, _a in self._stroke_layers(px, alpha):
+            self.dll.AddLineStrip(coords, None, n, _w, r, g, b, _a)
+
+    def _emit_stroke_strip_xy(self, xy, px, r, g, b, alpha):
+        """:meth:`_emit_stroke_strip` from a contiguous ``(n, 2)`` array.
+
+        Same native call, but the coords are copied with a C memcpy instead of
+        unpacking every float through Python (a circle outline is ~100 floats).
+        """
+        n = len(xy)
+        if n < 2:
+            return
+        coords = (ctypes.c_float * (n * 2)).from_buffer_copy(
+            np.ascontiguousarray(xy, dtype=np.float32))
         for _w, _a in self._stroke_layers(px, alpha):
             self.dll.AddLineStrip(coords, None, n, _w, r, g, b, _a)
 
