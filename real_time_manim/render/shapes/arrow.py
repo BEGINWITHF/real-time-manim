@@ -82,13 +82,14 @@ class ArrowMixin:
             sx1, sy1 = manim_to_screen(s_line[0], s_line[1], w, h, s_line[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
             sxl, syl = manim_to_screen(e_line[0], e_line[1], w, h, e_line[2])
-            cx, cy, cz = path_center(mob)
-            if parent_offset is not None:
-                cx += parent_offset[0]; cy += parent_offset[1]
-            scx, scy = manim_to_screen(cx, cy, w, h, cz)
-            sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
-            sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
-            sxl, syl = self._rotate_point(sxl, syl, scx, scy, rot)
+            if rot != 0.0:
+                cx, cy, cz = path_center(mob)
+                if parent_offset is not None:
+                    cx += parent_offset[0]; cy += parent_offset[1]
+                scx, scy = manim_to_screen(cx, cy, w, h, cz)
+                sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
+                sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
+                sxl, syl = self._rotate_point(sxl, syl, scx, scy, rot)
         # The shaft's own points (`s_line`/`e_line`) are what ShowPartial cuts
         # on a Create, so they already end at the pen: windowing them again by
         # `_vulkan_progress` drew `progress * cut` of the shaft.  A tagged path

@@ -395,13 +395,14 @@ class PaintMixin:
                             else float(np.asarray(frgbas)[:, 3].max()))
         except Exception:
             return False
-        if fill_opacity > 0.001:
-            return False
         try:
             stroke_opacity = float(np.asarray(mob.stroke_rgbas)[:, 3].max())
         except Exception:
+            stroke_opacity = 0.0
+        if fill_opacity <= 0.001 and (stroke_opacity <= 0.0
+                                      or get_stroke_w(mob) <= 0.0):
             return False
-        if stroke_opacity <= 0.0 or get_stroke_w(mob) <= 0.0:
+        if fill_opacity > 0.001 and len(frgbas) > 1:
             return False
         # Roundness is validated for the whole run in one vectorised pass;
         # doing it per circle was the dominant cost on moving scenes.
@@ -464,22 +465,22 @@ class PaintMixin:
                            for m in mobs])
         so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
                        for m in mobs])
-        alphas = np.array([get_anim_opacity(m) for m in mobs]) * so
+        anim = np.array([get_anim_opacity(m) for m in mobs])
+        alphas = anim * so
         r = (srgbas[:, 0] * 255).astype(np.int64)
         g = (srgbas[:, 1] * 255).astype(np.int64)
         b = (srgbas[:, 2] * 255).astype(np.int64)
-        fill_rgb = np.zeros((n, 3), dtype=np.int64)
-        for i, m in enumerate(mobs):
-            frgbas = m.__dict__.get('fill_rgbas')
-            if frgbas is not None and len(frgbas):
-                fill_rgb[i] = (np.asarray(frgbas[0][:3], dtype=float) * 255
-                               ).astype(np.int64)
+        fill_rgb = np.array([self._fill_color(m) for m in mobs],
+                            dtype=np.int64)
+        fo = np.array([float(np.asarray(m.fill_rgbas)[:, 3].max())
+                       if len(m.fill_rgbas) else 0.0 for m in mobs])
         dll = self.dll
         from real_time_manim.render.shapes.primitives import curve_segments
         for i in range(n):
             fr, fg, fb = int(fill_rgb[i, 0]), int(fill_rgb[i, 1]), int(fill_rgb[i, 2])
             dll.AddCircle(float(sx[i]), float(sy[i]), float(sr[i]),
-                          fr, fg, fb, 0, 0, 0, 0.0, 1.0, 0.0)
+                          fr, fg, fb, 0, 0, 0, 0.0, 1.0,
+                          float(anim[i] * fo[i]))
         # Group outlines by segment count so each group needs one numpy pass
         # and one ctypes copy; the per-circle call only gets a pointer offset.
         groups = {}
@@ -933,6 +934,156 @@ class PaintMixin:
         except Exception:
             pass
 
+    def _batch_square_ok(self, mob):
+        """True when a 2D Square/Rectangle can use the flat polygon batch."""
+        if not isinstance(mob, (Square, Rectangle)) or mob.submobjects:
+            return False
+        if getattr(mob, 'shade_in_3d', False):
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        if getattr(mob, 'background_stroke_width', 0):
+            return False
+        frgbas = d.get('fill_rgbas')
+        if frgbas is not None and len(frgbas) > 1:
+            return False
+        verts = mob.get_vertices()
+        if verts is None or len(verts) != 4:
+            return False
+        # A BEVEL contour has its own emitter (corner triangles).
+        return self._strip_join(mob) != 1
+
+    def _send_square_batch(self, mobs, a=1.0):
+        """Vectorised AddPolygon + strip send for 2D Squares/Rectangles."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        pts = np.stack([np.asarray(m.get_vertices(), dtype=float)
+                        for m in mobs])
+        flat3 = pts.reshape(-1, 3)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + flat3[:, 0] * scale
+            sy = cy - flat3[:, 1] * scale
+            cxs = cx + pts[:, :, 0].mean(axis=1) * scale
+            cys = cy - pts[:, :, 1].mean(axis=1) * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(flat3[:, 0], flat3[:, 1], flat3[:, 2],
+                                       w, h)
+            cxs, cys = vp.project_points(pts[:, :, 0].mean(axis=1),
+                                         pts[:, :, 1].mean(axis=1),
+                                         pts[:, :, 2].mean(axis=1), w, h)
+        xy = np.stack([sx, sy], axis=1).astype(np.float32).reshape(n, 4, 2)
+        # closed strip: append the first vertex again
+        loop = np.concatenate([xy, xy[:, :1]], axis=1)
+        coords = (ctypes.c_float * loop.size).from_buffer_copy(
+            np.ascontiguousarray(loop.reshape(-1)))
+        fill = np.array([self._fill_color(m) for m in mobs], dtype=np.int64)
+        stroke = np.array([self._stroke_color(m) for m in mobs],
+                          dtype=np.int64)
+        fo = np.array([float(np.asarray(m.fill_rgbas)[:, 3].max())
+                       if len(m.fill_rgbas) else 0.0 for m in mobs])
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       if len(m.stroke_rgbas) else 0.0 for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        px = np.array([self._stroke_width(m) for m in mobs])
+        ptr_t = ctypes.POINTER(ctypes.c_float)
+        lstride = 5 * 2 * 4
+        dll = self.dll
+        for i in range(n):
+            vp_i = ctypes.cast(ctypes.byref(coords, i * lstride), ptr_t)
+            dll.AddPolygon(
+                float(cxs[i]), float(cys[i]),
+                int(fill[i, 0]), int(fill[i, 1]), int(fill[i, 2]),
+                0, 0, 0, 0.0, 4, vp_i,
+                1.0, float(anim[i] * fo[i]), 1)
+            if so[i] > 0.0 and px[i] > 0.0:
+                lp = ctypes.cast(ctypes.byref(coords, i * lstride), ptr_t)
+                for _wd, _al in self._stroke_layers(
+                        float(px[i]), float(anim[i] * so[i])):
+                    dll.AddLineStrip(
+                        lp, None, 5, _wd,
+                        int(stroke[i, 0]), int(stroke[i, 1]),
+                        int(stroke[i, 2]), _al)
+        try:
+            mobs[0].__dict__['_rtm_square_buffers'] = coords
+        except Exception:
+            pass
+
+    def _batch_dot_ok(self, mob):
+        """True when `_send_dot_batch` reproduces `_send_dot` exactly."""
+        if not isinstance(mob, Dot) or mob.submobjects:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        try:
+            fo = float(np.asarray(mob.fill_rgbas)[:, 3].max())
+        except Exception:
+            return False
+        return fo > 0.0 and len(mob.points) > 0
+
+    def _send_dot_batch(self, mobs, a=1.0):
+        """Vectorised AddCircle send for a run of plain filled Dots."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        mins = np.empty((n, 2), dtype=float)
+        maxs = np.empty((n, 2), dtype=float)
+        for i, m in enumerate(mobs):
+            pts = m.points
+            mins[i] = pts[:, :2].min(axis=0)
+            maxs[i] = pts[:, :2].max(axis=0)
+        centres = (mins + maxs) / 2.0
+        radii = np.minimum(maxs[:, 0] - mins[:, 0],
+                           maxs[:, 1] - mins[:, 1]) / 2.0
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + centres[:, 0] * scale
+            sy = cy - centres[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(centres[:, 0], centres[:, 1],
+                                       np.zeros(n), w, h)
+        scale_y = h / self._visible_frame_height()
+        sr = radii * scale_y
+        fo = np.array([min(float(np.asarray(m.fill_rgbas)[:, 3].max()),
+                           float(getattr(m, '_dot_max_opacity', 1.0)))
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        cols = np.array([self._fill_color(m) for m in mobs], dtype=np.int64)
+        dll = self.dll
+        for i in range(n):
+            dll.AddCircle(float(sx[i]), float(sy[i]), float(sr[i]),
+                          int(cols[i, 0]), int(cols[i, 1]), int(cols[i, 2]),
+                          0, 0, 0, 0.0, 1.0, float(anim[i] * fo[i]))
+
     def _try_nonoverlap_batch(self, roots):
         """Batch a mixed frame when every leaf's screen box is disjoint.
 
@@ -957,6 +1108,10 @@ class PaintMixin:
                 kinds.append(0)
             elif self._batch_circle_ok(mob):
                 kinds.append(1)
+            elif self._batch_dot_ok(mob):
+                kinds.append(3)
+            elif self._batch_square_ok(mob):
+                kinds.append(4)
             elif self._batch_quad_ok(mob):
                 kinds.append(2)
             else:
@@ -980,6 +1135,8 @@ class PaintMixin:
                 j += 1
         for kind, send in ((0, self._send_line_batch),
                            (1, self._send_circle_batch),
+                           (3, self._send_dot_batch),
+                           (4, self._send_square_batch),
                            (2, self._send_quad_batch)):
             group = [m for m, k in zip(roots, kinds) if k == kind]
             if group:
