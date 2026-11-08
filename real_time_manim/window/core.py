@@ -619,11 +619,13 @@ class CoreMixin:
         saved_queue = getattr(self, "_paint_queue", None)
         self._paint_queue = None if direct else queue
         batch_until = 0
-        if (direct and angle == 0.0 and not skip_ids and not auto_ids
-                and not cam_images and not fixed_ids and not overlap
+        mixed_types = len({type(m) for m in roots}) > 1
+        if (direct and mixed_types and angle == 0.0 and not skip_ids
+                and not auto_ids and not cam_images and not fixed_ids
+                and not overlap
                 and all(last_owner.get(id(m), i) == i
                         for i, m in enumerate(roots))):
-            if self._try_nonoverlap_batch(roots):
+            if self._paint_leaf_frame(roots) or self._try_nonoverlap_batch(roots):
                 roots = []
         try:
             for idx, mob in enumerate(roots):

@@ -1195,6 +1195,248 @@ class PaintMixin:
                           int(cols[i, 0]), int(cols[i, 1]), int(cols[i, 2]),
                           0, 0, 0, 0.0, 1.0, float(anim[i] * fo[i]))
 
+    def _paint_leaf_frame(self, roots):
+        """Compile a direct 2D frame of Line/Circle/quad leaves in one pass.
+
+        Geometry is prepared per type with numpy, but native commands are
+        emitted in the original document order, so overlapping mixed leaves
+        keep their exact paint order.
+        """
+        if not roots:
+            return False
+        for mob in roots:
+            if (self._batch_line_ok(mob) or self._batch_circle_ok(mob)
+                    or self._batch_quad_ok(mob)):
+                continue
+            return False
+        w, h = self.win_w, self.win_h
+        kinds = []
+        for mob in roots:
+            if self._batch_line_ok(mob):
+                kinds.append(0)
+            elif self._batch_circle_ok(mob):
+                kinds.append(1)
+            else:
+                kinds.append(2)
+        if len(set(kinds)) == 1:
+            # Homogeneous frames use the specialised run sender (and its
+            # replay cache); the mixed compiler would only add overhead.
+            return False
+        dll = self.dll
+        affine = affine_frame_map(w, h)
+
+        def project(xs, ys, zs):
+            if affine is not None:
+                scale, cx, cy = affine
+                return cx + xs * scale, cy - ys * scale
+            vp = get_viewport()
+            return vp.project_points(xs, ys, zs, w, h)
+
+        line_mobs = [m for m, k in zip(roots, kinds) if k == 0]
+        circle_mobs = [m for m, k in zip(roots, kinds) if k == 1]
+        quad_mobs = [m for m, k in zip(roots, kinds) if k == 2]
+        line_payload = {}
+        circle_payload = {}
+        quad_payload = {}
+
+        if line_mobs:
+            pts = np.stack([m.points for m in line_mobs])
+            s, e = pts[:, 0, :], pts[:, -1, :]
+            sx1, sy1 = project(s[:, 0], s[:, 1], s[:, 2])
+            sx2, sy2 = project(e[:, 0], e[:, 1], e[:, 2])
+            rgba = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                             for m in line_mobs])
+            so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                           for m in line_mobs])
+            anim = np.array([get_anim_opacity(m) for m in line_mobs])
+            px = np.array([get_stroke_w(m) * 0.01
+                           * (h / self._unit_frame_height())
+                           for m in line_mobs])
+            keep = ((np.abs(sx2 - sx1) >= 1e-6)
+                    | (np.abs(sy2 - sy1) >= 1e-6)) & (px > 0) & (so > 0)
+            layer_cache = {}
+            for i, m in enumerate(line_mobs):
+                if not keep[i]:
+                    line_payload[id(m)] = None
+                    continue
+                key = (round(float(px[i]), 9),
+                       round(float(anim[i] * so[i]), 9))
+                layers = layer_cache.get(key)
+                if layers is None:
+                    layers = tuple(self._stroke_layers(
+                        float(px[i]), float(anim[i] * so[i])))
+                    layer_cache[key] = layers
+                line_payload[id(m)] = (
+                    float(sx1[i]), float(sy1[i]),
+                    float(sx2[i]), float(sy2[i]), layers,
+                    int(round(rgba[i, 0] * 255)),
+                    int(round(rgba[i, 1] * 255)),
+                    int(round(rgba[i, 2] * 255)))
+
+        if circle_mobs:
+            from real_time_manim.render.shapes.primitives import (
+                _unit_circle, curve_segments)
+            pts_all = np.stack([m.points for m in circle_mobs])
+            anchors = pts_all[:, 0::4, :]
+            first = pts_all[:, 0, :]
+            last = pts_all[:, -1, :]
+            closed = ((np.abs(first[:, 0] - last[:, 0]) < 1e-3)
+                      & (np.abs(first[:, 1] - last[:, 1]) < 1e-3))
+            lo = anchors.min(axis=1)
+            hi = anchors.max(axis=1)
+            centres = (lo + hi) / 2.0
+            d = np.linalg.norm(anchors[:, :, :2] - centres[:, None, :2],
+                               axis=2)
+            rmin = d.min(axis=1)
+            rmax = d.max(axis=1)
+            valid = closed & (rmin > 0.0) & (rmax <= rmin * 1.001)
+            cubics = pts_all.reshape(len(circle_mobs), -1, 4, 3)[:, :, :, :2]
+            t = np.array([0.25, 0.5, 0.75])[:, None]
+            u = 1.0 - t
+            b = (u ** 3 * cubics[:, :, 0][:, :, None, :]
+                 + 3.0 * u ** 2 * t * cubics[:, :, 1][:, :, None, :]
+                 + 3.0 * u * t ** 2 * cubics[:, :, 2][:, :, None, :]
+                 + t ** 3 * cubics[:, :, 3][:, :, None, :])
+            dist = np.linalg.norm(b - centres[:, None, None, :2], axis=3)
+            valid &= np.all(
+                np.abs(dist - rmin[:, None, None])
+                <= rmin[:, None, None] * 0.01, axis=(1, 2))
+            if not np.all(valid):
+                return False
+            radii = np.linalg.norm(pts_all[:, 0, :2] - centres[:, :2], axis=1)
+            sx, sy = project(centres[:, 0], centres[:, 1], centres[:, 2])
+            scale_y = h / self._visible_frame_height()
+            sr = radii * scale_y
+            px = np.array([get_stroke_w(m) * 0.01
+                           * (h / self._unit_frame_height())
+                           for m in circle_mobs])
+            srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                               for m in circle_mobs])
+            so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                           for m in circle_mobs])
+            anim = np.array([get_anim_opacity(m) for m in circle_mobs])
+            fill_rgb = np.array([self._fill_color(m) for m in circle_mobs],
+                                dtype=np.int64)
+            fo = np.array([float(np.asarray(m.fill_rgbas)[:, 3].max())
+                           if len(m.fill_rgbas) else 0.0
+                           for m in circle_mobs])
+            ptr_t = ctypes.POINTER(ctypes.c_float)
+            groups = {}
+            for i in range(len(circle_mobs)):
+                groups.setdefault(curve_segments(sr[i]), []).append(i)
+            pointers = {}
+            layer_cache = {}
+            for segs, idxs in groups.items():
+                cvec, svec = _unit_circle(segs)
+                idxs_arr = np.asarray(idxs, dtype=np.intp)
+                xy = np.empty((len(idxs), segs + 1, 2), dtype=np.float32)
+                xy[:, :, 0] = (sx[idxs_arr, None]
+                               + cvec[None, :] * sr[idxs_arr, None])
+                xy[:, :, 1] = (sy[idxs_arr, None]
+                               - svec[None, :] * sr[idxs_arr, None])
+                flat = np.ascontiguousarray(xy.reshape(-1))
+                coords = (ctypes.c_float * flat.size).from_buffer_copy(flat)
+                stride = (segs + 1) * 2 * 4
+                for k, i in enumerate(idxs):
+                    pointers[i] = (ctypes.cast(
+                        ctypes.byref(coords, k * stride), ptr_t),
+                        segs + 1)
+            for i, m in enumerate(circle_mobs):
+                ai = float(anim[i])
+                key = (round(float(px[i]), 9),
+                       round(ai * float(so[i]), 9))
+                layers = layer_cache.get(key)
+                if layers is None:
+                    layers = tuple(self._stroke_layers(
+                        float(px[i]), ai * float(so[i])))
+                    layer_cache[key] = layers
+                circle_payload[id(m)] = (
+                    float(sx[i]), float(sy[i]), float(sr[i]),
+                    int(fill_rgb[i, 0]), int(fill_rgb[i, 1]),
+                    int(fill_rgb[i, 2]), ai * float(fo[i]),
+                    layers, pointers[i],
+                    int(round(srgbas[i, 0] * 255)),
+                    int(round(srgbas[i, 1] * 255)),
+                    int(round(srgbas[i, 2] * 255)))
+
+        if quad_mobs:
+            pts_all = np.stack([m.points for m in quad_mobs])
+            flat3 = pts_all.reshape(-1, 3)
+            sx, sy = project(flat3[:, 0], flat3[:, 1], flat3[:, 2])
+            flat = np.zeros((len(flat3), 3), dtype=np.float32)
+            flat[:, 0] = sx
+            flat[:, 1] = sy
+            flat = np.ascontiguousarray(flat.reshape(len(quad_mobs), 16, 3))
+            stroke_idx = np.array([0, 3, 7, 11, 15], dtype=np.intp)
+            stroke_xy = np.ascontiguousarray(flat[:, stroke_idx, :2])
+            frgbas = np.stack([np.asarray(m.fill_rgbas[0], dtype=float)
+                               for m in quad_mobs])
+            srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                               for m in quad_mobs])
+            so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                           for m in quad_mobs])
+            anim = np.array([get_anim_opacity(m) for m in quad_mobs])
+            fa = frgbas[:, 3]
+            fri = np.round(frgbas[:, 0] * 255).astype(np.int64)
+            fgi = np.round(frgbas[:, 1] * 255).astype(np.int64)
+            fbi = np.round(frgbas[:, 2] * 255).astype(np.int64)
+            sri = np.round(srgbas[:, 0] * 255).astype(np.int64)
+            sgi = np.round(srgbas[:, 1] * 255).astype(np.int64)
+            sbi = np.round(srgbas[:, 2] * 255).astype(np.int64)
+            stw = np.array([self._stroke_width(m) for m in quad_mobs])
+            stroke_w = np.where(stw > 0, np.maximum(1.0, stw), 0.0)
+            fill_alpha = np.minimum(1.0, fa)
+            show_fill = np.minimum(1.0, fa * anim) > 0.01
+            alphas = np.minimum(1.0, so * anim)
+            do_stroke = (alphas > 0.01) & (stw > 0)
+            coords_fill = (ctypes.c_float * flat.size).from_buffer_copy(
+                np.ascontiguousarray(flat.reshape(-1)))
+            coords_stroke = (ctypes.c_float * stroke_xy.size).from_buffer_copy(
+                np.ascontiguousarray(stroke_xy.reshape(-1)))
+            alph = np.repeat(alphas.astype(np.float32)[:, None], 5, axis=1)
+            alphas_ct = (ctypes.c_float * alph.size).from_buffer_copy(
+                np.ascontiguousarray(alph.reshape(-1)))
+            ptr_t = ctypes.POINTER(ctypes.c_float)
+            for i, m in enumerate(quad_mobs):
+                fp = ctypes.cast(ctypes.byref(coords_fill, i * 16 * 3 * 4),
+                                 ptr_t)
+                sp = ctypes.cast(ctypes.byref(coords_stroke,
+                                              i * 5 * 2 * 4), ptr_t)
+                ap = ctypes.cast(ctypes.byref(alphas_ct, i * 5 * 4), ptr_t)
+                quad_payload[id(m)] = (
+                    fp, int(sri[i]), int(sgi[i]), int(sbi[i]),
+                    float(stroke_w[i]), int(fri[i]), int(fgi[i]),
+                    int(fbi[i]), float(fill_alpha[i]),
+                    1 if show_fill[i] else 0, float(anim[i]),
+                    sp, ap, bool(do_stroke[i]), int(stroke_w[i]))
+
+        for mob, kind in zip(roots, kinds):
+            if kind == 0:
+                payload = line_payload.get(id(mob))
+                if payload is not None:
+                    x1, y1, x2, y2, layers, ri, gi, bi = payload
+                    for _wd, _al in layers:
+                        dll.AddLine(x1, y1, x2, y2, _wd, ri, gi, bi, _al)
+            elif kind == 1:
+                payload = circle_payload.get(id(mob))
+                sx0, sy0, sr0, fr, fg, fb, fa0, layers, ptr_info, ri, gi, bi = payload
+                dll.AddCircle(sx0, sy0, sr0, fr, fg, fb,
+                              0, 0, 0, 0.0, 1.0, fa0)
+                ptr, count = ptr_info
+                for _wd, _al in layers:
+                    dll.AddLineStrip(ptr, None, count, _wd, ri, gi, bi, _al)
+            else:
+                (fp, sri, sgi, sbi, swd, fri, fgi, fbi, fa0, show,
+                 ai, sp, ap, do_stroke, int_w) = quad_payload[id(mob)]
+                dll.AddBezierPath(
+                    fp, 16, sri, sgi, sbi, swd,
+                    fri, fgi, fbi, fa0,
+                    1.0, 0, show, ai,
+                    fri, fgi, fbi, 0.0, 0.0, 0.0, 0.0)
+                if do_stroke:
+                    dll.AddLineStrip(sp, ap, 5, int_w, sri, sgi, sbi, 1.0)
+        return True
+
     def _try_nonoverlap_batch(self, roots):
         """Batch a mixed frame when every leaf's screen box is disjoint.
 
