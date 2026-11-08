@@ -933,6 +933,59 @@ class PaintMixin:
         except Exception:
             pass
 
+    def _try_nonoverlap_batch(self, roots):
+        """Batch a mixed frame when every leaf's screen box is disjoint.
+
+        Paint order is only observable where primitives overlap.  A grid of
+        separate Line/Circle/quad leaves (a very common dense layout) can
+        therefore be sent per primitive type even though the types interleave,
+        which is what the continuity-based run batcher cannot do.
+        """
+        if not roots:
+            return False
+        affine = affine_frame_map(self.win_w, self.win_h)
+        if affine is None:
+            return False
+        n = len(roots)
+        kinds = []
+        mins = np.empty((n, 2), dtype=float)
+        maxs = np.empty((n, 2), dtype=float)
+        for i, mob in enumerate(roots):
+            if mob.submobjects:
+                return False
+            if self._batch_line_ok(mob):
+                kinds.append(0)
+            elif self._batch_circle_ok(mob):
+                kinds.append(1)
+            elif self._batch_quad_ok(mob):
+                kinds.append(2)
+            else:
+                return False
+            pts = mob.points
+            mins[i] = pts[:, :2].min(axis=0)
+            maxs[i] = pts[:, :2].max(axis=0)
+        scale, ax, ay = affine
+        x0 = ax + mins[:, 0] * scale
+        x1 = ax + maxs[:, 0] * scale
+        y0 = ay - maxs[:, 1] * scale
+        y1 = ay - mins[:, 1] * scale
+        order = np.argsort(x0)
+        xs0, xs1 = x0[order], x1[order]
+        ys0, ys1 = y0[order], y1[order]
+        for k in range(n):
+            j = k + 1
+            while j < n and xs0[j] <= xs1[k] + 0.5:
+                if ys0[j] <= ys1[k] + 0.5 and ys0[k] <= ys1[j] + 0.5:
+                    return False
+                j += 1
+        for kind, send in ((0, self._send_line_batch),
+                           (1, self._send_circle_batch),
+                           (2, self._send_quad_batch)):
+            group = [m for m, k in zip(roots, kinds) if k == kind]
+            if group:
+                send(group)
+        return True
+
     def _fast_leaf(self, mob, a, w, h, rot, parent_offset):
         """Send a plain full-progress leaf without the generic dispatch chain.
 
