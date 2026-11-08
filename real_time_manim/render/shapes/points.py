@@ -2,7 +2,9 @@
 
 import math
 import numpy as np
-from real_time_manim.render.util import manim_to_screen, get_opacity, path_center
+from real_time_manim.camera_state import get_viewport
+from real_time_manim.render.util import (affine_frame_map, manim_to_screen,
+                                         get_opacity, path_center)
 
 
 class PointMixin:
@@ -331,6 +333,40 @@ class PointMixin:
         try:
             points = mob.points
         except Exception:
+            return
+
+        if rot == 0.0 and parent_offset is None and len(points):
+            # Vectorise projection and per-point colour unpacking; the native
+            # call is still one AddPoint per point, but everything around it is
+            # numpy + a flat Python list.
+            pts = np.asarray(points, dtype=np.float64)
+            affine = affine_frame_map(w, h)
+            if affine is not None:
+                af_scale, af_cx, af_cy = affine
+                xs = (af_cx + pts[:, 0] * af_scale).tolist()
+                ys = (af_cy - pts[:, 1] * af_scale).tolist()
+            else:
+                vp = get_viewport()
+                px, py = vp.project_points(pts[:, 0], pts[:, 1], pts[:, 2],
+                                           w, h)
+                xs = np.asarray(px).tolist()
+                ys = np.asarray(py).tolist()
+            if n_rgbas >= len(points):
+                rgbs = np.asarray(rgbas, dtype=np.float64)
+                pr = (rgbs[:, 0] * 255).astype(np.int64).tolist()
+                pg = (rgbs[:, 1] * 255).astype(np.int64).tolist()
+                pb = (rgbs[:, 2] * 255).astype(np.int64).tolist()
+                pa = (rgbs[:, 3] * a).tolist()
+            else:
+                pr = None
+            add = self.dll.AddPoint
+            if pr is not None:
+                for i in range(len(xs)):
+                    add(xs[i], ys[i], pr[i], pg[i], pb[i], pa[i], radius)
+            else:
+                alpha = a * so
+                for i in range(len(xs)):
+                    add(xs[i], ys[i], r, g, b, alpha, radius)
             return
 
         for i, p in enumerate(points):

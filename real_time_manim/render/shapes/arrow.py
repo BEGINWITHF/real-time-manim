@@ -82,13 +82,14 @@ class ArrowMixin:
             sx1, sy1 = manim_to_screen(s_line[0], s_line[1], w, h, s_line[2])
             sx2, sy2 = manim_to_screen(e[0], e[1], w, h, e[2])
             sxl, syl = manim_to_screen(e_line[0], e_line[1], w, h, e_line[2])
-            cx, cy, cz = path_center(mob)
-            if parent_offset is not None:
-                cx += parent_offset[0]; cy += parent_offset[1]
-            scx, scy = manim_to_screen(cx, cy, w, h, cz)
-            sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
-            sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
-            sxl, syl = self._rotate_point(sxl, syl, scx, scy, rot)
+            if rot != 0.0:
+                cx, cy, cz = path_center(mob)
+                if parent_offset is not None:
+                    cx += parent_offset[0]; cy += parent_offset[1]
+                scx, scy = manim_to_screen(cx, cy, w, h, cz)
+                sx1, sy1 = self._rotate_point(sx1, sy1, scx, scy, rot)
+                sx2, sy2 = self._rotate_point(sx2, sy2, scx, scy, rot)
+                sxl, syl = self._rotate_point(sxl, syl, scx, scy, rot)
         # The shaft's own points (`s_line`/`e_line`) are what ShowPartial cuts
         # on a Create, so they already end at the pen: windowing them again by
         # `_vulkan_progress` drew `progress * cut` of the shaft.  A tagged path
@@ -376,13 +377,18 @@ class ArrowMixin:
 
     def _send_line(self, mob, a, w, h, rot, parent_offset=None):
         sig = None
+        stable = False
         try:
             sig = self._line_state(mob, a, w, h, rot, parent_offset) + (
                 id(self.dll),)
-            cached = mob.__dict__.get('_rtm_line_cache')
-            if cached is not None and cached[0] == sig:
-                self._replay_line(cached[1])
-                return
+            stable = mob.__dict__.get('_rtm_line_last') == sig
+            if stable:
+                cached = mob.__dict__.get('_rtm_line_cache')
+                if cached is not None and cached[0] == sig:
+                    self._replay_line(cached[1])
+                    return
+            else:
+                mob.__dict__['_rtm_line_last'] = sig
         except Exception:
             sig = None
         # The endpoints must come from the path itself.  `TipableVMobject`
@@ -584,7 +590,7 @@ class ArrowMixin:
                                        0, 0, 0, 0.0, 1.0, a)
             except Exception:
                 pass
-        if sig is not None:
+        if sig is not None and stable:
             try:
                 mob._rtm_line_cache = (
                     sig,

@@ -531,7 +531,17 @@ class CoreMixin:
         # compared with CE; only do that for frames that are not scene
         # content, i.e. never add it implicitly -- see the sync() caller.
         # Same-font Text roots on one visual line that need baseline alignment.
-        self._row_text_ids = self._text_row_ids(scene, skip_ids or set())
+        # Once every visible Text root has cached its baseline verdict, the
+        # row scan cannot change any of them -- skip the family walk.
+        need_rows = bool(skip_ids)
+        if not need_rows:
+            for _m in scene.mobjects:
+                if (type(_m).__name__ == 'Text'
+                        and '_baseline_dy' not in _m.__dict__):
+                    need_rows = True
+                    break
+        self._row_text_ids = (self._text_row_ids(scene, skip_ids or set())
+                              if need_rows else set())
         # manim's ThreeDCamera leaves fixed-in-frame mobjects unprojected
         # (transform_points_pre_display returns their points unchanged), so a
         # 3D scene's title/caption stays put instead of being rotated away.  RTM
@@ -604,9 +614,19 @@ class CoreMixin:
         # per-root depth key, tuple, sort and lambda of the queue; with 10k
         # leaves that fixed cost was a measurable slice of the frame.
         direct = not walk
-        queue = None if direct else _PaintQueue(viewport, index, z_mode)
+        queue = (None if direct
+                 else _PaintQueue(viewport, index, z_mode, owner=self))
         saved_queue = getattr(self, "_paint_queue", None)
         self._paint_queue = None if direct else queue
+        batch_until = 0
+        mixed_types = len({type(m) for m in roots}) > 1
+        if (direct and mixed_types and angle == 0.0 and not skip_ids
+                and not auto_ids and not cam_images and not fixed_ids
+                and not overlap
+                and all(last_owner.get(id(m), i) == i
+                        for i, m in enumerate(roots))):
+            if self._paint_leaf_frame(roots) or self._try_nonoverlap_batch(roots):
+                roots = []
         try:
             for idx, mob in enumerate(roots):
                 if (skip_ids and id(mob) in skip_ids) or id(mob) in auto_ids:
@@ -619,6 +639,45 @@ class CoreMixin:
                     if last_owner.get(nid, idx) != idx
                 }
                 if direct:
+                    if idx < batch_until:
+                        continue
+                    kind = self._batch_line_ok
+                    send = self._send_line_batch
+                    if not kind(mob):
+                        kind = self._batch_circle_ok
+                        send = self._send_circle_batch
+                        if not kind(mob):
+                            kind = self._batch_quad_ok
+                            send = self._send_quad_batch
+                            if not kind(mob):
+                                kind = self._batch_arrow_ok
+                                send = self._send_arrow_batch
+                                if not kind(mob):
+                                    kind = self._batch_square_ok
+                                    send = self._send_square_batch
+                                    if not kind(mob):
+                                        kind = self._batch_dot_ok
+                                        send = self._send_dot_batch
+                                        if not kind(mob):
+                                            kind = None
+                    if kind is not None:
+                        j = idx
+                        run = []
+                        while j < len(roots):
+                            cand = roots[j]
+                            if ((skip_ids and id(cand) in skip_ids)
+                                    or id(cand) in auto_ids
+                                    or last_owner.get(id(cand), j) != j
+                                    or j in cam_images
+                                    or id(cand) in fixed_ids
+                                    or not kind(cand)):
+                                break
+                            run.append(cand)
+                            j += 1
+                        if len(run) >= 4:
+                            send(run)
+                            batch_until = j
+                            continue
                     if (skip_family or idx in cam_images
                             or id(mob) in fixed_ids or not mob.submobjects):
                         self._root_paint(cam, roots, idx, mob, angle,

@@ -3,7 +3,9 @@
 `_send_impl` is the dispatcher: it picks a sender per mobject kind,
 handles transform/fade channels and recurses through the family."""
 
+import ctypes
 import math
+
 import numpy as np
 from manim import (
     Square, Circle, Line, Rectangle, Polygon, Polygram,
@@ -24,7 +26,9 @@ from real_time_manim.camera_state import (
 )
 from manim.mobject.text.tex_mobject import MathTexPart
 
-from real_time_manim.render.util import fill_gradient_stops, path_center, path_extent
+from real_time_manim.render.util import (affine_frame_map, fill_gradient_stops,
+                                         get_stroke_w, path_center,
+                                         path_extent)
 from real_time_manim.window.paint_order import (
     NATIVE_MAX_POLYGON_VERTS,
     container_subs,
@@ -113,6 +117,7 @@ class PaintMixin:
         pts = mob.points
         frgbas = mob.__dict__.get('fill_rgbas')
         srgbas = mob.__dict__.get('stroke_rgbas')
+        prgbas = mob.__dict__.get('rgbas')
         sw = mob.__dict__.get('stroke_width')
         if isinstance(sw, (int, float)):
             swk = float(sw)
@@ -123,6 +128,12 @@ class PaintMixin:
                 swk = repr(sw)
         vp = get_viewport()
         gp = mob.__dict__.get('_grow_point')
+        try:
+            black_fill = (frgbas is None or len(frgbas) == 0
+                          or not np.any(frgbas[:, :3]))
+        except Exception:
+            black_fill = True
+        color_key = (id(mob.__dict__.get('color')) if black_fill else None)
         if vp is None:
             vp_key = None
         else:
@@ -138,6 +149,7 @@ class PaintMixin:
             pts.shape, pts.tobytes(),
             None if frgbas is None else (frgbas.shape, frgbas.tobytes()),
             None if srgbas is None else (srgbas.shape, srgbas.tobytes()),
+            None if prgbas is None else (prgbas.shape, prgbas.tobytes()),
             swk, float(a), float(rot),
             None if parent_offset is None
             else tuple(float(v) for v in parent_offset),
@@ -150,7 +162,7 @@ class PaintMixin:
             mob.__dict__.get('_vulkan_progress_upper'),
             mob.__dict__.get('_vulkan_progress_lower'),
             mob.__dict__.get('_vulkan_points_partial', False),
-            repr(getattr(mob, 'color', None)),
+            color_key,
         )
 
     def _family_state(self, root, angle):
@@ -176,6 +188,7 @@ class PaintMixin:
             pts = m.points
             frgbas = m.__dict__.get('fill_rgbas')
             srgbas = m.__dict__.get('stroke_rgbas')
+            prgbas = m.__dict__.get('rgbas')
             sw = m.__dict__.get('stroke_width')
             if isinstance(sw, (int, float)):
                 swk = float(sw)
@@ -190,10 +203,17 @@ class PaintMixin:
                 la_key = None if la is None else np.asarray(la).tobytes()
             except Exception:
                 la_key = repr(la)
+            try:
+                black_fill = (frgbas is None or len(frgbas) == 0
+                              or not np.any(frgbas[:, :3]))
+            except Exception:
+                black_fill = True
+            color_key = (id(m.__dict__.get('color')) if black_fill else None)
             parts.append((
                 id(m), pts.shape, pts.tobytes(),
                 None if frgbas is None else (frgbas.shape, frgbas.tobytes()),
                 None if srgbas is None else (srgbas.shape, srgbas.tobytes()),
+                None if prgbas is None else (prgbas.shape, prgbas.tobytes()),
                 swk, get_anim_opacity(m), get_anim_rotation(m),
                 m.__dict__.get('_grow_scale', 1.0),
                 None if gp is None else tuple(float(v) for v in gp),
@@ -207,7 +227,7 @@ class PaintMixin:
                 bool(m.__dict__.get('_transforming', False)),
                 bool(m.__dict__.get('_write_active', False)),
                 la_key,
-                repr(getattr(m, 'color', None)),
+                color_key,
             ))
         return (float(angle), vp_key, tuple(parts))
 
@@ -221,43 +241,1262 @@ class PaintMixin:
         except Exception:
             paint()
             return
-        cached = mob.__dict__.get('_rtm_root_cache')
-        if cached is not None and cached[0] == sig:
-            for fn, args in cached[1]:
-                fn(*args)
-            return
-        rec = _ReplayDLL(self.dll)
-        self.dll = rec
+        self._replay_or_record(mob, sig, '_rtm_root_cache', paint)
+
+    def _replay_or_record(self, mob, sig, key, send):
+        """Replay a cached send; record only once the state has gone stable.
+
+        Animated content changes its signature on every frame, so recording
+        then would be pure overhead.  The first unchanged frame after a change
+        records; later frames replay.
+        """
+        last_key = key + '_last'
+        if mob.__dict__.get(last_key) == sig:
+            cached = mob.__dict__.get(key)
+            if cached is not None and cached[0] == sig:
+                for fn, args in cached[1]:
+                    fn(*args)
+                return True
+            rec = _ReplayDLL(self.dll)
+            self.dll = rec
+            try:
+                send()
+            finally:
+                self.dll = rec.real
+            try:
+                mob.__dict__[key] = (sig, rec.calls)
+            except Exception:
+                pass
+            return True
         try:
-            paint()
-        finally:
-            self.dll = rec.real
-        try:
-            mob._rtm_root_cache = (sig, rec.calls)
+            mob.__dict__[last_key] = sig
         except Exception:
             pass
+        prev = getattr(self, '_paint_unstable', False)
+        self._paint_unstable = True
+        try:
+            send()
+        finally:
+            self._paint_unstable = prev
+        return True
+
+    def _cached_sender_leaf(self, mob, sig, send):
+        """Replay a leaf sender's recorded native calls when nothing changed."""
+        return self._replay_or_record(mob, sig, '_rtm_sender_cache', send)
 
     def _cached_vmobject_leaf(self, mob, a, w, h, rot, parent_offset,
                               is_text=False):
         """`_send_vmobject` with a replay cache for a static leaf."""
-        sig = self._leaf_state(mob, a, w, h, rot, parent_offset) + (
-            id(self.dll),)
-        cached = mob.__dict__.get('_rtm_vm_cache')
-        if cached is not None and cached[0] == sig:
-            for fn, args in cached[1]:
-                fn(*args)
-            return True
-        rec = _ReplayDLL(self.dll)
-        self.dll = rec
-        try:
+        if getattr(self, '_paint_unstable', False):
             self._send_vmobject(mob, a, w, h, parent_offset, rot,
                                 is_text=is_text)
-        finally:
-            self.dll = rec.real
+            return True
+        sig = self._leaf_state(mob, a, w, h, rot, parent_offset) + (
+            id(self.dll),)
+        return self._replay_or_record(
+            mob, sig, '_rtm_vm_cache',
+            lambda: self._send_vmobject(mob, a, w, h, parent_offset, rot,
+                                        is_text=is_text))
+
+    def _batch_line_ok(self, mob):
+        """True when `_send_line_batch` reproduces `_send_line` exactly."""
+        if type(mob) is not Line or mob.submobjects:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        cap = getattr(mob, 'cap_style', None)
+        cap_name = getattr(cap, 'name', '') if cap is not None else ''
+        if not cap_name and isinstance(cap, int):
+            cap_name = {1: 'ROUND', 3: 'SQUARE'}.get(cap, '')
+        if not cap_name and cap is not None:
+            cap_name = str(cap)
+        if str(cap_name).upper() in ('ROUND', 'BUTT', 'SQUARE'):
+            return False
+        if len(mob.points) != 4:
+            return False
+        return self._path_is_a_straight_cubic(mob)
+
+    def _send_line_batch(self, mobs):
+        """Vectorised send for a run of plain, full-progress `Line`s."""
+        w, h = self.win_w, self.win_h
+        pts = np.stack([m.points for m in mobs])
+        s = pts[:, 0, :]
+        e = pts[:, -1, :]
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx1 = cx + s[:, 0] * scale
+            sy1 = cy - s[:, 1] * scale
+            sx2 = cx + e[:, 0] * scale
+            sy2 = cy - e[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx1, sy1 = vp.project_points(s[:, 0], s[:, 1], s[:, 2], w, h)
+            sx2, sy2 = vp.project_points(e[:, 0], e[:, 1], e[:, 2], w, h)
+        rgba = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                         for m in mobs])
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       for m in mobs])
+        px_scale = 0.01 * (h / self._unit_frame_height())
+        px = np.array([get_stroke_w(m) * px_scale for m in mobs])
+        alphas = np.array([get_anim_opacity(m) for m in mobs]) * so
+        r = (rgba[:, 0] * 255).astype(np.int64)
+        g = (rgba[:, 1] * 255).astype(np.int64)
+        b = (rgba[:, 2] * 255).astype(np.int64)
+        keep = ((np.abs(sx2 - sx1) >= 1e-6) | (np.abs(sy2 - sy1) >= 1e-6))
+        keep &= (px > 0) & (alphas > 0)
+        layer_cache = {}
+        dll = self.dll
+        for i in np.flatnonzero(keep):
+            key = (round(float(px[i]), 9), round(float(alphas[i]), 9))
+            layers = layer_cache.get(key)
+            if layers is None:
+                layers = tuple(self._stroke_layers(float(px[i]),
+                                                   float(alphas[i])))
+                layer_cache[key] = layers
+            x1, y1 = float(sx1[i]), float(sy1[i])
+            x2, y2 = float(sx2[i]), float(sy2[i])
+            ri, gi, bi = int(r[i]), int(g[i]), int(b[i])
+            for _w, _a in layers:
+                dll.AddLine(x1, y1, x2, y2, _w, ri, gi, bi, _a)
+
+    def _batch_circle_ok(self, mob):
+        """True when `_send_circle_batch` reproduces `_send_circle` exactly."""
+        if type(mob) is not Circle or mob.submobjects:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        frgbas = d.get('fill_rgbas')
         try:
-            mob._rtm_vm_cache = (sig, rec.calls)
+            fill_opacity = (0.0 if frgbas is None or not len(frgbas)
+                            else float(np.asarray(frgbas)[:, 3].max()))
+        except Exception:
+            return False
+        try:
+            stroke_opacity = float(np.asarray(mob.stroke_rgbas)[:, 3].max())
+        except Exception:
+            stroke_opacity = 0.0
+        if fill_opacity <= 0.001 and (stroke_opacity <= 0.0
+                                      or get_stroke_w(mob) <= 0.0):
+            return False
+        if fill_opacity > 0.001 and len(frgbas) > 1:
+            return False
+        # Roundness is validated for the whole run in one vectorised pass;
+        # doing it per circle was the dominant cost on moving scenes.
+        return len(mob.points) == 32
+
+    def _send_circle_batch(self, mobs):
+        """Vectorised send for a run of stroke-only, full-progress Circles."""
+        from real_time_manim.render.shapes.primitives import _unit_circle
+
+        w, h = self.win_w, self.win_h
+        pts_all = np.stack([m.points for m in mobs])
+        anchors = pts_all[:, 0::4, :]
+        first = pts_all[:, 0, :]
+        last = pts_all[:, -1, :]
+        closed = ((np.abs(first[:, 0] - last[:, 0]) < 1e-3)
+                  & (np.abs(first[:, 1] - last[:, 1]) < 1e-3))
+        lo = anchors.min(axis=1)
+        hi = anchors.max(axis=1)
+        centres = (lo + hi) / 2.0
+        d = np.linalg.norm(anchors[:, :, :2] - centres[:, None, :2], axis=2)
+        rmin = d.min(axis=1)
+        rmax = d.max(axis=1)
+        valid = closed & (rmin > 0.0) & (rmax <= rmin * 1.001)
+        cubics = pts_all.reshape(len(mobs), -1, 4, 3)[:, :, :, :2]
+        t = np.array([0.25, 0.5, 0.75])[:, None]
+        u = 1.0 - t
+        b = (u ** 3 * cubics[:, :, 0][:, :, None, :]
+             + 3.0 * u ** 2 * t * cubics[:, :, 1][:, :, None, :]
+             + 3.0 * u * t ** 2 * cubics[:, :, 2][:, :, None, :]
+             + t ** 3 * cubics[:, :, 3][:, :, None, :])
+        dist = np.linalg.norm(b - centres[:, None, None, :2], axis=3)
+        valid &= np.all(
+            np.abs(dist - rmin[:, None, None]) <= rmin[:, None, None] * 0.01,
+            axis=(1, 2))
+        for i in np.flatnonzero(~valid):
+            self._send_vmobject(mobs[int(i)], 1.0, w, h, None, 0.0)
+        if not np.any(valid):
+            return
+        if not np.all(valid):
+            keep = np.flatnonzero(valid)
+            mobs = [mobs[int(i)] for i in keep]
+            pts_all = pts_all[keep]
+            centres = centres[keep]
+        n = len(mobs)
+        radii = np.linalg.norm(pts_all[:, 0, :2] - centres[:, :2], axis=1)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + centres[:, 0] * scale
+            sy = cy - centres[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(centres[:, 0], centres[:, 1],
+                                       centres[:, 2], w, h)
+        scale_y = h / self._visible_frame_height()
+        sr = radii * scale_y
+        px_scale = 0.01 * (h / self._unit_frame_height())
+        px = np.array([get_stroke_w(m) * px_scale for m in mobs])
+        srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                           for m in mobs])
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs])
+        alphas = anim * so
+        r = (srgbas[:, 0] * 255).astype(np.int64)
+        g = (srgbas[:, 1] * 255).astype(np.int64)
+        b = (srgbas[:, 2] * 255).astype(np.int64)
+        fill_rgb = np.array([self._fill_color(m) for m in mobs],
+                            dtype=np.int64)
+        fo = np.array([float(np.asarray(m.fill_rgbas)[:, 3].max())
+                       if len(m.fill_rgbas) else 0.0 for m in mobs])
+        dll = self.dll
+        from real_time_manim.render.shapes.primitives import curve_segments
+        for i in range(n):
+            fr, fg, fb = int(fill_rgb[i, 0]), int(fill_rgb[i, 1]), int(fill_rgb[i, 2])
+            dll.AddCircle(float(sx[i]), float(sy[i]), float(sr[i]),
+                          fr, fg, fb, 0, 0, 0, 0.0, 1.0,
+                          float(anim[i] * fo[i]))
+        # Group outlines by segment count so each group needs one numpy pass
+        # and one ctypes copy; the per-circle call only gets a pointer offset.
+        groups = {}
+        for i in range(n):
+            groups.setdefault(curve_segments(sr[i]), []).append(i)
+        ptr_type = ctypes.POINTER(ctypes.c_float)
+        layer_cache = {}
+        for segs, idxs in groups.items():
+            c, s = _unit_circle(segs)
+            idxs_arr = np.asarray(idxs, dtype=np.intp)
+            xy = np.empty((len(idxs), segs + 1, 2), dtype=np.float32)
+            xy[:, :, 0] = sx[idxs_arr, None] + c[None, :] * sr[idxs_arr, None]
+            xy[:, :, 1] = sy[idxs_arr, None] - s[None, :] * sr[idxs_arr, None]
+            flat = np.ascontiguousarray(xy.reshape(-1))
+            coords = (ctypes.c_float * flat.size).from_buffer_copy(flat)
+            stride = (segs + 1) * 2 * 4
+            for k, i in enumerate(idxs):
+                base = ctypes.cast(ctypes.byref(coords, k * stride), ptr_type)
+                key = (round(float(px[i]), 9), round(float(alphas[i]), 9))
+                layers = layer_cache.get(key)
+                if layers is None:
+                    layers = tuple(self._stroke_layers(float(px[i]),
+                                                       float(alphas[i])))
+                    layer_cache[key] = layers
+                for _w, _al in layers:
+                    dll.AddLineStrip(base, None, segs + 1, _w,
+                                     int(r[i]), int(g[i]), int(b[i]), _al)
+
+    def _batch_quad_ok(self, mob):
+        """True when `_send_quad_batch` reproduces `_send_vmobject` exactly."""
+        if mob.submobjects or not isinstance(mob, VMobject):
+            return False
+        if isinstance(mob, (Circle, Line, Square, Rectangle, Ellipse, Dot,
+                            Arc, Polygon, Polygram, Arrow, DashedLine, Point,
+                            MathTexPart)):
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d or '_write_active' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        if getattr(mob, 'shade_in_3d', False):
+            return False
+        if getattr(mob, 'background_stroke_width', 0):
+            return False
+        pts = mob.points
+        if len(pts) != 16:
+            return False
+        if not (abs(pts[0][0] - pts[-1][0]) < 1e-6
+                and abs(pts[0][1] - pts[-1][1]) < 1e-6):
+            return False
+        frgbas = d.get('fill_rgbas')
+        srgbas = d.get('stroke_rgbas')
+        if frgbas is None or len(frgbas) != 1:
+            return False
+        if srgbas is None or len(srgbas) != 1:
+            return False
+        fa_max = float(np.asarray(frgbas)[:, 3].max())
+        sw_manim = get_stroke_w(mob)
+        if fa_max > 0.001 and not np.any(np.asarray(frgbas[0][:3], dtype=float)):
+            return False
+        if sw_manim > 0.0 and not np.any(np.asarray(srgbas[0][:3],
+                                                    dtype=float)):
+            return False
+        return self._edges_are_straight(pts)
+
+    def _run_state(self, mobs, a=1.0):
+        """Cheap signature of a whole homogeneous run (for batch replay)."""
+        pts = np.stack([m.points for m in mobs])
+        fr = np.stack([np.asarray(m.fill_rgbas[0], dtype=float)
+                       for m in mobs])
+        sr = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                       for m in mobs])
+        sw = np.array([get_stroke_w(m) for m in mobs], dtype=float)
+        anim = np.array([get_anim_opacity(m) for m in mobs],
+                        dtype=float) * a
+        vp = get_viewport()
+        if vp is None:
+            vp_key = None
+        else:
+            vp_key = (
+                vp.center, vp.height, vp.unit_height,
+                None if vp.rotation is None
+                else np.asarray(vp.rotation, dtype=float).tobytes(),
+                vp.frame_center, vp.focal_distance, vp.exponential,
+            )
+        return (pts.shape, pts.tobytes(), fr.tobytes(), sr.tobytes(),
+                sw.tobytes(), anim.tobytes(), vp_key)
+
+    def _send_quad_batch(self, mobs, a=1.0):
+        """Vectorised fill+stroke send for a run of closed flat quads."""
+        try:
+            sig = self._run_state(mobs, a)
+        except Exception:
+            sig = None
+        if sig is None:
+            return self._send_quad_batch_uncached(mobs, a)
+        return self._replay_or_record(
+            mobs[0], sig, '_rtm_quad_run',
+            lambda: self._send_quad_batch_uncached(mobs, a))
+
+    def _send_quad_batch_uncached(self, mobs, a=1.0):
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        pts_all = np.stack([m.points for m in mobs])
+        flat3 = pts_all.reshape(-1, 3)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + flat3[:, 0] * scale
+            sy = cy - flat3[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(flat3[:, 0], flat3[:, 1], flat3[:, 2],
+                                       w, h)
+        flat = np.zeros((len(flat3), 3), dtype=np.float32)
+        flat[:, 0] = sx
+        flat[:, 1] = sy
+        flat = flat.reshape(n, 16, 3)
+        # stroke walks the cubic end anchors (p3 of each cubic) after p0.
+        stroke_idx = np.array([0, 3, 7, 11, 15], dtype=np.intp)
+        stroke_xy = flat[:, stroke_idx, :2]
+        frgbas = np.stack([np.asarray(m.fill_rgbas[0], dtype=float)
+                           for m in mobs])
+        srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                           for m in mobs])
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        fa = frgbas[:, 3]
+        fri = np.round(frgbas[:, 0] * 255).astype(np.int64)
+        fgi = np.round(frgbas[:, 1] * 255).astype(np.int64)
+        fbi = np.round(frgbas[:, 2] * 255).astype(np.int64)
+        sri = np.round(srgbas[:, 0] * 255).astype(np.int64)
+        sgi = np.round(srgbas[:, 1] * 255).astype(np.int64)
+        sbi = np.round(srgbas[:, 2] * 255).astype(np.int64)
+        px = np.array([self._stroke_width(m) for m in mobs])
+        stroke_w = np.where(px > 0, np.maximum(1.0, px), 0.0)
+        fill_alpha = np.minimum(1.0, fa)
+        vis_fill = np.minimum(1.0, fa * anim)
+        show_fill = vis_fill > 0.01
+        alphas = np.minimum(1.0, so * anim)
+        do_stroke = (alphas > 0.01) & (px > 0)
+        coords_fill = (ctypes.c_float * flat.size).from_buffer_copy(
+            np.ascontiguousarray(flat.reshape(-1)))
+        coords_stroke = (ctypes.c_float * stroke_xy.size).from_buffer_copy(
+            np.ascontiguousarray(stroke_xy.reshape(-1)))
+        alph = np.repeat(alphas.astype(np.float32)[:, None], 5, axis=1)
+        alphas_ct = (ctypes.c_float * alph.size).from_buffer_copy(
+            np.ascontiguousarray(alph.reshape(-1)))
+        ptr_t = ctypes.POINTER(ctypes.c_float)
+        dll = self.dll
+        stride_f = 16 * 3 * 4
+        stride_s = 5 * 2 * 4
+        stride_a = 5 * 4
+        for i in range(n):
+            fp = ctypes.cast(ctypes.byref(coords_fill, i * stride_f), ptr_t)
+            dll.AddBezierPath(
+                fp, 16,
+                int(sri[i]), int(sgi[i]), int(sbi[i]), float(stroke_w[i]),
+                int(fri[i]), int(fgi[i]), int(fbi[i]), float(fill_alpha[i]),
+                1.0, 0, 1 if show_fill[i] else 0, float(anim[i]),
+                int(fri[i]), int(fgi[i]), int(fbi[i]),
+                0.0, 0.0, 0.0, 0.0)
+            if do_stroke[i]:
+                sp = ctypes.cast(ctypes.byref(coords_stroke, i * stride_s),
+                                 ptr_t)
+                ap = ctypes.cast(ctypes.byref(alphas_ct, i * stride_a), ptr_t)
+                dll.AddLineStrip(sp, ap, 5, int(stroke_w[i]),
+                                 int(sri[i]), int(sgi[i]), int(sbi[i]), 1.0)
+        # The replay cache stores the cast pointers above; keep their backing
+        # arrays alive as long as that cache lives.
+        try:
+            mobs[0].__dict__['_rtm_quad_buffers'] = (
+                coords_fill, coords_stroke, alphas_ct)
         except Exception:
             pass
+
+    def _batch_dash_ok(self, mob):
+        """True when `_send_dash_batch` reproduces a one-cubic dash sender."""
+        if type(mob) is not Circle or mob.submobjects:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        if len(mob.points) != 4:
+            return False
+        frgbas = d.get('fill_rgbas')
+        if frgbas is not None and len(frgbas):
+            try:
+                if float(np.asarray(frgbas)[:, 3].max()) > 0.001:
+                    return False
+            except Exception:
+                return False
+        try:
+            if float(np.asarray(mob.stroke_rgbas)[:, 3].max()) <= 0.0:
+                return False
+        except Exception:
+            return False
+        return get_stroke_w(mob) > 0.0
+
+    def _send_dash_batch(self, mobs, a=1.0):
+        """Vectorised send for a run of stroke-only one-cubic dashes."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        pts = np.stack([m.points for m in mobs])
+        flat3 = pts.reshape(-1, 3)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + flat3[:, 0] * scale
+            sy = cy - flat3[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(flat3[:, 0], flat3[:, 1], flat3[:, 2],
+                                       w, h)
+        xy = np.stack([sx, sy], axis=1).reshape(n, 4, 2)
+        # same sampling rule as _small_path_chords
+        p0 = xy[:, 0]
+        p1 = xy[:, 1]
+        p2 = xy[:, 2]
+        p3 = xy[:, 3]
+        chord = np.linalg.norm(p3 - p0, axis=1)
+        cpoly = (np.linalg.norm(p1 - p0, axis=1)
+                 + np.linalg.norm(p2 - p1, axis=1)
+                 + np.linalg.norm(p3 - p2, axis=1))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            dvx = p3[:, 0] - p0[:, 0]
+            dvy = p3[:, 1] - p0[:, 1]
+            off1 = np.abs(dvx * (p0[:, 1] - p1[:, 1])
+                          - (p0[:, 0] - p1[:, 0]) * dvy) / chord
+            off2 = np.abs(dvx * (p0[:, 1] - p2[:, 1])
+                          - (p0[:, 0] - p2[:, 0]) * dvy) / chord
+        straight = (chord > 1e-9) & (np.maximum(off1, off2) <= 0.75)
+        est = (cpoly + chord) * 0.5
+        segs = np.maximum(8, np.minimum(256, np.ceil(est / 3.0))).astype(int)
+        segs = np.where(straight, 1, segs)
+        srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                           for m in mobs])
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        px = np.array([self._stroke_width(m) for m in mobs])
+        alpha = np.minimum(1.0, so * anim)
+        r = np.round(srgbas[:, 0] * 255).astype(np.int64)
+        g = np.round(srgbas[:, 1] * 255).astype(np.int64)
+        b = np.round(srgbas[:, 2] * 255).astype(np.int64)
+        layer_cache = {}
+        dll = self.dll
+        for i in range(n):
+            steps = int(segs[i])
+            key = (round(float(px[i]), 9), round(float(alpha[i]), 9))
+            layers = layer_cache.get(key)
+            if layers is None:
+                layers = tuple(self._stroke_layers(float(px[i]),
+                                                   float(alpha[i])))
+                layer_cache[key] = layers
+            ri, gi, bi = int(r[i]), int(g[i]), int(b[i])
+            if steps <= 1:
+                qx = (float(p0[i, 0]), float(p3[i, 0]))
+                qy = (float(p0[i, 1]), float(p3[i, 1]))
+            else:
+                t = np.linspace(0.0, 1.0, steps + 1)
+                u = 1.0 - t
+                bx = (u ** 3 * p0[i, 0] + 3 * u ** 2 * t * p1[i, 0]
+                      + 3 * u * t ** 2 * p2[i, 0] + t ** 3 * p3[i, 0])
+                by = (u ** 3 * p0[i, 1] + 3 * u ** 2 * t * p1[i, 1]
+                      + 3 * u * t ** 2 * p2[i, 1] + t ** 3 * p3[i, 1])
+                qx = bx.tolist()
+                qy = by.tolist()
+            for k in range(steps):
+                x1, y1 = qx[k], qy[k]
+                x2, y2 = qx[k + 1], qy[k + 1]
+                for _wd, _al in layers:
+                    dll.AddLine(x1, y1, x2, y2, _wd, ri, gi, bi, _al)
+
+    def _batch_poly_ok(self, mob):
+        """True when a lit `Square` face can use the flat AddPolygon batch."""
+        if not isinstance(mob, (Square, Rectangle)) or mob.submobjects:
+            return False
+        if not getattr(mob, 'shade_in_3d', False):
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        if get_stroke_w(mob) > 0.0:
+            return False
+        if getattr(mob, 'background_stroke_width', 0):
+            return False
+        frgbas = d.get('fill_rgbas')
+        if frgbas is None or len(frgbas) != 1:
+            return False
+        if float(np.asarray(frgbas)[:, 3].max()) <= 0.001:
+            return False
+        verts = mob.get_vertices()
+        return verts is not None and len(verts) == 4
+
+    @staticmethod
+    def _unit_normals_batch(v1, v2, tol=1e-6):
+        """Vectorised `_unit_normal` for an array of tangent pairs."""
+        n = len(v1)
+        out = np.zeros((n, 3), dtype=float)
+        div1 = np.max(np.abs(v1), axis=1)
+        div2 = np.max(np.abs(v2), axis=1)
+        both = (div1 == 0.0) & (div2 == 0.0)
+        out[both] = (0.0, -1.0, 0.0)
+        only2 = (div1 == 0.0) & (div2 != 0.0)
+        out[only2] = v2[only2] / div2[only2, None]
+        only1 = (div1 != 0.0) & (div2 == 0.0)
+        out[only1] = v1[only1] / div1[only1, None]
+        bothnz = (div1 != 0.0) & (div2 != 0.0)
+        if np.any(bothnz):
+            u1 = v1[bothnz] / div1[bothnz, None]
+            u2 = v2[bothnz] / div2[bothnz, None]
+            cp = np.cross(u1, u2)
+            cp_norm = np.sqrt(np.sum(cp * cp, axis=1))
+            ok = cp_norm > tol
+            idx = np.flatnonzero(bothnz)
+            out[idx[ok]] = cp[ok] / cp_norm[ok, None]
+            aligned = idx[~ok]
+            if len(aligned):
+                u = u1[~ok]
+                flat = (np.abs(u[:, 0]) < tol) & (np.abs(u[:, 1]) < tol)
+                for k, row in enumerate(aligned):
+                    if flat[k]:
+                        out[row] = (0.0, -1.0, 0.0)
+                        continue
+                    ux, uy, uz = u[k]
+                    cp2 = np.array([-ux * uz, -uy * uz, ux * ux + uy * uy])
+                    nn = float(np.sqrt(np.sum(cp2 * cp2)))
+                    out[row] = cp2 / nn if nn > 0 else (0.0, -1.0, 0.0)
+        only = only1 | only2
+        if np.any(only):
+            idx = np.flatnonzero(only)
+            u = out[idx].copy()
+            flat = (np.abs(u[:, 0]) < tol) & (np.abs(u[:, 1]) < tol)
+            for k, row in enumerate(idx):
+                if flat[k]:
+                    out[row] = (0.0, -1.0, 0.0)
+                    continue
+                ux, uy, uz = u[k]
+                cp2 = np.array([-ux * uz, -uy * uz, ux * ux + uy * uy])
+                nn = float(np.sqrt(np.sum(cp2 * cp2)))
+                out[row] = cp2 / nn if nn > 0 else (0.0, -1.0, 0.0)
+        # The `u` fallback for aligned rows still needs the 90-degree turn.
+        return out
+
+    def _lit_colors_batch(self, mobs):
+        """Per-face `shaded_fill_rgb` for an array of 16-point quads."""
+        vp = get_viewport()
+        light = getattr(vp, "light_source", None)
+        if vp is None or vp.rotation is None or light is None:
+            return None
+        pts = np.stack([m.points for m in mobs])
+        rgbas = np.stack([np.asarray(m.fill_rgbas[0][:3], dtype=float)
+                          for m in mobs])
+        npts = pts.shape[1]
+        end = ((npts - 1) // 6) * 3
+        n0 = self._unit_normals_batch(pts[:, 3] - pts[:, 0],
+                                      pts[:, npts - 4] - pts[:, 0])
+        n1 = self._unit_normals_batch(pts[:, end + 3] - pts[:, end],
+                                      pts[:, 3] - pts[:, end])
+        light = np.asarray(light, dtype=float)
+
+        def shade(points, normals):
+            to_light = light[None, :] - points
+            norm = np.linalg.norm(to_light, axis=1)
+            good = norm > 1e-12
+            unit = np.zeros_like(to_light)
+            unit[good] = to_light[good] / norm[good, None]
+            d = np.sum(normals * unit, axis=1)
+            term = 0.5 * d ** 3
+            term = np.where(term < 0.0, term * 0.5, term)
+            return rgbas + term[:, None]
+
+        lit = np.clip((shade(pts[:, 0], n0) + shade(pts[:, end], n1)) / 2.0,
+                      0.0, 1.0) * 255.0
+        return lit.astype(np.int64)
+
+    def _send_polygon_batch(self, mobs, a=1.0):
+        """Vectorised AddPolygon send for a run of lit flat Square faces."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        pts = np.stack([np.asarray(m.get_vertices(), dtype=float)
+                        for m in mobs])
+        flat3 = pts.reshape(-1, 3)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + flat3[:, 0] * scale
+            sy = cy - flat3[:, 1] * scale
+            cxs = cx + pts[:, :, 0].mean(axis=1) * scale
+            cys = cy - pts[:, :, 1].mean(axis=1) * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(flat3[:, 0], flat3[:, 1], flat3[:, 2],
+                                       w, h)
+            cxs, cys = vp.project_points(pts[:, :, 0].mean(axis=1),
+                                         pts[:, :, 1].mean(axis=1),
+                                         pts[:, :, 2].mean(axis=1), w, h)
+        xy = np.stack([sx, sy], axis=1).astype(np.float32)
+        coords = (ctypes.c_float * xy.size).from_buffer_copy(
+            np.ascontiguousarray(xy.reshape(-1)))
+        fo = np.array([float(np.asarray(m.fill_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        cols = self._lit_colors_batch(mobs)
+        if cols is None:
+            cols = np.array([self._fill_color(m) for m in mobs],
+                            dtype=np.int64)
+        ptr_t = ctypes.POINTER(ctypes.c_float)
+        stride = 4 * 2 * 4
+        dll = self.dll
+        for i in range(n):
+            vp_i = ctypes.cast(ctypes.byref(coords, i * stride), ptr_t)
+            dll.AddPolygon(
+                float(cxs[i]), float(cys[i]),
+                int(cols[i, 0]), int(cols[i, 1]), int(cols[i, 2]),
+                0, 0, 0, 0.0, 4, vp_i,
+                1.0, float(anim[i] * fo[i]), 1)
+        try:
+            mobs[0].__dict__['_rtm_poly_buffers'] = coords
+        except Exception:
+            pass
+
+    def _batch_arrow_ok(self, mob):
+        """True for a plain Arrow with the default filled triangle tip."""
+        if type(mob) is not Arrow or len(mob.submobjects) != 1:
+            return False
+        tip = mob.submobjects[0]
+        if type(tip).__name__ != 'ArrowTriangleFilledTip':
+            return False
+        if tip.submobjects or len(tip.points) != 12:
+            return False
+        if get_stroke_w(tip) > 0.0:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        if getattr(mob, 'background_stroke_width', 0):
+            return False
+        try:
+            if float(np.asarray(tip.fill_rgbas)[:, 3].max()) <= 0.0:
+                return False
+        except Exception:
+            return False
+        return len(mob.points) == 4
+
+    def _send_arrow_batch(self, mobs, a=1.0):
+        """Vectorised shaft + default-triangle-tip send for plain Arrows."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        own = np.stack([m.points for m in mobs])
+        s = own[:, 0, :]
+        e = own[:, -1, :]
+        tips = np.stack([m.submobjects[0].points for m in mobs])
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx1 = cx + s[:, 0] * scale
+            sy1 = cy - s[:, 1] * scale
+            sx2 = cx + e[:, 0] * scale
+            sy2 = cy - e[:, 1] * scale
+            tf = tips.reshape(-1, 3)
+            tx = cx + tf[:, 0] * scale
+            ty = cy - tf[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx1, sy1 = vp.project_points(s[:, 0], s[:, 1], s[:, 2], w, h)
+            sx2, sy2 = vp.project_points(e[:, 0], e[:, 1], e[:, 2], w, h)
+            tf = tips.reshape(-1, 3)
+            tx, ty = vp.project_points(tf[:, 0], tf[:, 1], tf[:, 2], w, h)
+        tip_flat = np.zeros((len(tf), 3), dtype=np.float32)
+        tip_flat[:, 0] = tx
+        tip_flat[:, 1] = ty
+        tip_flat = np.ascontiguousarray(tip_flat.reshape(n, 12, 3))
+        coords = (ctypes.c_float * tip_flat.size).from_buffer_copy(
+            tip_flat.reshape(-1))
+        stroke = np.array([self._stroke_color(m) for m in mobs],
+                          dtype=np.int64)
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        px = np.array([self._stroke_width(m) for m in mobs])
+        tip_rgb = np.array([self._fill_color(m.submobjects[0])
+                            for m in mobs], dtype=np.int64)
+        tip_stroke = np.array([self._stroke_color(m.submobjects[0])
+                               for m in mobs], dtype=np.int64)
+        tip_fa = np.array([float(np.asarray(m.submobjects[0].fill_rgbas)[:, 3].max())
+                           for m in mobs])
+        ptr_t = ctypes.POINTER(ctypes.c_float)
+        stride = 12 * 3 * 4
+        layer_cache = {}
+        dll = self.dll
+        for i in range(n):
+            ai = float(anim[i])
+            key = (round(float(px[i]), 9), round(ai * float(so[i]), 9))
+            layers = layer_cache.get(key)
+            if layers is None:
+                layers = tuple(self._stroke_layers(float(px[i]),
+                                                   ai * float(so[i])))
+                layer_cache[key] = layers
+            x1, y1 = float(sx1[i]), float(sy1[i])
+            x2, y2 = float(sx2[i]), float(sy2[i])
+            for _wd, _al in layers:
+                dll.AddLine(x1, y1, x2, y2, _wd,
+                            int(stroke[i, 0]), int(stroke[i, 1]),
+                            int(stroke[i, 2]), _al)
+            tp = ctypes.cast(ctypes.byref(coords, i * stride), ptr_t)
+            fa = min(1.0, float(tip_fa[i]))
+            show_fill = 1 if min(1.0, fa * ai) > 0.01 else 0
+            dll.AddBezierPath(
+                tp, 12,
+                int(tip_stroke[i, 0]), int(tip_stroke[i, 1]),
+                int(tip_stroke[i, 2]), 0.0,
+                int(tip_rgb[i, 0]), int(tip_rgb[i, 1]), int(tip_rgb[i, 2]),
+                fa, 1.0, 0, show_fill, ai,
+                int(tip_rgb[i, 0]), int(tip_rgb[i, 1]), int(tip_rgb[i, 2]),
+                0.0, 0.0, 0.0, 0.0)
+        try:
+            mobs[0].__dict__['_rtm_arrow_buffers'] = coords
+        except Exception:
+            pass
+
+    def _batch_square_ok(self, mob):
+        """True when a 2D Square/Rectangle can use the flat polygon batch."""
+        if not isinstance(mob, (Square, Rectangle)) or mob.submobjects:
+            return False
+        if getattr(mob, 'shade_in_3d', False):
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        if getattr(mob, 'background_stroke_width', 0):
+            return False
+        frgbas = d.get('fill_rgbas')
+        if frgbas is not None and len(frgbas) > 1:
+            return False
+        verts = mob.get_vertices()
+        if verts is None or len(verts) != 4:
+            return False
+        # A BEVEL contour has its own emitter (corner triangles).
+        return self._strip_join(mob) != 1
+
+    def _send_square_batch(self, mobs, a=1.0):
+        """Vectorised AddPolygon + strip send for 2D Squares/Rectangles."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        pts = np.stack([np.asarray(m.get_vertices(), dtype=float)
+                        for m in mobs])
+        flat3 = pts.reshape(-1, 3)
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + flat3[:, 0] * scale
+            sy = cy - flat3[:, 1] * scale
+            cxs = cx + pts[:, :, 0].mean(axis=1) * scale
+            cys = cy - pts[:, :, 1].mean(axis=1) * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(flat3[:, 0], flat3[:, 1], flat3[:, 2],
+                                       w, h)
+            cxs, cys = vp.project_points(pts[:, :, 0].mean(axis=1),
+                                         pts[:, :, 1].mean(axis=1),
+                                         pts[:, :, 2].mean(axis=1), w, h)
+        xy = np.stack([sx, sy], axis=1).astype(np.float32).reshape(n, 4, 2)
+        # closed strip: append the first vertex again
+        loop = np.concatenate([xy, xy[:, :1]], axis=1)
+        coords = (ctypes.c_float * loop.size).from_buffer_copy(
+            np.ascontiguousarray(loop.reshape(-1)))
+        fill = np.array([self._fill_color(m) for m in mobs], dtype=np.int64)
+        stroke = np.array([self._stroke_color(m) for m in mobs],
+                          dtype=np.int64)
+        fo = np.array([float(np.asarray(m.fill_rgbas)[:, 3].max())
+                       if len(m.fill_rgbas) else 0.0 for m in mobs])
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       if len(m.stroke_rgbas) else 0.0 for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        px = np.array([self._stroke_width(m) for m in mobs])
+        ptr_t = ctypes.POINTER(ctypes.c_float)
+        lstride = 5 * 2 * 4
+        dll = self.dll
+        for i in range(n):
+            vp_i = ctypes.cast(ctypes.byref(coords, i * lstride), ptr_t)
+            dll.AddPolygon(
+                float(cxs[i]), float(cys[i]),
+                int(fill[i, 0]), int(fill[i, 1]), int(fill[i, 2]),
+                0, 0, 0, 0.0, 4, vp_i,
+                1.0, float(anim[i] * fo[i]), 1)
+            if so[i] > 0.0 and px[i] > 0.0:
+                lp = ctypes.cast(ctypes.byref(coords, i * lstride), ptr_t)
+                for _wd, _al in self._stroke_layers(
+                        float(px[i]), float(anim[i] * so[i])):
+                    dll.AddLineStrip(
+                        lp, None, 5, _wd,
+                        int(stroke[i, 0]), int(stroke[i, 1]),
+                        int(stroke[i, 2]), _al)
+        try:
+            mobs[0].__dict__['_rtm_square_buffers'] = coords
+        except Exception:
+            pass
+
+    def _batch_dot_ok(self, mob):
+        """True when `_send_dot_batch` reproduces `_send_dot` exactly."""
+        if not isinstance(mob, Dot) or mob.submobjects:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        try:
+            fo = float(np.asarray(mob.fill_rgbas)[:, 3].max())
+        except Exception:
+            return False
+        return fo > 0.0 and len(mob.points) > 0
+
+    def _send_dot_batch(self, mobs, a=1.0):
+        """Vectorised AddCircle send for a run of plain filled Dots."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        mins = np.empty((n, 2), dtype=float)
+        maxs = np.empty((n, 2), dtype=float)
+        for i, m in enumerate(mobs):
+            pts = m.points
+            mins[i] = pts[:, :2].min(axis=0)
+            maxs[i] = pts[:, :2].max(axis=0)
+        centres = (mins + maxs) / 2.0
+        radii = np.minimum(maxs[:, 0] - mins[:, 0],
+                           maxs[:, 1] - mins[:, 1]) / 2.0
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx = cx + centres[:, 0] * scale
+            sy = cy - centres[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx, sy = vp.project_points(centres[:, 0], centres[:, 1],
+                                       np.zeros(n), w, h)
+        scale_y = h / self._visible_frame_height()
+        sr = radii * scale_y
+        fo = np.array([min(float(np.asarray(m.fill_rgbas)[:, 3].max()),
+                           float(getattr(m, '_dot_max_opacity', 1.0)))
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        cols = np.array([self._fill_color(m) for m in mobs], dtype=np.int64)
+        dll = self.dll
+        for i in range(n):
+            dll.AddCircle(float(sx[i]), float(sy[i]), float(sr[i]),
+                          int(cols[i, 0]), int(cols[i, 1]), int(cols[i, 2]),
+                          0, 0, 0, 0.0, 1.0, float(anim[i] * fo[i]))
+
+    def _paint_leaf_frame(self, roots):
+        """Compile a direct 2D frame of Line/Circle/quad leaves in one pass.
+
+        Geometry is prepared per type with numpy, but native commands are
+        emitted in the original document order, so overlapping mixed leaves
+        keep their exact paint order.
+        """
+        if not roots:
+            return False
+        for mob in roots:
+            if (self._batch_line_ok(mob) or self._batch_circle_ok(mob)
+                    or self._batch_quad_ok(mob)):
+                continue
+            return False
+        w, h = self.win_w, self.win_h
+        kinds = []
+        for mob in roots:
+            if self._batch_line_ok(mob):
+                kinds.append(0)
+            elif self._batch_circle_ok(mob):
+                kinds.append(1)
+            else:
+                kinds.append(2)
+        if len(set(kinds)) == 1:
+            # Homogeneous frames use the specialised run sender (and its
+            # replay cache); the mixed compiler would only add overhead.
+            return False
+        dll = self.dll
+        affine = affine_frame_map(w, h)
+
+        def project(xs, ys, zs):
+            if affine is not None:
+                scale, cx, cy = affine
+                return cx + xs * scale, cy - ys * scale
+            vp = get_viewport()
+            return vp.project_points(xs, ys, zs, w, h)
+
+        line_mobs = [m for m, k in zip(roots, kinds) if k == 0]
+        circle_mobs = [m for m, k in zip(roots, kinds) if k == 1]
+        quad_mobs = [m for m, k in zip(roots, kinds) if k == 2]
+        line_payload = {}
+        circle_payload = {}
+        quad_payload = {}
+
+        if line_mobs:
+            pts = np.stack([m.points for m in line_mobs])
+            s, e = pts[:, 0, :], pts[:, -1, :]
+            sx1, sy1 = project(s[:, 0], s[:, 1], s[:, 2])
+            sx2, sy2 = project(e[:, 0], e[:, 1], e[:, 2])
+            rgba = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                             for m in line_mobs])
+            so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                           for m in line_mobs])
+            anim = np.array([get_anim_opacity(m) for m in line_mobs])
+            px = np.array([get_stroke_w(m) * 0.01
+                           * (h / self._unit_frame_height())
+                           for m in line_mobs])
+            keep = ((np.abs(sx2 - sx1) >= 1e-6)
+                    | (np.abs(sy2 - sy1) >= 1e-6)) & (px > 0) & (so > 0)
+            layer_cache = {}
+            for i, m in enumerate(line_mobs):
+                if not keep[i]:
+                    line_payload[id(m)] = None
+                    continue
+                key = (round(float(px[i]), 9),
+                       round(float(anim[i] * so[i]), 9))
+                layers = layer_cache.get(key)
+                if layers is None:
+                    layers = tuple(self._stroke_layers(
+                        float(px[i]), float(anim[i] * so[i])))
+                    layer_cache[key] = layers
+                line_payload[id(m)] = (
+                    float(sx1[i]), float(sy1[i]),
+                    float(sx2[i]), float(sy2[i]), layers,
+                    int(round(rgba[i, 0] * 255)),
+                    int(round(rgba[i, 1] * 255)),
+                    int(round(rgba[i, 2] * 255)))
+
+        if circle_mobs:
+            from real_time_manim.render.shapes.primitives import (
+                _unit_circle, curve_segments)
+            pts_all = np.stack([m.points for m in circle_mobs])
+            anchors = pts_all[:, 0::4, :]
+            first = pts_all[:, 0, :]
+            last = pts_all[:, -1, :]
+            closed = ((np.abs(first[:, 0] - last[:, 0]) < 1e-3)
+                      & (np.abs(first[:, 1] - last[:, 1]) < 1e-3))
+            lo = anchors.min(axis=1)
+            hi = anchors.max(axis=1)
+            centres = (lo + hi) / 2.0
+            d = np.linalg.norm(anchors[:, :, :2] - centres[:, None, :2],
+                               axis=2)
+            rmin = d.min(axis=1)
+            rmax = d.max(axis=1)
+            valid = closed & (rmin > 0.0) & (rmax <= rmin * 1.001)
+            cubics = pts_all.reshape(len(circle_mobs), -1, 4, 3)[:, :, :, :2]
+            t = np.array([0.25, 0.5, 0.75])[:, None]
+            u = 1.0 - t
+            b = (u ** 3 * cubics[:, :, 0][:, :, None, :]
+                 + 3.0 * u ** 2 * t * cubics[:, :, 1][:, :, None, :]
+                 + 3.0 * u * t ** 2 * cubics[:, :, 2][:, :, None, :]
+                 + t ** 3 * cubics[:, :, 3][:, :, None, :])
+            dist = np.linalg.norm(b - centres[:, None, None, :2], axis=3)
+            valid &= np.all(
+                np.abs(dist - rmin[:, None, None])
+                <= rmin[:, None, None] * 0.01, axis=(1, 2))
+            if not np.all(valid):
+                return False
+            radii = np.linalg.norm(pts_all[:, 0, :2] - centres[:, :2], axis=1)
+            sx, sy = project(centres[:, 0], centres[:, 1], centres[:, 2])
+            scale_y = h / self._visible_frame_height()
+            sr = radii * scale_y
+            px = np.array([get_stroke_w(m) * 0.01
+                           * (h / self._unit_frame_height())
+                           for m in circle_mobs])
+            srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                               for m in circle_mobs])
+            so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                           for m in circle_mobs])
+            anim = np.array([get_anim_opacity(m) for m in circle_mobs])
+            fill_rgb = np.array([self._fill_color(m) for m in circle_mobs],
+                                dtype=np.int64)
+            fo = np.array([float(np.asarray(m.fill_rgbas)[:, 3].max())
+                           if len(m.fill_rgbas) else 0.0
+                           for m in circle_mobs])
+            ptr_t = ctypes.POINTER(ctypes.c_float)
+            groups = {}
+            for i in range(len(circle_mobs)):
+                groups.setdefault(curve_segments(sr[i]), []).append(i)
+            pointers = {}
+            layer_cache = {}
+            for segs, idxs in groups.items():
+                cvec, svec = _unit_circle(segs)
+                idxs_arr = np.asarray(idxs, dtype=np.intp)
+                xy = np.empty((len(idxs), segs + 1, 2), dtype=np.float32)
+                xy[:, :, 0] = (sx[idxs_arr, None]
+                               + cvec[None, :] * sr[idxs_arr, None])
+                xy[:, :, 1] = (sy[idxs_arr, None]
+                               - svec[None, :] * sr[idxs_arr, None])
+                flat = np.ascontiguousarray(xy.reshape(-1))
+                coords = (ctypes.c_float * flat.size).from_buffer_copy(flat)
+                stride = (segs + 1) * 2 * 4
+                for k, i in enumerate(idxs):
+                    pointers[i] = (ctypes.cast(
+                        ctypes.byref(coords, k * stride), ptr_t),
+                        segs + 1)
+            for i, m in enumerate(circle_mobs):
+                ai = float(anim[i])
+                key = (round(float(px[i]), 9),
+                       round(ai * float(so[i]), 9))
+                layers = layer_cache.get(key)
+                if layers is None:
+                    layers = tuple(self._stroke_layers(
+                        float(px[i]), ai * float(so[i])))
+                    layer_cache[key] = layers
+                circle_payload[id(m)] = (
+                    float(sx[i]), float(sy[i]), float(sr[i]),
+                    int(fill_rgb[i, 0]), int(fill_rgb[i, 1]),
+                    int(fill_rgb[i, 2]), ai * float(fo[i]),
+                    layers, pointers[i],
+                    int(round(srgbas[i, 0] * 255)),
+                    int(round(srgbas[i, 1] * 255)),
+                    int(round(srgbas[i, 2] * 255)))
+
+        if quad_mobs:
+            pts_all = np.stack([m.points for m in quad_mobs])
+            flat3 = pts_all.reshape(-1, 3)
+            sx, sy = project(flat3[:, 0], flat3[:, 1], flat3[:, 2])
+            flat = np.zeros((len(flat3), 3), dtype=np.float32)
+            flat[:, 0] = sx
+            flat[:, 1] = sy
+            flat = np.ascontiguousarray(flat.reshape(len(quad_mobs), 16, 3))
+            stroke_idx = np.array([0, 3, 7, 11, 15], dtype=np.intp)
+            stroke_xy = np.ascontiguousarray(flat[:, stroke_idx, :2])
+            frgbas = np.stack([np.asarray(m.fill_rgbas[0], dtype=float)
+                               for m in quad_mobs])
+            srgbas = np.stack([np.asarray(m.stroke_rgbas[0], dtype=float)
+                               for m in quad_mobs])
+            so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                           for m in quad_mobs])
+            anim = np.array([get_anim_opacity(m) for m in quad_mobs])
+            fa = frgbas[:, 3]
+            fri = np.round(frgbas[:, 0] * 255).astype(np.int64)
+            fgi = np.round(frgbas[:, 1] * 255).astype(np.int64)
+            fbi = np.round(frgbas[:, 2] * 255).astype(np.int64)
+            sri = np.round(srgbas[:, 0] * 255).astype(np.int64)
+            sgi = np.round(srgbas[:, 1] * 255).astype(np.int64)
+            sbi = np.round(srgbas[:, 2] * 255).astype(np.int64)
+            stw = np.array([self._stroke_width(m) for m in quad_mobs])
+            stroke_w = np.where(stw > 0, np.maximum(1.0, stw), 0.0)
+            fill_alpha = np.minimum(1.0, fa)
+            show_fill = np.minimum(1.0, fa * anim) > 0.01
+            alphas = np.minimum(1.0, so * anim)
+            do_stroke = (alphas > 0.01) & (stw > 0)
+            coords_fill = (ctypes.c_float * flat.size).from_buffer_copy(
+                np.ascontiguousarray(flat.reshape(-1)))
+            coords_stroke = (ctypes.c_float * stroke_xy.size).from_buffer_copy(
+                np.ascontiguousarray(stroke_xy.reshape(-1)))
+            alph = np.repeat(alphas.astype(np.float32)[:, None], 5, axis=1)
+            alphas_ct = (ctypes.c_float * alph.size).from_buffer_copy(
+                np.ascontiguousarray(alph.reshape(-1)))
+            ptr_t = ctypes.POINTER(ctypes.c_float)
+            for i, m in enumerate(quad_mobs):
+                fp = ctypes.cast(ctypes.byref(coords_fill, i * 16 * 3 * 4),
+                                 ptr_t)
+                sp = ctypes.cast(ctypes.byref(coords_stroke,
+                                              i * 5 * 2 * 4), ptr_t)
+                ap = ctypes.cast(ctypes.byref(alphas_ct, i * 5 * 4), ptr_t)
+                quad_payload[id(m)] = (
+                    fp, int(sri[i]), int(sgi[i]), int(sbi[i]),
+                    float(stroke_w[i]), int(fri[i]), int(fgi[i]),
+                    int(fbi[i]), float(fill_alpha[i]),
+                    1 if show_fill[i] else 0, float(anim[i]),
+                    sp, ap, bool(do_stroke[i]), int(stroke_w[i]))
+
+        for mob, kind in zip(roots, kinds):
+            if kind == 0:
+                payload = line_payload.get(id(mob))
+                if payload is not None:
+                    x1, y1, x2, y2, layers, ri, gi, bi = payload
+                    for _wd, _al in layers:
+                        dll.AddLine(x1, y1, x2, y2, _wd, ri, gi, bi, _al)
+            elif kind == 1:
+                payload = circle_payload.get(id(mob))
+                sx0, sy0, sr0, fr, fg, fb, fa0, layers, ptr_info, ri, gi, bi = payload
+                dll.AddCircle(sx0, sy0, sr0, fr, fg, fb,
+                              0, 0, 0, 0.0, 1.0, fa0)
+                ptr, count = ptr_info
+                for _wd, _al in layers:
+                    dll.AddLineStrip(ptr, None, count, _wd, ri, gi, bi, _al)
+            else:
+                (fp, sri, sgi, sbi, swd, fri, fgi, fbi, fa0, show,
+                 ai, sp, ap, do_stroke, int_w) = quad_payload[id(mob)]
+                dll.AddBezierPath(
+                    fp, 16, sri, sgi, sbi, swd,
+                    fri, fgi, fbi, fa0,
+                    1.0, 0, show, ai,
+                    fri, fgi, fbi, 0.0, 0.0, 0.0, 0.0)
+                if do_stroke:
+                    dll.AddLineStrip(sp, ap, 5, int_w, sri, sgi, sbi, 1.0)
+        return True
+
+    def _try_nonoverlap_batch(self, roots):
+        """Batch a mixed frame when every leaf's screen box is disjoint.
+
+        Paint order is only observable where primitives overlap.  A grid of
+        separate Line/Circle/quad leaves (a very common dense layout) can
+        therefore be sent per primitive type even though the types interleave,
+        which is what the continuity-based run batcher cannot do.
+        """
+        if not roots:
+            return False
+        affine = affine_frame_map(self.win_w, self.win_h)
+        if affine is None:
+            return False
+        n = len(roots)
+        kinds = []
+        mins = np.empty((n, 2), dtype=float)
+        maxs = np.empty((n, 2), dtype=float)
+        for i, mob in enumerate(roots):
+            if mob.submobjects:
+                return False
+            if self._batch_line_ok(mob):
+                kinds.append(0)
+            elif self._batch_circle_ok(mob):
+                kinds.append(1)
+            elif self._batch_dot_ok(mob):
+                kinds.append(3)
+            elif self._batch_arrow_ok(mob):
+                kinds.append(5)
+            elif self._batch_square_ok(mob):
+                kinds.append(4)
+            elif self._batch_quad_ok(mob):
+                kinds.append(2)
+            else:
+                return False
+            pts = mob.points
+            mins[i] = pts[:, :2].min(axis=0)
+            maxs[i] = pts[:, :2].max(axis=0)
+        scale, ax, ay = affine
+        x0 = ax + mins[:, 0] * scale
+        x1 = ax + maxs[:, 0] * scale
+        y0 = ay - maxs[:, 1] * scale
+        y1 = ay - mins[:, 1] * scale
+        order = np.argsort(x0)
+        xs0, xs1 = x0[order], x1[order]
+        ys0, ys1 = y0[order], y1[order]
+        for k in range(n):
+            j = k + 1
+            while j < n and xs0[j] <= xs1[k] + 0.5:
+                if ys0[j] <= ys1[k] + 0.5 and ys0[k] <= ys1[j] + 0.5:
+                    return False
+                j += 1
+        for kind, send in ((0, self._send_line_batch),
+                           (1, self._send_circle_batch),
+                           (3, self._send_dot_batch),
+                           (5, self._send_arrow_batch),
+                           (4, self._send_square_batch),
+                           (2, self._send_quad_batch)):
+            group = [m for m, k in zip(roots, kinds) if k == kind]
+            if group:
+                send(group)
         return True
 
     def _fast_leaf(self, mob, a, w, h, rot, parent_offset):
@@ -293,6 +1532,48 @@ class PaintMixin:
                     return False
                 self._send_line(mob, a, w, h, -rot, parent_offset)
                 return True
+            if isinstance(mob, Arc) and not isinstance(mob, Circle):
+                try:
+                    arc_fill = float(mob.fill_rgbas[:, 3].max())
+                except Exception:
+                    arc_fill = 0.0
+                if arc_fill > 0.0:
+                    return self._cached_vmobject_leaf(
+                        mob, a, w, h, rot, parent_offset)
+                sig = self._leaf_state(mob, a, w, h, rot, parent_offset) + (
+                    id(self.dll),
+                    getattr(mob, 'radius', None),
+                    getattr(mob, 'start_angle', None),
+                    getattr(mob, 'angle', None),
+                )
+                return self._cached_sender_leaf(
+                    mob, sig,
+                    lambda: self._send_arc(mob, a, w, h, -rot,
+                                           parent_offset))
+            if isinstance(mob, (Polygon, Polygram)):
+                sig = self._leaf_state(mob, a, w, h, rot, parent_offset) + (
+                    id(self.dll),)
+                verts = mob.get_vertices()
+                too_many = (verts is not None
+                            and len(verts) > NATIVE_MAX_POLYGON_VERTS)
+                flat_poly = self._edges_are_straight(mob.points)
+                if (too_many or fill_gradient_stops(mob) is not None
+                        or not flat_poly):
+                    send = lambda: self._send_vmobject(
+                        mob, a, w, h, parent_offset, rot)
+                else:
+                    send = lambda: self._send_polygon(
+                        mob, verts, a, rot_override=-rot,
+                        parent_offset=parent_offset)
+                return self._cached_sender_leaf(mob, sig, send)
+            if isinstance(mob, PMobject):
+                sig = self._leaf_state(mob, a, w, h, rot,
+                                       parent_offset) + (id(self.dll),)
+                return self._cached_sender_leaf(
+                    mob, sig,
+                    lambda: self._send_point_cloud(
+                        mob, a, w, h, rot=-rot,
+                        parent_offset=parent_offset))
             if (isinstance(mob, VMobject)
                     and not isinstance(mob, (Circle, Line, Square, Rectangle,
                                              Ellipse, Dot, Arc, Polygon,
@@ -770,7 +2051,7 @@ class PaintMixin:
             return True
         return bool(mob.has_points())
 
-    def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False, _skip_children=False):
+    def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False, _skip_children=False, _batch=None):
         w, h = self.win_w, self.win_h
         own_alpha = get_anim_opacity(mob)
         a = parent_alpha * own_alpha
@@ -870,6 +2151,7 @@ class PaintMixin:
                                    parent_transforming=parent_transforming,
                                    parent_is_text=parent_is_text),
                 mob,
+                batch=_batch,
             )
             return
 
@@ -967,6 +2249,32 @@ class PaintMixin:
             num_subs = len(subs)
             about = getattr(mob, '_rotation_about_point', None)
             is_3d = getattr(mob, '_rotation_3d', False)
+            if (collect is None and not is_3d and not is_text
+                    and rot == 0.0 and parent_offset is None
+                    and about is None
+                    and not getattr(mob, '_transforming', False)
+                    and mob.__dict__.get('_grow_scale', 1.0) == 1.0
+                    and mob.__dict__.get('_grow_point') is None
+                    and len(subs) >= 4):
+                try:
+                    if all(self._batch_dash_ok(s) for s in subs):
+                        self._send_dash_batch(subs, a)
+                        return
+                except Exception:
+                    pass
+            if (collect is None and not is_3d and not is_text
+                    and rot == 0.0 and parent_offset is None
+                    and about is None
+                    and not getattr(mob, '_transforming', False)
+                    and mob.__dict__.get('_grow_scale', 1.0) == 1.0
+                    and mob.__dict__.get('_grow_point') is None
+                    and len(subs) >= 4):
+                try:
+                    if all(self._batch_quad_ok(s) for s in subs):
+                        self._send_quad_batch(subs, a)
+                        return
+                except Exception:
+                    pass
             # A container with no geometry of its own (a Surface, most VGroups)
             # has nothing to shift: its own-points centre equals the family
             # centre, so its children inherit exactly `parent_offset`.  Skip
@@ -1083,7 +2391,15 @@ class PaintMixin:
                 # so animations like Indicate that set these on the VGroup correctly
                 # scale individual characters/text pieces.
                 need_gs, need_gp = lend_grow(mob, sub)
-                self._send(sub, sub_rot, parent_alpha=effective_alpha, parent_offset=effective_sub_offset, parent_transforming=getattr(mob, '_transforming', False) or parent_transforming, parent_is_text=is_text)
+                _b = None
+                if (collect is not None and effective_sub_offset is None
+                        and sub_rot == 0.0 and not sub_is_text
+                        and not getattr(mob, '_transforming', False)):
+                    if self._batch_poly_ok(sub):
+                        _b = ('poly', float(effective_alpha))
+                    elif self._batch_quad_ok(sub):
+                        _b = ('quad', float(effective_alpha))
+                self._send(sub, sub_rot, parent_alpha=effective_alpha, parent_offset=effective_sub_offset, parent_transforming=getattr(mob, '_transforming', False) or parent_transforming, parent_is_text=is_text, _batch=_b)
                 release_grow(getattr(self, '_paint_queue', None), sub,
                              need_gs, need_gp)
             return
@@ -1103,9 +2419,16 @@ class PaintMixin:
                 # one by one and must inherit the state (the loan is dropped
                 # when the queue flushes).
                 need_gs, need_gp = lend_grow(mob, sub)
+                _b = None
+                if (parent_offset is None and rot == 0.0
+                        and not parent_transforming):
+                    if self._batch_poly_ok(sub):
+                        _b = ('poly', float(a))
+                    elif self._batch_quad_ok(sub):
+                        _b = ('quad', float(a))
                 self._send(sub, rot, parent_alpha=a, parent_offset=parent_offset,
                            parent_transforming=parent_transforming,
-                           parent_is_text=is_text)
+                           parent_is_text=is_text, _batch=_b)
                 release_grow(collect, sub, need_gs, need_gp)
             return
 
@@ -1537,6 +2860,26 @@ class PaintMixin:
         if (not _skip_children
                 and not isinstance(mob, (Text, VGroup, Group, MathTexPart, Arrow, DashedLine))
                 and hasattr(mob, 'submobjects') and mob.submobjects):
+            if (collect is None and rot == 0.0 and parent_offset is None
+                    and not is_text
+                    and not getattr(mob, '_transforming', False)
+                    and len(mob.submobjects) >= 4):
+                try:
+                    if all(self._batch_dash_ok(s) for s in mob.submobjects):
+                        self._send_dash_batch(mob.submobjects, a)
+                        return
+                except Exception:
+                    pass
+            if (collect is None and rot == 0.0 and parent_offset is None
+                    and not is_text
+                    and not getattr(mob, '_transforming', False)
+                    and len(mob.submobjects) >= 4):
+                try:
+                    if all(self._batch_quad_ok(s) for s in mob.submobjects):
+                        self._send_quad_batch(mob.submobjects, a)
+                        return
+                except Exception:
+                    pass
             for _i, sub in depth_order(mob.submobjects):
                 # The sender above drew `mob` with its `_grow_scale`; the
                 # children are drawn by their own senders, so hand the state

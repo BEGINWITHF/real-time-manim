@@ -462,13 +462,18 @@ class PrimitiveMixin:
 
     def _send_circle(self, mob, a, w, h, rot, parent_offset=None):
         sig = None
+        stable = False
         try:
             sig = self._circle_state(mob, a, w, h, rot, parent_offset) + (
                 id(self.dll),)
-            cached = mob.__dict__.get('_rtm_circle_cache')
-            if cached is not None and cached[0] == sig:
-                self._replay_circle(cached[1])
-                return
+            stable = mob.__dict__.get('_rtm_circle_last') == sig
+            if stable:
+                cached = mob.__dict__.get('_rtm_circle_cache')
+                if cached is not None and cached[0] == sig:
+                    self._replay_circle(cached[1])
+                    return
+            else:
+                mob.__dict__['_rtm_circle_last'] = sig
         except Exception:
             sig = None
         cx, cy, cz = path_center(mob)
@@ -536,7 +541,7 @@ class PrimitiveMixin:
                 for _w, _al in layers:
                     self.dll.AddLineStrip(coords, None, len(xy), _w,
                                           cr, cg, cb, _al)
-                if sig is not None:
+                if sig is not None and stable:
                     try:
                         mob._rtm_circle_cache = (
                             sig,

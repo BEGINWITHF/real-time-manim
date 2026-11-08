@@ -176,6 +176,26 @@ def path_extent(mob):
         # remove_list_redundancies) just to return the mobject itself.  Read
         # its own points directly; containers keep the family walk below.
         family = (mob,) if not getattr(mob, 'submobjects', None) else mob.get_family()
+        if len(family) > 32:
+            # Large family (a Text with thousands of glyphs): one concatenate
+            # and one min/max beat 2 numpy reductions per glyph.
+            arrays = []
+            for sub in family:
+                pts = sub.points
+                n = len(pts)
+                if n == 0:
+                    continue
+                if n > 1:
+                    k = int(getattr(sub, "n_points_per_cubic_curve", 4) or 4)
+                    if k != 1:
+                        arrays.append(pts[0::k])
+                        arrays.append(pts[k - 1::k])
+                        continue
+                arrays.append(pts)
+            if arrays:
+                allpts = np.concatenate(arrays, axis=0)
+                if len(allpts):
+                    return allpts.min(axis=0), allpts.max(axis=0)
         for sub in family:
             pts = sub.points
             n = len(pts)

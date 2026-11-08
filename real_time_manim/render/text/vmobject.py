@@ -547,6 +547,16 @@ class VMobjectMixin:
             # scale individual child pieces.
             pg_gs = getattr(mob, '_grow_scale', None)
             pg_gp = getattr(mob, '_grow_point', None)
+            if (parent_offset is None and rot == 0.0 and not is_text
+                    and pg_gs is None and pg_gp is None
+                    and len(mob.submobjects) >= 4):
+                try:
+                    if all(self._batch_dash_ok(s)
+                           for s in mob.submobjects):
+                        self._send_dash_batch(mob.submobjects, a)
+                        return
+                except Exception:
+                    pass
             for sub in mob.submobjects:
                 need_gs = pg_gs is not None and not hasattr(sub, '_grow_scale')
                 need_gp = pg_gp is not None and not hasattr(sub, '_grow_point')
