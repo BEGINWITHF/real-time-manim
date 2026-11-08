@@ -934,6 +934,117 @@ class PaintMixin:
         except Exception:
             pass
 
+    def _batch_arrow_ok(self, mob):
+        """True for a plain Arrow with the default filled triangle tip."""
+        if type(mob) is not Arrow or len(mob.submobjects) != 1:
+            return False
+        tip = mob.submobjects[0]
+        if type(tip).__name__ != 'ArrowTriangleFilledTip':
+            return False
+        if tip.submobjects or len(tip.points) != 12:
+            return False
+        if get_stroke_w(tip) > 0.0:
+            return False
+        d = mob.__dict__
+        if ('_transforming' in d or '_rotation_about_point' in d
+                or '_vulkan_progress_upper' in d):
+            return False
+        if float(d.get('_vulkan_progress', 1.0)) < 1.0:
+            return False
+        if d.get('_grow_scale', 1.0) != 1.0 or d.get('_grow_point') is not None:
+            return False
+        if get_anim_rotation(mob) != 0.0:
+            return False
+        if get_anim_opacity(mob) <= 0.0:
+            return False
+        vp = get_viewport()
+        if vp is not None and vp.rotation is not None:
+            return False
+        if getattr(mob, 'background_stroke_width', 0):
+            return False
+        try:
+            if float(np.asarray(tip.fill_rgbas)[:, 3].max()) <= 0.0:
+                return False
+        except Exception:
+            return False
+        return len(mob.points) == 4
+
+    def _send_arrow_batch(self, mobs, a=1.0):
+        """Vectorised shaft + default-triangle-tip send for plain Arrows."""
+        w, h = self.win_w, self.win_h
+        n = len(mobs)
+        own = np.stack([m.points for m in mobs])
+        s = own[:, 0, :]
+        e = own[:, -1, :]
+        tips = np.stack([m.submobjects[0].points for m in mobs])
+        affine = affine_frame_map(w, h)
+        if affine is not None:
+            scale, cx, cy = affine
+            sx1 = cx + s[:, 0] * scale
+            sy1 = cy - s[:, 1] * scale
+            sx2 = cx + e[:, 0] * scale
+            sy2 = cy - e[:, 1] * scale
+            tf = tips.reshape(-1, 3)
+            tx = cx + tf[:, 0] * scale
+            ty = cy - tf[:, 1] * scale
+        else:
+            vp = get_viewport()
+            sx1, sy1 = vp.project_points(s[:, 0], s[:, 1], s[:, 2], w, h)
+            sx2, sy2 = vp.project_points(e[:, 0], e[:, 1], e[:, 2], w, h)
+            tf = tips.reshape(-1, 3)
+            tx, ty = vp.project_points(tf[:, 0], tf[:, 1], tf[:, 2], w, h)
+        tip_flat = np.zeros((len(tf), 3), dtype=np.float32)
+        tip_flat[:, 0] = tx
+        tip_flat[:, 1] = ty
+        tip_flat = np.ascontiguousarray(tip_flat.reshape(n, 12, 3))
+        coords = (ctypes.c_float * tip_flat.size).from_buffer_copy(
+            tip_flat.reshape(-1))
+        stroke = np.array([self._stroke_color(m) for m in mobs],
+                          dtype=np.int64)
+        so = np.array([float(np.asarray(m.stroke_rgbas)[:, 3].max())
+                       for m in mobs])
+        anim = np.array([get_anim_opacity(m) for m in mobs]) * a
+        px = np.array([self._stroke_width(m) for m in mobs])
+        tip_rgb = np.array([self._fill_color(m.submobjects[0])
+                            for m in mobs], dtype=np.int64)
+        tip_stroke = np.array([self._stroke_color(m.submobjects[0])
+                               for m in mobs], dtype=np.int64)
+        tip_fa = np.array([float(np.asarray(m.submobjects[0].fill_rgbas)[:, 3].max())
+                           for m in mobs])
+        ptr_t = ctypes.POINTER(ctypes.c_float)
+        stride = 12 * 3 * 4
+        layer_cache = {}
+        dll = self.dll
+        for i in range(n):
+            ai = float(anim[i])
+            key = (round(float(px[i]), 9), round(ai * float(so[i]), 9))
+            layers = layer_cache.get(key)
+            if layers is None:
+                layers = tuple(self._stroke_layers(float(px[i]),
+                                                   ai * float(so[i])))
+                layer_cache[key] = layers
+            x1, y1 = float(sx1[i]), float(sy1[i])
+            x2, y2 = float(sx2[i]), float(sy2[i])
+            for _wd, _al in layers:
+                dll.AddLine(x1, y1, x2, y2, _wd,
+                            int(stroke[i, 0]), int(stroke[i, 1]),
+                            int(stroke[i, 2]), _al)
+            tp = ctypes.cast(ctypes.byref(coords, i * stride), ptr_t)
+            fa = min(1.0, float(tip_fa[i]))
+            show_fill = 1 if min(1.0, fa * ai) > 0.01 else 0
+            dll.AddBezierPath(
+                tp, 12,
+                int(tip_stroke[i, 0]), int(tip_stroke[i, 1]),
+                int(tip_stroke[i, 2]), 0.0,
+                int(tip_rgb[i, 0]), int(tip_rgb[i, 1]), int(tip_rgb[i, 2]),
+                fa, 1.0, 0, show_fill, ai,
+                int(tip_rgb[i, 0]), int(tip_rgb[i, 1]), int(tip_rgb[i, 2]),
+                0.0, 0.0, 0.0, 0.0)
+        try:
+            mobs[0].__dict__['_rtm_arrow_buffers'] = coords
+        except Exception:
+            pass
+
     def _batch_square_ok(self, mob):
         """True when a 2D Square/Rectangle can use the flat polygon batch."""
         if not isinstance(mob, (Square, Rectangle)) or mob.submobjects:
@@ -1110,6 +1221,8 @@ class PaintMixin:
                 kinds.append(1)
             elif self._batch_dot_ok(mob):
                 kinds.append(3)
+            elif self._batch_arrow_ok(mob):
+                kinds.append(5)
             elif self._batch_square_ok(mob):
                 kinds.append(4)
             elif self._batch_quad_ok(mob):
@@ -1136,6 +1249,7 @@ class PaintMixin:
         for kind, send in ((0, self._send_line_batch),
                            (1, self._send_circle_batch),
                            (3, self._send_dot_batch),
+                           (5, self._send_arrow_batch),
                            (4, self._send_square_batch),
                            (2, self._send_quad_batch)):
             group = [m for m, k in zip(roots, kinds) if k == kind]
