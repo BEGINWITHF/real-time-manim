@@ -32,6 +32,7 @@
 - **Unsupported play-level kwarg** (e.g. play-level `lag_ratio=`) → warning `[RTM] win.play(): unsupported keyword(s) {...} ignored -- RTM 不支持该参数...` → pass it to the animation constructor instead. Honoured keys only: `run_time`, `rate_func`, `path_arc`, `path_arc_axis`, `path_arc_centers`, `path_func`.
 - **`run_time <= 0`** → `ValueError` (manim `Scene.validate_run_time`); a positive value under one frame clamps up with a warning.
 - **Recording needs `ffmpeg` on PATH** → else `[Record] ffmpeg not found. Install ffmpeg and add it to PATH.` / `[Record] ffmpeg failed: {stderr}` / `[Record] No frames captured, aborting.` / `[FastRecord] ffmpeg failed: {e}`.
+- **Non-UTF-8 console** → a progress `print()` used to raise `UnicodeEncodeError: 'charmap' codec can't encode character '\u2192'` inside `enable_fast_record`, *before* the first frame. Fixed: the FastRecord banners are ASCII and `import real_time_manim` reconfigures `stdout`/`stderr` with `errors="replace"` (`_harden_console_streams`); on older builds set `PYTHONIOENCODING=utf-8`.
 - **`overwrite=False` with an existing target** → `FileExistsError: "target already exists: {out_path} (pass overwrite=True to replace it)"` → pass `overwrite=True` or delete the file.
 - **`fast_record_scene` with a no-arg callable does NOT call `setup()`** → pass a class/instance if the scene relies on `setup()`.
 - **`jobs` parallelisation** only works for an importable single-window `Scene` class with ≥ `_AUTO_MIN_FRAMES=240`; instances/lambdas/function-local classes/no `if __name__ == "__main__"` fall back to one pass. Multi-window, `count_only`, `segment`, `hidden=False` never parallelise. Parallel workers skip per-animation `finish()`/`clean_up_from_scene()` hooks.
@@ -61,6 +62,7 @@
 - **Subcaption clock is the window `_cursor`, not `Scene.time`** (which never advances under RTM).
 - **Camera `add_fixed_in_frame_mobjects` does not add to the scene** (the `ThreeDScene` method of the same name does).
 - **`ThreeDAxes` `gloss` is an upstream param RTM's Vulkan path does not read** (no visual effect).
+- **Pinning on a 3D stage** — `add_fixed_in_frame_mobjects` is the only way to keep text/plaque/backdrop screen-aligned; a flat `ImageMobject` at z=0 is depth-sorted *into* a 3D dot field and ends up drawn over it.
 
 ### Mobject
 - **`VGroup(<non-VMobject>)`** → `TypeError: Only values of type VMobject can be added as submobjects of ...` → use `Group`.
@@ -82,6 +84,7 @@
 - **`arrange_in_grid` overflow** → `ValueError` (not enough cells).
 - **Legacy `get_foo()`/`set_foo(v)`** still work but emit `DeprecationWarning`.
 - **`VGroup` slice stays `VGroup`; `Group` slice returns `Group`; slices are references, not copies.**
+- **`set_color_by_gradient` colours per submobject** — a single `ParametricFunction`/polyline has no submobjects, so the whole line gets one colour (no along-path gradient); split the path into segments and colour each (see `patterns.md` → *progressive gradient path*).
 
 ### Animations
 - **RTM-own vs CE animation classes differ**: RTM-own `Create`/`Uncreate`/`FadeIn`/`FadeOut`/`Indicate`/`Grow*`/`Rotate`/`Rotating`/`ApplyWave`/`ShowPassingFlash` are **not** `Transform`/`ShowPartial` subclasses → `path_arc`/`path_func` are swallowed. Import RTM-own from `vulkan_bind`.
@@ -118,6 +121,10 @@
 - **RTM `Wait` vs manim `Wait`**: use RTM's from `vulkan_bind`; manim's leaves an empty `Mobject` per wait.
 - **Rate-func factories** (`squish_rate_func`, `not_quite_there`) must be **called** → passing the factory itself blows up at runtime. Overshooting rate funcs (`_back`/`_elastic`/`_bounce`, `wiggle`, `there_and_back`) output outside 0–1 → do not drive strict-0–1 properties (`set_opacity`).
 - **`Animation.set_default` is class-global** → restore after use; `Indicate`'s RTM default color is manim `YELLOW` (CE `PURE_YELLOW`).
+- **A one-argument updater does not keep a `Wait` moving** — `win.play(Wait(2))` holds the frame and `def f(m): ...` is never called. CE's `should_update_mobjects` counts only **time-based** updaters (signature mentions `dt`), and RTM mirrors that rule (`timeline._mark_wait_static`). `always_redraw` builds a one-argument updater, so it freezes on its own too → give the driver a `(m, dt)` updater (a hidden clock mobject), or animate a `ValueTracker` instead of waiting.
+- **Re-animating an already-drawn mobject** (`.animate…`, `Transform`, `MoveToTarget`, `copy()`) used to raise `ValueError: ctypes objects containing pointers cannot be pickled` — RTM's `_rtm_*` replay caches hold ctypes buffers and `Mobject.__deepcopy__` copied `__dict__` wholesale → fixed: `compat.py` shim #10 skips `_rtm_*` keys on deepcopy.
+- **`Create` on a group that is already in the scene** shows it complete from frame 0 — `Create` is an introducer; add the group *through* the animation (`LaggedStart(Create(a), Create(b), …)`), never with `self.add` first.
+- **`TracedPath` records one point per frame** — fast motion (and any 3D path) turns the trail into long chords across the figure; for a comet tail, rebuild a polyline from precomputed samples inside `always_redraw`.
 
 ### Geometry
 - **`Polygram(p1, p2, ...)`** (single points as separate args) → `IndexError`; each positional arg must be one vertex group → use `Polygon`.
@@ -155,6 +162,7 @@
 - **`Table`/`Matrix` highlights are `(row, col)` 1-based**; `add_highlighted_cell` stacks blocks (no replacement); `Table.create` returns an `AnimationGroup` (do not pre-`add` the table).
 - **`Label`/`LabeledLine` `*_config` dicts only apply to `str` labels** (an existing `Text`/`MathTex` wins). `LabeledLine`/`LabeledArrow`: `start`/`end` must be keyword args.
 - **`ImageMobject` (lowercase `m`)**, not `ImageMObject`. `ImageMobjectFromCamera` captures a static snapshot (call `capture_mobject` first). `Text`/`MathTex` own 0 points (vertices live in glyph submobjects) — use `get_all_points()`.
+- **`font="Cascadia Code Light"` / `"Bahnschrift Light"`** → `couldn't load font "... Light, Not-Rotated 5", falling back to "Sans Not-Rotated 5", expect ugly output` — those are OpenType *named instances*, not families Pango can load. Pass the family plus the weight: `Text(..., font="Cascadia Code", weight="LIGHT")`. Loadable by name: `Sitka Display`, `Georgia`, `Century Gothic`, `Cambria`, `Consolas`.
 
 ### Coords & charts
 - **`add_labels(font_size=...)` on a bare `VMobject` label** → `AttributeError` → use `Text`/`MathTex`/`DecimalNumber`.
@@ -175,7 +183,7 @@
 
 ### 3D
 - **3D looks flat without a 3D camera** → use `ThreeDScene` + `set_camera_orientation(phi=…, theta=…)`.
-- **`self.move_camera(...)` needs `self.play = win.play`** (it calls `self.play` internally); `set_camera_orientation` does not. `Create(...)`/`.animate` via `win.play` do not need the wiring.
+- **`self.move_camera(...)` needs `self.play = win.play`** (it calls `self.play` internally); `set_camera_orientation` does not. `Create(...)`/`.animate` via `win.play` do not need the wiring. It also **blocks**: `move_camera` returns only when the move is finished, so it cannot run beside another `play` — interleave short reframings between blocks of work, or animate the camera yourself.
 - **Surface subclasses swallow `color=`** (`Cone`/`Cylinder`/`Sphere`/`Torus`/`Surface`) → `.set_color(...)` after construction, or `checkerboard_colors=False, fill_color=...`. `Dot3D` colors itself internally (works).
 - **`Surface.set_fill_by_value`** extra kwargs alongside `colors` → `ValueError: "Unsupported keyword argument(s): <keys>"`; `colorscale=None` → warning `"The value passed to the colorscale keyword argument was None, the surface fill color has not been changed"`.
 - **`Line3D.perpendicular_to` when the point lies on the line** → `ValueError: "Could not find the perpendicular."` → pick a point off the line.
@@ -333,3 +341,6 @@
 | `LinAlgError` (`apply_inverse`) | singular matrix | pass an invertible 2×2 | `scene-camera.md` |
 | `ValueError` (`Scene.replace`) | `old_mobject` not in scene / `new_mobject` already in scene | fix the operands | `scene-camera.md` |
 | `DeprecationWarning` (`get_foo`/`set_foo`) | legacy accessors | use the property/attribute | `mobject.md` |
+| `UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 45` (from a `print` in `enable_fast_record`) | stdout encoding is a legacy Windows code page | fixed (ASCII banners + `errors="replace"` on stdout/stderr); on older builds set `PYTHONIOENCODING=utf-8` | `runtime.md` |
+| `ValueError: ctypes objects containing pointers cannot be pickled` | deepcopying a mobject that already carries RTM's `_rtm_*` replay caches (second `.animate`/`Transform`/`copy()`) | fixed by `compat.py` shim #10; upgrade | `animation-motion.md` |
+| `couldn't load font "… Light, Not-Rotated 5", falling back to "Sans …", expect ugly output` | font name is an OpenType named instance, not a family | family + `weight="LIGHT"` | `text.md` |
