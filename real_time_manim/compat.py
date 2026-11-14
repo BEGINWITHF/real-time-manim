@@ -29,9 +29,14 @@ The shims
 8. ``Transform.begin`` aligns only the top level, so nested families with
    different point counts crash in ``bezier.interpolate``.
 9. ``TransformAnimations`` zips start/end families of different lengths.
+10. ``Mobject.__deepcopy__`` cannot copy RTM's ``_rtm_*`` native replay caches
+    (ctypes buffers), so re-animating a mobject that has already been drawn
+    used to raise ``ValueError: ctypes objects containing pointers cannot be
+    pickled``.
 """
 from __future__ import annotations
 
+import copy
 import math
 import os
 
@@ -270,6 +275,48 @@ def _shim_transform_strict_zip() -> bool:
     return True
 
 
+def _shim_mobject_deepcopy_rtm_caches() -> bool:
+    """10. ``Mobject.__deepcopy__`` chokes on RTM's native replay caches.
+
+    RTM memoises the native draw calls of a *static* leaf on the mobject
+    itself -- ``_rtm_vm_cache`` / ``_rtm_root_cache`` / ``_rtm_sender_cache``
+    hold ``(signature, [(fn, args), ...])`` where ``args`` are recorded ctypes
+    argument buffers.  Manim's ``__deepcopy__`` walks ``__dict__`` with
+    ``copy.deepcopy``, and ctypes arrays refuse that:
+    ``ValueError: ctypes objects containing pointers cannot be pickled``.
+
+    The effect is nasty: the *first* draw of a mobject poisons every later
+    copy of it, so a second ``mob.animate...``, a ``Transform(mob, other)``,
+    ``MoveToTarget`` or ``generate_target()`` on already-drawn content raises
+    -- "animate a shape once, then animate it again" is a completely ordinary
+    scene and it simply crashes.
+
+    The caches are renderer state, never semantics (their signature includes
+    the object id and the geometry, so a copy could not reuse them anyway).
+    Deepcopy therefore skips every ``_rtm_*`` key and copies the rest
+    exactly as Manim does.
+    """
+    from manim.mobject.mobject import Mobject
+
+    if getattr(Mobject.__deepcopy__, "_rtm_shimmed", False):
+        return True
+
+    def __deepcopy__(self, clone_from_id):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        clone_from_id[id(self)] = result
+        for k, v in self.__dict__.items():
+            if isinstance(k, str) and k.startswith("_rtm_"):
+                continue
+            result.__dict__[k] = copy.deepcopy(v, clone_from_id)
+        result.original_id = str(id(self))
+        return result
+
+    __deepcopy__._rtm_shimmed = True
+    Mobject.__deepcopy__ = __deepcopy__
+    return True
+
+
 def apply_manim_shims(force: bool = False) -> dict:
     """Apply every shim once.  Returns {name: applied_or_already_present}.
 
@@ -292,6 +339,7 @@ def apply_manim_shims(force: bool = False) -> dict:
         _shim_split_screen_camera,
         _shim_transform_align_nested_families,
         _shim_transform_strict_zip,
+        _shim_mobject_deepcopy_rtm_caches,
     ):
         name = fn.__name__.removeprefix("_shim_")
         try:
