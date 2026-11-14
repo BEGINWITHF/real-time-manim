@@ -53,6 +53,34 @@ except PackageNotFoundError:          # running from a source tree
 #: The ManimCE release bundled in ``real_time_manim/manim/``.
 MANIM_BUNDLE_VERSION = "0.21.0"
 
+
+def _harden_console_streams() -> None:
+    """Stop a diagnostic from aborting a render on legacy Windows code pages.
+
+    RTM prints progress lines, and some of its warnings are bilingual, so the
+    text can contain characters a cp1252/cp437 console cannot encode.  Writing
+    one of those raised ``UnicodeEncodeError`` inside ``print`` -- e.g. the
+    "[FastRecord] Pipe: ..." banner failed *before* a single frame was
+    captured, making every offline render crash on such a console.
+
+    Keep the encoding the host picked (so ASCII output is byte-identical) and
+    relax only the error handler: unrepresentable characters degrade to "?"
+    instead of killing the process.
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:                     # not a TextIOWrapper
+            continue
+        try:
+            if getattr(stream, "errors", "strict") != "replace":
+                reconfigure(errors="replace")
+        except (ValueError, OSError):               # detached / closed stream
+            pass
+
+
+_harden_console_streams()
+
 # ---------------------------------------------------------------------------
 # 1. Install the bundled ManimCE under its canonical name.
 # ---------------------------------------------------------------------------
