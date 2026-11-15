@@ -1,6 +1,6 @@
 # patterns & recipes
 
-> scope: idiomatic, copy-pasteable RTM recipes for bots — scene skeletons, value/updater-driven motion, camera moves, coordinate plots, 3D, graphs/fields/streamlines, tables/matrices, text & number animations, composition, boolean ops. Every recipe is a full, runnable `construct()` body.
+> scope: idiomatic, copy-pasteable RTM recipes for bots — scene skeletons, value/updater-driven motion, camera moves, coordinate plots, 3D, graphs/fields/streamlines, tables/matrices, text & number animations, composition, boolean ops, baked glow sprites, progressive gradient paths, kinetic tracking, deterministic clocks. Every recipe is a full, runnable `construct()` body.
 > src: agent files `runtime.md`, `scene-camera.md`, `mobject.md`, `animation-transform.md`, `animation-motion.md`, `geometry.md`, `text.md`, `coords-charts.md`, `three-d.md`, `graph-vector.md`, `utils.md`; snippets condensed from the tested samples in `../zh_CN/`. On conflict the source tree wins.
 
 Conventions (true for every recipe): `MLWindow` size is forced to **1920×1080 @ 60 fps**; `win.scene = self` and `win.close()` are both **required**; one window per process; RTM-own animation classes come from `real_time_manim.vulkan_bind`, everything else from `real_time_manim` (bundled ManimCE). Never `import manim` first.
@@ -457,3 +457,138 @@ class BoolDemo(Scene):
 ```
 
 notes: all four return a **new** `VMobject` (inputs unchanged). Inputs must be closed / fillable (`Circle`/`Square`/`Polygon`, not `Line`). Style the result with `**kwargs` (`color=`, `stroke_width=`) plus `VMobject` methods: `.set_fill(color, opacity)`, `.set_stroke(color, width, opacity)`, `.set_opacity(x)`, `.set_style(...)`. `Difference(subject, clip)` is directional — swap the args to flip the result; a ring appears when `clip` sits fully inside `subject`. Disjoint `Intersection` returns an empty (point-less) `VMobject` — that is a correct result, not a render failure. `Union` keeps a single merged contour; `Exclusion` is its complement (XOR). `Cutout(main, *holes)` is the cheaper alternative for a hollow shape.
+
+## soft light: baked glow sprite + nebula backdrop
+
+use: a real radial glow, a coloured key light, a moody background wash.
+
+```python
+import numpy as np
+from PIL import Image, ImageFilter
+from real_time_manim import Scene, ImageMobject, Dot, Circle
+from real_time_manim.vulkan_bind import MLWindow, FadeIn, Wait
+
+def glow_png(path, hexcolor="#FFFFFF", n=256, power=2.2):
+    y, x = np.mgrid[0:n, 0:n]
+    r = np.sqrt((x - (n - 1) / 2) ** 2 + (y - (n - 1) / 2) ** 2) / (n / 2)
+    a = np.clip(1 - r, 0, 1) ** power
+    a = np.asarray(Image.fromarray((a * 255).astype("uint8"))
+                   .filter(ImageFilter.GaussianBlur(n * 0.02))) / 255
+    c = [int(hexcolor.lstrip("#")[i:i+2], 16) for i in (0, 2, 4)]
+    rgba = np.zeros((n, n, 4), dtype="uint8")
+    rgba[..., 0], rgba[..., 1], rgba[..., 2] = c
+    rgba[..., 3] = (a * 255).astype("uint8")
+    Image.fromarray(rgba, "RGBA").save(path)
+
+class Light(Scene):
+    def construct(self):
+        win = MLWindow(1920, 1080)
+        win.scene = self
+        glow_png("glow.png", "#5EE7E6")
+        lamp = ImageMobject("glow.png").set_height(2.8)   # chained: returns self
+        lamp.set_opacity(0.55).move_to([-2.0, 0.5, 0])
+        self.add(Dot(radius=0.06, color="#FFEED2").move_to([-2.0, 0.5, 0]))
+        win.play(FadeIn(lamp, scale=0.6), run_time=0.8)   # FadeIn introduces it
+        win.play(Wait(0.2))                              # set_opacity per frame is cheap
+        win.close()
+```
+
+notes: RTM's fill gradient is **linear between the first and last colour stop**, so a `Circle` can never show a radial falloff, and stacking translucent circles bands visibly at 1080p. Bake the falloff into an RGBA PNG once and draw it as an `ImageMobject`; `set_opacity` only rewrites the alpha channel, so it can be animated per frame. Scale with `set(height=…)`, never `scale()` after `move_to` (scale is about the origin). The same trick bakes a backdrop: 2–3 blurred colour blobs over black, one image, `set_height(9.6)` to cover 16:9.
+
+## progressive gradient path (colour along the line, drawn step by step)
+
+use: draw a long curve that carries a colour ramp along its length.
+
+```python
+import numpy as np
+from real_time_manim import (Scene, VGroup, ParametricFunction, LaggedStart,
+                             color_gradient, CYAN, VIOLET, PINK)
+from real_time_manim.vulkan_bind import MLWindow, Create, Wait
+
+class Ramp(Scene):
+    def construct(self):
+        win = MLWindow(1920, 1080)
+        win.scene = self
+        f = lambda u: np.array([np.cos(u) * (2 + np.cos(5 * u)),
+                                np.sin(u) * (2 + np.cos(5 * u)), 0.0])
+        n = 120
+        ramp = color_gradient([CYAN, VIOLET, PINK], n)
+        segs = []
+        for i in range(n):
+            s = ParametricFunction(f, t_range=[2 * np.pi * i / n, 2 * np.pi * (i + 1) / n])
+            s.set_stroke(ramp[i], width=2.6)
+            segs.append(s)
+        # lag_ratio=1.0 -> strictly sequential, each child gets run_time / n
+        win.play(LaggedStart(*[Create(s) for s in segs], lag_ratio=1.0, run_time=6.0))
+        win.play(Wait(0.3))
+        win.close()
+```
+
+notes: `set_color_by_gradient` colours **per submobject**; a single `ParametricFunction` is one submobject, so it gets one colour. Sub-range `t_range` works (each slice covers only its own arc), so the segments join seamlessly. **Do not `self.add` the group first** — an already-added mobject renders complete from frame 0 and the draw is invisible. Keep `run_time` on the `LaggedStart` and pass the same value at play level; a `(m, dt)` clock advanced by a `ValueTracker` can drive a pen through the same parameter so a dot sits exactly on the growing tip.
+
+## kinetic tracking: animate letter-spacing
+
+use: open a word up letter by letter (`Text` has no tracking parameter).
+
+```python
+from real_time_manim import Scene, Text, VGroup, ValueTracker, DOWN, UP
+from real_time_manim.vulkan_bind import MLWindow, FadeIn, Wait
+
+class Tracked(VGroup):
+    def __init__(self, word, size=110, tracking=0.0):
+        super().__init__(*[Text(c, font="Sitka Display", font_size=size) for c in word])
+        self.anchor, self.tracking = DOWN * 0.4, tracking
+        self.set_tracking(tracking)
+    def set_tracking(self, em):
+        self.tracking = em
+        unit = max(g.height for g in self.submobjects)
+        for g in self.submobjects:
+            g.move_to([0, 0, 0]).align_to(self.submobjects[0], DOWN)
+        self.arrange([1, 0, 0], buff=em * unit, center=False).move_to(self.anchor)
+
+class Kinetic(Scene):
+    def construct(self):
+        win = MLWindow(1920, 1080)
+        win.scene = self
+        w = Tracked("STILLNESS", tracking=0.02)
+        self.add(w)                                  # glyphs are the scene members
+        t = ValueTracker(0.02)
+        w.add_updater(lambda m, dt: m.set_tracking(t.get_value()))
+        win.play(FadeIn(w), run_time=0.6)
+        win.play(t.animate.set_value(0.30), run_time=3.0)
+        win.play(Wait(0.5))
+        win.close()
+```
+
+notes: `tracking` is in em (multiply by glyph height for scene units), so the same number looks identical at any font size. Use a **`(m, dt)` updater** — a one-argument updater makes the following `Wait` static and the word never spreads. Re-layout is `move_to` + `align_to` + `arrange` per frame (cheap for ≤ 20 glyphs). For a word with spaces, create a blank glyph or split into words.
+
+## deterministic clock for free-running motion
+
+use: many objects driven by one phase, recorded and replayed identically.
+
+```python
+import numpy as np
+from real_time_manim import Scene, Dot, ValueTracker
+from real_time_manim.vulkan_bind import MLWindow, Wait
+
+class Clock(Scene):
+    def construct(self):
+        win = MLWindow(1920, 1080)
+        win.scene = self
+        phase = ValueTracker(0.0)
+        dots = [Dot(radius=0.05).move_to([0, 0, 0]) for _ in range(8)]
+        self.add(*dots)
+        def tick(_m, dt):
+            t = phase.get_value() + dt
+            phase.set_value(t)
+            for i, d in enumerate(dots):
+                a = t * (1 + 0.37 * i)
+                d.move_to([2.4 * np.cos(a), 1.4 * np.sin(a), 0])
+        clock = Dot(radius=0.001).set_opacity(0)
+        clock.add_updater(tick)
+        self.add(clock)
+        win.play(Wait(5.0))                 # (m, dt) updater => the wait steps
+        win.close()
+```
+
+notes: never use `time.time()` inside an updater — `fast_record_scene` renders far faster than wall clock, so the animation collapses. Accumulate `dt` (or keep it in a `ValueTracker`, which lets you pause and resume: a `Wait` cannot advance a tracker, so play-driven motion stops exactly where the play stopped). The clock mobject **must be in the scene**; an updater on a container that was never added never runs.

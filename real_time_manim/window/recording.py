@@ -234,7 +234,7 @@ class RecordingMixin:
             # BMP mode: each frame saved via SaveScreenshot (no pipe overhead)
             os.makedirs(self._fast_record_path, exist_ok=True)
             self._fast_record_pipe_mode = False
-            print(f"[FastRecord] BMP mode {segment} → {path}/")
+            print(f"[FastRecord] BMP mode {segment} -> {path}/")
         else:
             # Pipe mode: SaveScreenshot → parse BMP → pipe BGR to ffmpeg
             check_pipe_destination(self._fast_record_path)
@@ -282,7 +282,7 @@ class RecordingMixin:
                 f"manim_fast_{os.getpid()}_{id(self)}.bmp")
             # A record must not be paced by the display (see _set_unpaced).
             self._set_unpaced(True)
-            print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps ({pix_fmt}) → {path}")
+            print(f"[FastRecord] Pipe: {w}x{h} @ {fps} fps ({pix_fmt}) -> {path}")
 
     def _set_unpaced(self, unpaced):
         """Let (or stop) the window present without waiting for the display.
