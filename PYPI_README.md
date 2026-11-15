@@ -141,9 +141,17 @@ be read back and piped to `ffmpeg` as an MP4.
 
 ---
 
-## LaTeX / Typst cache
+## Caches
 
-Compiled formulas are content-hashed, so unchanged math is never recompiled:
+Three different things are cached, and each is cleared differently:
+
+| what | where | what it saves | clear it with |
+| --- | --- | --- | --- |
+| LaTeX / Typst results | `media/Tex` (+ your `tex_cache/`) | recompiling unchanged formulas | `clear_tex_cache()` |
+| **text → SVG** (Pango) | `media/texts/<hash>.svg` | re-running Pango layout (~2 ms per string) | `clear_media()`, or a recorder's `cleanup=True` |
+| parsed SVG → Manim mobjects | process memory (`SVG_HASH_TO_MOB_MAP`) | `svgelements` parsing + one `VMobjectFromSVGPath` per glyph (4–20 ms) | process exit; `Text(use_svg_cache=False)` opts out |
+
+Formulas are content-hashed, so unchanged math is never recompiled:
 
 ```python
 from real_time_manim import restore_tex_cache, save_tex_cache, clear_tex_cache
@@ -153,6 +161,21 @@ restore_tex_cache("tex_cache")   # before: warm manim's SVG folder from a saved 
 save_tex_cache("tex_cache")      # after: stash newly compiled SVGs
 
 clear_tex_cache()                # wipe <media>/Tex and tex_cache/ (dry_run=True to preview)
+```
+
+Text is hashed by content **and** style — text, font, size, colour, `t2c`/`t2f`/
+`t2s`/`t2w`, line spacing, ligatures — so a red and a blue copy are different
+files. The in-memory layer is capped (256 entries, FIFO) and only starts caching
+from the *second* build of a given string: repeated labels are ~2.5× cheaper to
+construct, while one-off strings (each `DecimalNumber` value) never pay for a
+copy they will not use. `fast_record_scene(..., cleanup=True)` deletes the whole
+`media/` folder after recording, so the on-disk text cache lasts one render
+unless you pass `cleanup=False`:
+
+```python
+from real_time_manim import clear_media
+
+clear_media()                    # wipe the whole media/ tree, including media/texts
 ```
 
 ---
