@@ -31,7 +31,8 @@ def __init__(self, text: str, fill_opacity: float = 1, stroke_width: float = 0, 
 
 - `notes`:
   - `t2c`/`t2f`/`t2w`/`t2s` keys are **substrings**, matched in order of appearance.
-  - Source signature (RTM, `manim/mobject/text/text_mobject.py`) additionally accepts `t2g`, `gradient`, `tab_width=4`, `warn_missing_font=True`, `height`, `width`, `should_center=True`, `use_svg_cache=False` (not documented in zh_CN).
+  - Source signature (RTM, `manim/mobject/text/text_mobject.py`) additionally accepts `t2g`, `gradient`, `tab_width=4`, `warn_missing_font=True`, `height`, `width`, `should_center=True`, `use_svg_cache=True` (not documented in zh_CN).
+  - **Construction cost**: one `Text` re-writes and re-parses its SVG (~36 ms for 50 chars; `svgelements` path parsing + one `VMobjectFromSVGPath` per glyph). Identical content+style is served from a capped SVG cache from its *second* build on (~18 ms), so repeated labels are cheaper than one-off strings. `use_svg_cache=False` opts out. Unique strings (every `DecimalNumber` value) still pay the full price — for a fast text counter use `TextDecimalNumber`, which caches glyphs per value.
 - `errs`:
   - `ImportError` on `from real_time_manim import remove_invisible_chars` — RTM does **not** export it; filter invisible chars yourself.
 - `see`: ../zh_CN/04-图形与文本/08-文本Text.md

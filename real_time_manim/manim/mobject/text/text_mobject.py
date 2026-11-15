@@ -469,7 +469,7 @@ class Text(SVGMobject):
         width: float | None = None,
         should_center: bool = True,
         disable_ligatures: bool = False,
-        use_svg_cache: bool = False,
+        use_svg_cache: bool = True,
         **kwargs: Any,
     ):
         self.line_spacing = line_spacing
