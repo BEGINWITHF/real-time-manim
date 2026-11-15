@@ -93,6 +93,38 @@ Both accept a `Scene` subclass / instance / no-arg callable and return
 
 ---
 
+## Caches
+
+RTM caches three different things. They live in different places and are cleared
+differently:
+
+| what | where | saves | clear with |
+| --- | --- | --- | --- |
+| LaTeX / Typst formulas | `media/Tex` (+ your `tex_cache/`) | recompiling unchanged math | `clear_tex_cache()` |
+| **text → SVG** (Pango) | `media/texts/<hash>.svg` | re-running Pango layout (~2 ms/string) | `clear_media()`, or the recorders' `cleanup=True` default |
+| parsed SVG → mobjects | process memory (`SVG_HASH_TO_MOB_MAP`) | `svgelements` parsing + one `VMobjectFromSVGPath` per glyph (4–20 ms/string) | process exit; `Text(use_svg_cache=False)` opts out |
+
+```python
+from real_time_manim import (
+    restore_tex_cache, save_tex_cache, clear_tex_cache, clear_media,
+)
+
+restore_tex_cache("tex_cache")   # warm media/Tex from a saved formula cache
+# ... run ...
+save_tex_cache("tex_cache")      # stash newly compiled formulas
+clear_tex_cache()                # wipe media/Tex + tex_cache/ (dry_run=True to preview)
+clear_media()                    # wipe the whole media/ tree, including media/texts
+```
+
+`fast_record_scene(..., cleanup=True)` (the default) deletes `media/` after every
+render, so the on-disk text cache only survives across renders with
+`cleanup=False`. The in-memory SVG cache is capped at 256 entries and only starts
+caching from the second build of the same string — identical labels are ~2.5×
+faster to construct, while one-off strings (each `DecimalNumber` value) pay
+nothing extra.
+
+---
+
 ## Constraints
 
 - Output is **fixed at 1920×1080 @ 60 fps**; any other value is corrected with a `[rtm] forcing ...` line.

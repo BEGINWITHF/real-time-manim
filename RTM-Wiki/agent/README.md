@@ -43,6 +43,18 @@ fast_record_scene(MyScene, "out.mp4")
 | `import manim` | works, but **do not import it first** | If the process imports `manim` first, RTM uses that external copy and may warn (`RuntimeWarning`); import `real_time_manim` first to keep class identity |
 | Runtime deps | see `pyproject.toml` | Needs a Vulkan GPU+driver; recording also needs `ffmpeg` on PATH |
 
+## 2b. Caches (three layers, cleared differently)
+
+| cache | key | storage | saves | clear / opt out |
+| --- | --- | --- | --- | --- |
+| LaTeX / Typst formulas | content hash | `media/Tex` + `tex_cache/` | recompiling math | `clear_tex_cache()` (`dry_run=True` to preview); `restore_tex_cache` / `save_tex_cache` for a persistent stash |
+| **text → SVG** (Pango) | sha256 of text + font + size + colour + `t2c/t2f/t2s/t2w` + line spacing + ligatures | `media/texts/<hash>.svg` | Pango layout (~2 ms/string) | `clear_media()`; recorders' `cleanup=True` (default) deletes `media/` after every render |
+| parsed SVG → mobjects | `SVG_HASH_TO_MOB_MAP` key = `(class, svg_default, path_string_config, file_name, renderer)` | process memory | `svgelements` parse + one `VMobjectFromSVGPath` per glyph (**4–20 ms/string**) | process exit; `Text(use_svg_cache=False)` per object |
+
+- `Text` now caches by default (it was the only text class with `use_svg_cache=False`); the cache is FIFO-capped at **256** entries and only stores from the **second** build of a string, so one-off strings (`DecimalNumber` values) pay nothing extra. Repeated labels: ~2.5× faster construction (18 ms vs 36 ms for 50 chars).
+- `clear_tex_cache` only touches `<media>/Tex`; text SVGs live in `<media>/texts` and need `clear_media()`.
+- `config.get_dir("text_dir")` = `{media_dir}/texts` (default `./media/texts`); the in-memory cache is not configurable.
+
 ## 3. Entry points / import paths
 
 | Symbol | import | Notes |
