@@ -52,3 +52,28 @@ python "...\RTM-Wiki\en_US\04-Shapes-and-Text\assets\RTM code\12-Numbers-and-Var
 - Output is fixed at **1920×1080@60** (a script that writes `MLWindow(960, 540)` is corrected and prints a notice; that is expected);
 - Running a script needs `PYTHONPATH` pointing at the real-time-manim repository root (or run from inside that repository);
 - Every page's `<video>` lives under `assets/RTM output/`, named `<page>-<sample>.mp4`.
+
+## Caches (three layers, cleared differently)
+
+| cache | where | what it saves | how to clear |
+| --- | --- | --- | --- |
+| LaTeX / Typst formulas | `media/Tex` (+ `tex_cache/`) | recompiling math | `clear_tex_cache()` (`dry_run=True` to preview) |
+| text → SVG (Pango) | `media/texts/<hash>.svg` | re-running Pango layout, ~2 ms per string | `clear_media()`, or a recorder's `cleanup=True` |
+| parsed SVG → mobjects | process memory (`SVG_HASH_TO_MOB_MAP`) | `svgelements` parsing + one VMobject per glyph, 4–20 ms per string | process exit; `Text(use_svg_cache=False)` opts out per object |
+
+```python
+from real_time_manim import (
+    restore_tex_cache, save_tex_cache, clear_tex_cache, clear_media,
+)
+
+restore_tex_cache("tex_cache")   # before: put saved formula SVGs back into media/Tex
+save_tex_cache("tex_cache")      # after: keep the newly compiled formulas
+clear_tex_cache()                # wipe media/Tex and tex_cache/ (dry_run=True to preview)
+clear_media()                    # wipe the whole media/ tree, including media/texts
+```
+
+- **`clear_tex_cache()` does not touch `media/texts`** — text SVGs need `clear_media()` (or `cleanup=True`).
+- `fast_record_scene(..., cleanup=True)` is the default and deletes the whole `media/` folder after every render, so the on-disk text cache lives for one render; pass `cleanup=False` to reuse it.
+- The text hash covers content **and** style (font, size, colour, `t2c`, line spacing, ligatures), so a red and a blue copy are different files.
+- The in-memory layer is FIFO-capped at 256 entries and only stores from the **second** build of a string; repeated labels construct ~2.5× faster, while every new `DecimalNumber` value is unaffected.
+

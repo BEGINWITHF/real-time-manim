@@ -52,3 +52,28 @@ python "...\RTM-Wiki\zh_CN\04-图形与文本\assets\RTM code\12-数字与变量
 - 输出固定 **1920×1080@60**（脚本里写 `MLWindow(960, 540)` 会被纠正并打印一行提示，属正常）；
 - 跑脚本需要 `PYTHONPATH` 指向 real-time-manim 仓库根目录（或直接在该仓库里运行）；
 - 每页的 `<video>` 都在 `assets/RTM output/` 下，文件名形如 `<页名>-<样例名>.mp4`。
+
+## 缓存（三层，清理方式各不相同）
+
+| 缓存 | 位置 | 省掉什么 | 怎么清 |
+| --- | --- | --- | --- |
+| LaTeX / Typst 公式 | `media/Tex`（+ `tex_cache/`） | 重新编译公式 | `clear_tex_cache()`（`dry_run=True` 只预览） |
+| 文本 → SVG（Pango） | `media/texts/<hash>.svg` | 重新排版，约 2 ms/条 | `clear_media()`，或录制器默认的 `cleanup=True` |
+| 解析后的 SVG → mobject | 进程内存 `SVG_HASH_TO_MOB_MAP` | `svgelements` 解析 + 每个字形建一个 VMobject，4–20 ms/条 | 进程结束自动释放；单个 `Text(use_svg_cache=False)` 可退出 |
+
+```python
+from real_time_manim import (
+    restore_tex_cache, save_tex_cache, clear_tex_cache, clear_media,
+)
+
+restore_tex_cache("tex_cache")   # 渲染前：把保存的公式 SVG 放回 media/Tex
+save_tex_cache("tex_cache")      # 渲染后：把新编译的公式存起来
+clear_tex_cache()                # 清 media/Tex 与 tex_cache/（dry_run=True 预览）
+clear_media()                    # 清整个 media/，包括 media/texts
+```
+
+- **`clear_tex_cache()` 不碰 `media/texts`**：文本 SVG 要用 `clear_media()`（或 `cleanup=True`）。
+- `fast_record_scene(..., cleanup=True)` 是默认值，每录一次就删掉整个 `media/`，磁盘上的文本缓存只活一次渲染；要跨次复用请传 `cleanup=False`。
+- 文本文件的 hash 含内容与样式（字体、字号、颜色、`t2c`、行距、连字），红字和蓝字是两个文件。
+- 内存缓存为 FIFO、上限 256 条，且从同一字符串的**第二次**构建才开始写入；重复标签构造约快 2.5 倍，`DecimalNumber` 的每个新值都不会被拖慢。
+
