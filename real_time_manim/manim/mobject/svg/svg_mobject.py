@@ -28,6 +28,19 @@ __all__ = ["SVGMobject", "VMobjectFromSVGPath"]
 
 SVG_HASH_TO_MOB_MAP: dict[int, SVGMobject] = {}
 
+#: Upper bound for the SVG mobject cache.  Text takes the cached path by default
+#: now, and every distinct string is a distinct key, so a long-running process
+#: (or a batch of scenes) would otherwise keep one full glyph tree per string
+#: alive forever.  FIFO eviction: ``dict`` preserves insertion order.
+SVG_HASH_TO_MOB_MAP_MAX = 256
+
+#: Keys seen once but not cached yet.  Storing a cache entry costs a mobject
+#: copy, which is wasted on strings that are never rebuilt (every
+#: ``DecimalNumber`` value, for instance).  A key is cached from its *second*
+#: sighting on, so one-off text pays nothing and repeated text still hits.
+SVG_SEEN_ONCE: set[int] = set()
+SVG_SEEN_ONCE_MAX = 4096
+
 
 def _convert_point_to_3d(x: float, y: float) -> np.ndarray:
     return np.array([x, y, 0.0])
@@ -184,7 +197,17 @@ class SVGMobject(VMobject, metaclass=ConvertToOpenGL):
 
         self.generate_mobject()
         if use_svg_cache:
-            SVG_HASH_TO_MOB_MAP[hash_val] = self.copy()
+            # Cache from the second sighting on: the first build only records
+            # that this string exists, so text that is never reused does not
+            # pay for a copy it will never read.
+            if hash_val in SVG_SEEN_ONCE:
+                SVG_HASH_TO_MOB_MAP[hash_val] = self.copy()
+                while len(SVG_HASH_TO_MOB_MAP) > SVG_HASH_TO_MOB_MAP_MAX:
+                    SVG_HASH_TO_MOB_MAP.pop(next(iter(SVG_HASH_TO_MOB_MAP)))
+            else:
+                SVG_SEEN_ONCE.add(hash_val)
+                if len(SVG_SEEN_ONCE) > SVG_SEEN_ONCE_MAX:
+                    SVG_SEEN_ONCE.clear()
         return self
 
     @property
