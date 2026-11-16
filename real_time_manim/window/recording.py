@@ -367,6 +367,12 @@ class RecordingMixin:
           right after the draw, piped verbatim as ``bgra``.
         * ``SaveScreenshot`` (fallback): a BMP on disk, read back and de-padded
           into ``bgr24``.
+
+        Returns the bytes handed to ffmpeg (``None`` when nothing was written,
+        e.g. the slot route still had a frame in flight).  Callers that only
+        need the side effect may keep ignoring it; the frozen-wait repeat uses
+        :meth:`_read_frame_bytes` instead, because a parked slot would make the
+        next play encode the same frame twice.
         """
         if getattr(self, '_fast_slot_bgra', None) is not None:
             return self._fast_capture_via_slots()
@@ -414,10 +420,14 @@ class RecordingMixin:
         pixels nobody has read yet (native/platform.c: SS_SLOTS).
         """
         prev = self._fast_slot_pending
+        wrote = None
         if prev is not None:
-            self._fast_write_slot(prev)
+            wrote = self._fast_write_slot(prev)
         slot = getattr(self, '_readback_slot', None)
         self._fast_slot_pending = slot if (slot is not None and slot >= 0) else None
+        # A memoryview into the shared readback buffer: callers that keep it
+        # must copy it before the next capture reuses the buffer.
+        return wrote
 
     def _fast_write_slot(self, slot):
         """Encode one buffered frame from the readback ring (see the DLL)."""
@@ -432,10 +442,13 @@ class RecordingMixin:
             # That slot holds no completed copy: the frame that would have
             # serviced it was skipped (resize / window gone).  Dropping it keeps
             # the stream's rows consistent with -video_size.
-            return
+            return None
         if out_size.value != need:
-            return
-        self._pipe_write(memoryview(buf)[:need])
+            return None
+        data = memoryview(buf)[:need]
+        self._pipe_write(data)
+        # Borrowed view into `_fast_raw_buf`; the frozen-wait path copies it.
+        return data
 
     def _fast_drain_slot(self):
         """Write the last buffered frame (nothing follows it to hide behind)."""
@@ -444,7 +457,12 @@ class RecordingMixin:
             self._fast_write_slot(prev)
             self._fast_slot_pending = None
 
-    def _capture_raw_bgra_to_pipe(self):
+    def _read_raw_bgra_bytes(self):
+        """Copy the raw framebuffer into ``_fast_raw_buf`` (no pipe write).
+
+        Returns a borrowed ``memoryview`` (the buffer is reused next frame) or
+        ``None`` when no frame is available.
+        """
         w, h = self._fast_w, self._fast_h
         need = w * h * 4
         buf = getattr(self, '_fast_raw_buf', None)
@@ -453,15 +471,36 @@ class RecordingMixin:
             self._fast_raw_buf = buf
         out_size = ctypes.c_int(need)
         if not self._fast_raw_bgra(buf, need, ctypes.byref(out_size)):
-            return                      # no frame present yet (or size changed)
+            return None                 # no frame present yet (or size changed)
         # A window resized mid-record would change the row layout under ffmpeg's
         # fixed -video_size: drop the frame instead of shearing the rest.
         if out_size.value != need:
-            return
-        self._pipe_write(memoryview(buf)[:need])
+            return None
+        return memoryview(buf)[:need]
 
-    def _capture_bmp_to_pipe(self):
-        """SaveScreenshot → parse BMP → pipe tightly packed BGR to ffmpeg.
+    def _read_frame_bytes(self):
+        """Capture the frame the recorder just drew, without piping it.
+
+        Used by the frozen-wait path, which encodes the same picture for every
+        frame of the hold.  It bypasses the readback-slot ring on purpose: a
+        parked slot would be flushed again by the next play, duplicating a
+        frame and shifting the rest of the video by one.
+        """
+        if self._fast_raw_bgra is not None:
+            data = self._read_raw_bgra_bytes()
+            return None if data is None else bytes(data)
+        return self._read_bmp_bytes()
+
+    def _capture_raw_bgra_to_pipe(self):
+        data = self._read_raw_bgra_bytes()
+        if data is None:
+            return None
+        self._pipe_write(data)
+        # Borrowed view into `_fast_raw_buf`; the frozen-wait path copies it.
+        return data
+
+    def _read_bmp_bytes(self):
+        """SaveScreenshot → parse BMP → tightly packed BGR rows (no pipe write).
 
         BMP rows are padded to a 4-byte boundary ((w*3 + 3) & ~3 == 2564 bytes
         at 854 px wide), but ffmpeg's ``bgr24`` with ``-video_size w x h`` expects
@@ -490,22 +529,29 @@ class RecordingMixin:
         bmp_w = int.from_bytes(hdr[18:22], 'little', signed=True)
         bmp_h = abs(int.from_bytes(hdr[22:26], 'little', signed=True))
         if bmp_w != self._fast_w or bmp_h != self._fast_h:
-            return
+            return None
         if padded == row_size:
-            self._pipe_write(data)
-            return
+            return data
 
         height = self._fast_h
         try:
             import numpy as np
             rows = np.frombuffer(data, dtype=np.uint8, count=padded * height)
-            self._pipe_write(rows.reshape(height, padded)[:, :row_size].tobytes())
+            return rows.reshape(height, padded)[:, :row_size].tobytes()
         except Exception:                              # numpy unavailable
             out = bytearray(row_size * height)
             for y in range(height):
                 src = y * padded
                 out[y * row_size:(y + 1) * row_size] = data[src:src + row_size]
-            self._pipe_write(bytes(out))
+            return bytes(out)
+
+    def _capture_bmp_to_pipe(self):
+        """SaveScreenshot → parse BMP → pipe tightly packed BGR to ffmpeg."""
+        packed = self._read_bmp_bytes()
+        if packed is None:
+            return None
+        self._pipe_write(packed)
+        return packed
 
     def _finish_fast_record(self):
         """Finish recording: close the ffmpeg pipe or report the BMP count.

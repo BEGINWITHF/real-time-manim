@@ -770,6 +770,23 @@ class PlayMixin:
         frozen_wait = (len(anims) == 1
                        and _is_wait_animation(anims[0])
                        and getattr(anims[0], "is_static_wait", None) is True)
+        # CE renders a frozen wait once and hands the same PNG to the encoder
+        # `duration * fps` times (`CairoRenderer.freeze_current_frame`).  RTM
+        # used to redraw the whole scene for every output frame, so a static
+        # clip cost N full draws -- with 2000 circles + 320 labels that is
+        # 0.16 s/frame of GPU + Python work for a picture that cannot change.
+        # A lone static wait has no updater pass and no animation evaluation,
+        # so pumping the first captured frame again is pixel-exact.
+        #
+        # Pipe mode repeats the captured byte stream; a segmented render (the
+        # frame-parallel recorder writes BMP files) repeats the first BMP file.
+        # Frames before a segment starts need no draw at all: nothing can have
+        # changed between them and the segment's first frame.
+        frozen_repeat = bool(
+            frozen_wait and self._fast_record
+            and not getattr(self, '_fast_record_count_only', False))
+        frozen_bytes = None            # pipe mode: the encoded frame bytes
+        frozen_bmp = None              # BMP mode: the first complete file
         stop_elapsed = None
         for k in range(n_frames):
             frame_start = time.time()
@@ -794,6 +811,26 @@ class PlayMixin:
                 if seg is not None and idx >= seg[1]:
                     break
                 in_segment = seg is None or (seg[0] <= idx < seg[1])
+                if frozen_repeat and frozen_bytes is not None:
+                    # The frame cannot change during this wait: encode the one
+                    # we already drew again instead of re-rendering the scene.
+                    if in_segment:
+                        self._pipe_write(frozen_bytes)
+                    self._fast_record_frame_idx += 1
+                    continue
+                if frozen_repeat and frozen_bmp is not None:
+                    if in_segment:
+                        with open(os.path.join(
+                                self._fast_record_path,
+                                f"frame_{idx:06d}.bmp"), 'wb') as bmp_out:
+                            bmp_out.write(frozen_bmp)
+                    self._fast_record_frame_idx += 1
+                    continue
+                if frozen_repeat and not in_segment:
+                    # Nothing to advance inside a frozen hold, so the frames
+                    # before this segment do not need a draw either.
+                    self._fast_record_frame_idx += 1
+                    continue
             # Arm the readback BEFORE the draw: `SaveScreenshot` (fast-record's
             # frame capture, the live `start_record` capture, user screenshots)
             # only sees real pixels if the frame copied itself out while it
@@ -823,11 +860,33 @@ class PlayMixin:
                     if getattr(self, '_fast_record_count_only', False):
                         pass
                     elif getattr(self, '_fast_record_pipe_mode', True):
-                        self._capture_screenshot_to_pipe()
+                        if frozen_repeat:
+                            # First frame of the hold: flush whatever frame the
+                            # previous play parked in the readback-slot ring (it
+                            # belongs to that play) and capture this one
+                            # directly.  Leaving it parked would make the next
+                            # play encode it a second time and shift every later
+                            # frame by one.
+                            drain = getattr(self, '_fast_drain_slot', None)
+                            if drain is not None:
+                                drain()
+                            read = getattr(self, '_read_frame_bytes', None)
+                            data = read() if read is not None else None
+                        else:
+                            data = None
+                        if data is not None:
+                            self._pipe_write(data)
+                            frozen_bytes = bytes(data)
+                        else:
+                            self._capture_screenshot_to_pipe()
                     else:
-                        self.screenshot(os.path.join(
+                        path = os.path.join(
                             self._fast_record_path,
-                            f"frame_{idx:06d}.bmp"))
+                            f"frame_{idx:06d}.bmp")
+                        self.screenshot(path)
+                        if frozen_repeat:
+                            with open(path, 'rb') as bmp_in:
+                                frozen_bmp = bmp_in.read()
                 self._fast_record_frame_idx += 1
             else:
                 self._capture_frame()
