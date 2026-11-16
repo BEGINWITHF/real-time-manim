@@ -71,7 +71,8 @@ fast_record_scene(Hello)              # -> ~/Downloads/output.mp4
 
 - **Real-time window** — 1920×1080 @ 60 fps, no export step between code and picture.
 - **Fast recording** — around **1.9–2.8×** faster than ManimCE Cairo (a 15-second scene: 4.6–6.6 s
-  versus 12.8–13.9 s).
+  versus 12.8–13.9 s). A static hold (`wait`) is drawn once and encoded for
+  every frame, like ManimCE's frozen frame.
 - **Parallel frames** — `jobs="auto"` splits a long scene across worker processes.
 - **Frame-accurate seeking** — any frame of a prepared scene in O(1), via `FramePreview`.
 - **Full ManimCE** — existing scenes run unchanged, including `from manim import ...` code.

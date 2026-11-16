@@ -75,7 +75,9 @@ transient `media/` folder is cleaned up afterwards.
   step between code and picture.
 - **Fast recording.** `fast_record_scene(...)` reads back frames straight into
   `ffmpeg` — around **1.9–2.8×** faster than ManimCE Cairo (a 15-second scene:
-  4.6–6.6 s versus 12.8–13.9 s), windowless and at full speed by default.
+  4.6–6.6 s versus 12.8–13.9 s), windowless and at full speed by default. A
+  static hold (`wait`) is drawn once and encoded for every frame, like
+  ManimCE's frozen frame.
 - **Parallel frames.** `jobs="auto"` splits a long scene across worker processes
   and concatenates their segments losslessly.
 - **Frame-accurate seeking.** Any frame of a prepared scene is produced in O(1),
