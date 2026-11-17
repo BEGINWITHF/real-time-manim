@@ -211,9 +211,15 @@ class GlyphMixin:
             n = (n // 4) * 4
             arr = flat
 
-            stroke_progress = min(1.0, sub_alpha * 2.5)
-            stroke_fade = max(0.0, 1.0 - max(0.0, (sub_alpha - 0.4) * 2.5))
-            fill_alpha = max(0.0, (sub_alpha - 0.3) * 2.0)
+            # CE's two phases (see DrawBorderThenFill): the first half of a
+            # glyph's own alpha draws the outline at full strength with no fill,
+            # the second half fades the fill in while the outline thins away.
+            # The old ramp finished the outline at 40 % and opened the fill at
+            # 30 %, so the outline dimmed before it was complete and the stroke
+            # looked grey next to CE's crisp white write.
+            stroke_progress = min(1.0, sub_alpha * 2.0)
+            stroke_fade = max(0.0, 1.0 - max(0.0, (sub_alpha - 0.5) * 2.0))
+            fill_alpha = max(0.0, (sub_alpha - 0.5) * 2.0)
 
             # Handwriting outline keeps the text's own colour; as the fill
             # completes it recedes INWARD (width shrinks 2px -> 0) instead of

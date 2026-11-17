@@ -1146,20 +1146,35 @@ class VMobjectMixin:
         # giving a smooth write-then-fill with no dip in between.
         if (not do_stroke and not is_text and sw == 0
                 and getattr(mob, '_write_active', False)):
-            # `vis_fill`, not `fill_alpha`: the fade-out ramp must track how
-            # visible the fill actually is (opacity * animation alpha), which is
-            # what `fill_alpha` meant before the alpha-baking was untangled.
-            stroke_point_alpha = max(0.0, 1.0 - vis_fill * 1.2) * a
+            # CE's outline shrinks 2px -> 0 continuously across the fill phase
+            # (`DrawBorderThenFill.interpolate(outline, starting, subalpha)`),
+            # which reads as the border slowly thinning away.  Native
+            # `AddLineStrip` takes an INTEGER width, so passing `2 * (1 - fill)`
+            # made the border step 2 -> 1 -> 0 and vanish between two frames.
+            # Emulate the continuous width with width x alpha (same integrated
+            # ink as CE): 2px while >= 1px remains, then 1px for the sub-pixel
+            # tail.  The fill is still 0 while the outline is drawn, so the
+            # border stays crisp white until the write is complete.
+            target_w = 2.0 * max(0.0, 1.0 - vis_fill)
+            if target_w >= 1.0:
+                stroke_w = 2.0
+                stroke_point_alpha = (target_w / 2.0) * a
+            elif target_w > 0.001:
+                stroke_w = 1.0
+                stroke_point_alpha = target_w * a
+            else:
+                stroke_w = 0.0
+                stroke_point_alpha = 0.0
             sr, sg, sb = fr, fg, fb
             # colour is the glyph's fill colour, full strength: the fade-out is
-            # carried entirely by `stroke_point_alpha`, so `stroke_alpha` (the
-            # glyph's own stroke opacity, i.e. 0 here) must not multiply it.
+            # carried entirely by width x `stroke_point_alpha`, so
+            # `stroke_alpha` (the glyph's own stroke opacity, i.e. 0 here)
+            # must not multiply it.
             stroke_alpha = 1.0
             sri = round(sr * 255)
             sgi = round(sg * 255)
             sbi = round(sb * 255)
-            stroke_w = 2.0
-            do_stroke = True
+            do_stroke = stroke_w > 0.0
 
         # `flat` is already a ctypes float array filled by the vector path (or
         # the per-point viewport branch).  Native accepts it directly; the old

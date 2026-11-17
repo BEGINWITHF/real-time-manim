@@ -11,9 +11,19 @@ class Write(DrawBorderThenFill):
         self.reverse = reverse
         if "remover" not in kwargs:
             kwargs["remover"] = reverse
-        length = 1
-        if hasattr(mobject, 'submobjects'):
-            length = max(1, len(mobject.submobjects))
+        # CE counts point-bearing FAMILY members (`Write._set_default_config_
+        # from_length` -> `family_members_with_points`), not top-level
+        # submobjects.  For Text the two lists match; for MathTex/Tex the
+        # glyphs sit one level deeper (inside MathTexPart), so counting only
+        # `submobjects` saw ONE member and wrote a long formula in half the
+        # time CE takes (measured: 19-glyph formula, CE 2.0 s vs RTM 1.0 s).
+        try:
+            length = max(1, len(list(mobject.family_members_with_points())))
+        except Exception:
+            if hasattr(mobject, 'submobjects'):
+                length = max(1, len(mobject.submobjects))
+            else:
+                length = 1
         if run_time is None:
             run_time = 1.0 if length < 15 else 2.0
         if lag_ratio is None:
