@@ -1,4 +1,6 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
+from manim import Text as _Text
+
 from real_time_manim.animations.base import Animation, resolve_mobject
 from real_time_manim.animations.grow_arrow import color_to_rgb
 from real_time_manim.rate_functions import _double_smooth
@@ -65,16 +67,44 @@ class DrawBorderThenFill(Animation):
 
     def _apply_two_phase(self, alpha):
         mob = self.mobject
-        has_subs = hasattr(mob, 'submobjects') and mob.submobjects
-        if has_subs:
-            num_subs = len(mob.submobjects)
-            for i in range(num_subs):
-                sub = mob.submobjects[i]
-                sub_alpha = self.get_sub_alpha(alpha, i, num_subs)
-                self._apply_single_two_phase(sub, sub_alpha)
-            mob._letter_alphas = {i: self.get_sub_alpha(alpha, i, num_subs) for i in range(num_subs)}
-        else:
+        # CE staggers ``Write`` over every point-bearing member of the family
+        # (`Animation.interpolate_mobject` -> `get_all_families_zipped`), not
+        # over the top-level submobjects.  For a Text those two lists are the
+        # same (one member per letter), but a MathTex's glyphs live one level
+        # deeper inside its MathTexPart: staggering only the part (and setting
+        # ``_letter_alphas`` on the MathTex, which routes it through the TEXT
+        # writer) made every glyph of a formula draw at the same instant while
+        # CE writes them one after another.
+        targets = self._point_targets(mob)
+        num_targets = len(targets)
+        alpha_by_id = {}
+        if not targets:
             self._apply_single_two_phase(mob, alpha)
+        else:
+            for i, target in enumerate(targets):
+                sub_alpha = self.get_sub_alpha(alpha, i, num_targets)
+                alpha_by_id[id(target)] = sub_alpha
+                self._apply_single_two_phase(target, sub_alpha)
+        # Text's fast sender (`_send_text_write`) fades each glyph from this
+        # map, and only a Text root may carry it: setting it on a MathTex sends
+        # the whole formula down the text writer, which loses the per-glyph
+        # progress set above.  Arm every Text in the subtree, not only a Text
+        # that happens to be the animation's own mobject: inside a VGroup a
+        # Text sent without the map falls back to `_send_vmobject`, whose
+        # `_is_text` branch skips the synthesized write outline, so the line
+        # only faded its fill in and never showed the hand-writing stroke.
+        for text_root in self._text_roots(mob):
+            letters = getattr(text_root, 'submobjects', None) or ()
+            text_root._letter_alphas = {
+                i: alpha_by_id.get(id(letter), 0.0)
+                for i, letter in enumerate(letters)}
+
+    @staticmethod
+    def _text_roots(mob):
+        """Every ``Text`` root in the subtree, in family order."""
+        getter = getattr(mob, 'get_family', None)
+        nodes = getter() if callable(getter) else [mob]
+        return [node for node in nodes if isinstance(node, _Text)]
 
     def _set_fo(self, mob, value):
         if hasattr(mob, 'fill_rgbas') and mob.fill_rgbas is not None and len(mob.fill_rgbas) > 0:
