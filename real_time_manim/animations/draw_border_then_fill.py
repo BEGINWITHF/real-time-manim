@@ -192,10 +192,18 @@ class DrawBorderThenFill(Animation):
     def finish(self):
         super().finish()
         mob = self.mobject
-        if hasattr(mob, 'submobjects') and mob.submobjects:
-            mob._letter_alphas = {i: 1.0 for i in range(len(mob.submobjects))}
-        else:
-            mob._vulkan_progress = 1.0
+        # The per-glyph map is a Text-sender channel.  A container that had it
+        # during the animation must not keep it: a stale map on a VGroup routes
+        # the whole group through the text writer on every later frame.  Text
+        # roots keep an all-1.0 map (the documented post-Write fast path).
+        for node in getattr(mob, 'get_family', lambda: [mob])():
+            if isinstance(node, _Text):
+                letters = getattr(node, 'submobjects', None) or ()
+                node._letter_alphas = {i: 1.0 for i in range(len(letters))}
+            else:
+                getattr(node, '__dict__', {}).pop('_letter_alphas', None)
+        for tm in self._point_targets(mob):
+            tm._vulkan_progress = 1.0
         # Restore original fill/stroke opacity on every point-bearing target.
         for tm in self._point_targets(mob):
             self._restore_stroke_style(tm)
