@@ -170,20 +170,21 @@ class DrawBorderThenFill(Animation):
         for tm in targets:
             tm._write_active = True
             self._apply_stroke_style(tm)
-        # Fill fades in at the SAME rate as the title's text-write
-        # (_send_text_write): fill_alpha = max(0, (x - 0.3) * 2.0), i.e. it
-        # starts fading in at 30% of the glyph's animation and is fully opaque
-        # by 80% — not lagging until the very end.
-        fill_alpha = max(0.0, min(1.0, (alpha - 0.3) * 2.0))
+        # CE's two phases (`ShowPartial.interpolate_submobject`): the whole
+        # first half draws the outline at full opacity with NO fill, and the
+        # second half ramps the fill 0 -> 1 while the outline recedes.  Starting
+        # the fill at 30 % of the glyph (the old behaviour) dimmed the outline
+        # while a third of it was still being drawn, which read as a grey,
+        # softer stroke than CE's crisp white one.
         if alpha < border_frac:
-            # Border phase: stroke draws progressively, fill still ramping in
-            # from 30% (overlaps with the tail of the stroke, like the title).
+            # Border phase: stroke draws progressively, fill stays off.
             stroke_alpha = self.rate_func(alpha / border_frac)
             mob._vulkan_progress = stroke_alpha
+            fill_alpha = 0.0
         else:
-            # Fill phase: stroke fully drawn (renderer fades it out), fill
-            # continues to full opacity by 80%.
+            # Fill phase: outline complete, fill fades in over the whole half.
             mob._vulkan_progress = 1.0
+            fill_alpha = min(1.0, (alpha - border_frac) / (1.0 - border_frac))
         for tm in targets:
             self._set_fo(tm, self._orig_fill.get(id(tm), 1.0) * fill_alpha)
             self._set_so(tm, self._orig_stroke.get(id(tm), 1.0))
