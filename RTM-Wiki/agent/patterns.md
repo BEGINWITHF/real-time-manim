@@ -592,3 +592,60 @@ class Clock(Scene):
 ```
 
 notes: never use `time.time()` inside an updater — `fast_record_scene` renders far faster than wall clock, so the animation collapses. Accumulate `dt` (or keep it in a `ValueTracker`, which lets you pause and resume: a `Wait` cannot advance a tracker, so play-driven motion stops exactly where the play stopped). The clock mobject **must be in the scene**; an updater on a container that was never added never runs.
+
+---
+
+## custom clock animation (closed-form, frame-exact, seekable, loopable)
+
+use: every frame's geometry is a pure function of the play time — physics
+surfaces, epicycle chains, spectra.  Better than an updater: no `dt`
+accumulation, `FrameServer` seeks are exact, and the closing frame can snap
+to the initial state for a bit-identical seamless loop.
+
+```python
+import numpy as np
+from real_time_manim import Animation, Scene, VMobject, linear
+from real_time_manim.vulkan_bind import MLWindow
+
+FPS = 60
+PERIOD = 12.0                      # loop period (s)
+
+class ClockLoop(Animation):
+    def __init__(self, carrier, write_state):
+        self.write_state = write_state
+        # + half a frame: the emitted grid ends exactly on t = PERIOD, so the
+        # last frame can snap to the initial state (bit-identical loop).
+        self.run_time = PERIOD + 0.5 / FPS
+        super().__init__(carrier, run_time=self.run_time, rate_func=linear)
+
+    def interpolate_mobject(self, alpha):
+        t = alpha * self.run_time
+        tau = 0.0 if t >= PERIOD - 1e-9 else t / PERIOD   # closing snap
+        self.write_state(tau)
+
+class LoopScene(Scene):
+    def construct(self):
+        win = MLWindow(960, 540)
+        win.scene = self
+        self.play = win.play
+        curve = VMobject(stroke_width=5.0, color="#ffb833")
+        self.add(curve)                       # REQUIRED: see gotchas.md
+        carrier = VMobject()                  # dummy; need not be added/played
+        def write_state(tau):
+            phi = np.linspace(0.0, 2 * np.pi, 240, endpoint=False)
+            r = 2.6 + 0.5 * np.cos(3 * phi) * np.cos(2 * np.pi * tau)
+            curve.set_points_as_corners(np.stack(
+                [r * np.cos(phi), r * np.sin(phi), np.zeros_like(phi)], axis=1))
+        win.play(ClockLoop(carrier, write_state))
+        win.close()
+```
+
+notes: verified 2026-11-16 across mesh scenes (Dzhanibekov loop), painter
+scenes (epicycles, heat ring, Pearson dial) and `FrameServer` stills —
+external mobject writes repaint every frame in the record path, and the
+`t >= PERIOD` snap makes frame 0 == frame T bit-exactly (check with
+`scripts/verify_seamless_loop.py --period PERIOD --fps 60`).  Keep every
+visual a function of `tau` alone — anything stateful (integration,
+`dt`-accumulated clocks) breaks seeking and the closing snap.  For a
+non-looping piece the same class works with the snap removed and
+`run_time = T` exactly.
