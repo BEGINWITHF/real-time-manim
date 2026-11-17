@@ -59,6 +59,11 @@ def _gradient_flat_shape(mob):
         return False
 
 
+def _replay_arg(arg):
+    """Normalise one native call argument for the replay cache."""
+    return arg
+
+
 class _ReplayDLL:
     """Records native calls made by one leaf so a static frame can replay them."""
 
@@ -74,7 +79,7 @@ class _ReplayDLL:
         fn = getattr(real, name)
 
         def call(*args):
-            calls.append((fn, args))
+            calls.append((fn, tuple(_replay_arg(a) for a in args)))
             return fn(*args)
 
         return call
