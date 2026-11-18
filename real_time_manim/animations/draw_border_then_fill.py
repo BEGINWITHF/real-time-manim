@@ -1,4 +1,6 @@
 # This might not cause a bug or issue, check for other place first --TT Noted
+from manim import Text as _Text
+
 from real_time_manim.animations.base import Animation, resolve_mobject
 from real_time_manim.animations.grow_arrow import color_to_rgb
 from real_time_manim.rate_functions import _double_smooth
@@ -65,16 +67,44 @@ class DrawBorderThenFill(Animation):
 
     def _apply_two_phase(self, alpha):
         mob = self.mobject
-        has_subs = hasattr(mob, 'submobjects') and mob.submobjects
-        if has_subs:
-            num_subs = len(mob.submobjects)
-            for i in range(num_subs):
-                sub = mob.submobjects[i]
-                sub_alpha = self.get_sub_alpha(alpha, i, num_subs)
-                self._apply_single_two_phase(sub, sub_alpha)
-            mob._letter_alphas = {i: self.get_sub_alpha(alpha, i, num_subs) for i in range(num_subs)}
-        else:
+        # CE staggers ``Write`` over every point-bearing member of the family
+        # (`Animation.interpolate_mobject` -> `get_all_families_zipped`), not
+        # over the top-level submobjects.  For a Text those two lists are the
+        # same (one member per letter), but a MathTex's glyphs live one level
+        # deeper inside its MathTexPart: staggering only the part (and setting
+        # ``_letter_alphas`` on the MathTex, which routes it through the TEXT
+        # writer) made every glyph of a formula draw at the same instant while
+        # CE writes them one after another.
+        targets = self._point_targets(mob)
+        num_targets = len(targets)
+        alpha_by_id = {}
+        if not targets:
             self._apply_single_two_phase(mob, alpha)
+        else:
+            for i, target in enumerate(targets):
+                sub_alpha = self.get_sub_alpha(alpha, i, num_targets)
+                alpha_by_id[id(target)] = sub_alpha
+                self._apply_single_two_phase(target, sub_alpha)
+        # Text's fast sender (`_send_text_write`) fades each glyph from this
+        # map, and only a Text root may carry it: setting it on a MathTex sends
+        # the whole formula down the text writer, which loses the per-glyph
+        # progress set above.  Arm every Text in the subtree, not only a Text
+        # that happens to be the animation's own mobject: inside a VGroup a
+        # Text sent without the map falls back to `_send_vmobject`, whose
+        # `_is_text` branch skips the synthesized write outline, so the line
+        # only faded its fill in and never showed the hand-writing stroke.
+        for text_root in self._text_roots(mob):
+            letters = getattr(text_root, 'submobjects', None) or ()
+            text_root._letter_alphas = {
+                i: alpha_by_id.get(id(letter), 0.0)
+                for i, letter in enumerate(letters)}
+
+    @staticmethod
+    def _text_roots(mob):
+        """Every ``Text`` root in the subtree, in family order."""
+        getter = getattr(mob, 'get_family', None)
+        nodes = getter() if callable(getter) else [mob]
+        return [node for node in nodes if isinstance(node, _Text)]
 
     def _set_fo(self, mob, value):
         if hasattr(mob, 'fill_rgbas') and mob.fill_rgbas is not None and len(mob.fill_rgbas) > 0:
@@ -140,20 +170,21 @@ class DrawBorderThenFill(Animation):
         for tm in targets:
             tm._write_active = True
             self._apply_stroke_style(tm)
-        # Fill fades in at the SAME rate as the title's text-write
-        # (_send_text_write): fill_alpha = max(0, (x - 0.3) * 2.0), i.e. it
-        # starts fading in at 30% of the glyph's animation and is fully opaque
-        # by 80% — not lagging until the very end.
-        fill_alpha = max(0.0, min(1.0, (alpha - 0.3) * 2.0))
+        # CE's two phases (`ShowPartial.interpolate_submobject`): the whole
+        # first half draws the outline at full opacity with NO fill, and the
+        # second half ramps the fill 0 -> 1 while the outline recedes.  Starting
+        # the fill at 30 % of the glyph (the old behaviour) dimmed the outline
+        # while a third of it was still being drawn, which read as a grey,
+        # softer stroke than CE's crisp white one.
         if alpha < border_frac:
-            # Border phase: stroke draws progressively, fill still ramping in
-            # from 30% (overlaps with the tail of the stroke, like the title).
+            # Border phase: stroke draws progressively, fill stays off.
             stroke_alpha = self.rate_func(alpha / border_frac)
             mob._vulkan_progress = stroke_alpha
+            fill_alpha = 0.0
         else:
-            # Fill phase: stroke fully drawn (renderer fades it out), fill
-            # continues to full opacity by 80%.
+            # Fill phase: outline complete, fill fades in over the whole half.
             mob._vulkan_progress = 1.0
+            fill_alpha = min(1.0, (alpha - border_frac) / (1.0 - border_frac))
         for tm in targets:
             self._set_fo(tm, self._orig_fill.get(id(tm), 1.0) * fill_alpha)
             self._set_so(tm, self._orig_stroke.get(id(tm), 1.0))
@@ -161,10 +192,18 @@ class DrawBorderThenFill(Animation):
     def finish(self):
         super().finish()
         mob = self.mobject
-        if hasattr(mob, 'submobjects') and mob.submobjects:
-            mob._letter_alphas = {i: 1.0 for i in range(len(mob.submobjects))}
-        else:
-            mob._vulkan_progress = 1.0
+        # The per-glyph map is a Text-sender channel.  A container that had it
+        # during the animation must not keep it: a stale map on a VGroup routes
+        # the whole group through the text writer on every later frame.  Text
+        # roots keep an all-1.0 map (the documented post-Write fast path).
+        for node in getattr(mob, 'get_family', lambda: [mob])():
+            if isinstance(node, _Text):
+                letters = getattr(node, 'submobjects', None) or ()
+                node._letter_alphas = {i: 1.0 for i in range(len(letters))}
+            else:
+                getattr(node, '__dict__', {}).pop('_letter_alphas', None)
+        for tm in self._point_targets(mob):
+            tm._vulkan_progress = 1.0
         # Restore original fill/stroke opacity on every point-bearing target.
         for tm in self._point_targets(mob):
             self._restore_stroke_style(tm)
