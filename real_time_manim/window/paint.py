@@ -59,6 +59,26 @@ def _gradient_flat_shape(mob):
         return False
 
 
+def _replay_arg(arg):
+    """Snapshot a native argument so a reused scratch buffer cannot alias it.
+
+    Several senders allocate ONE ctypes array and rewrite it for every loop
+    iteration (``_emit_stroke_bevel``: one 4-float ``edge`` per stroke layer,
+    fed to ``AddLineStrip`` once per polygon edge).  Live painting is fine --
+    the native call reads the array immediately -- but the replay cache keeps
+    the call arguments for later frames, and they all point at that one array:
+    after the loop it holds the LAST edge, so replaying a modelled 3D Cube drew
+    the same edge four times and dropped every other outline segment (the
+    promo's "3D / SPATIAL SCENES" hold, RTM 2.0.7/2.0.8).
+    """
+    if isinstance(arg, ctypes.Array):
+        try:
+            return type(arg).from_buffer_copy(arg)
+        except Exception:                       # exotic array type
+            return arg
+    return arg
+
+
 class _ReplayDLL:
     """Records native calls made by one leaf so a static frame can replay them."""
 
@@ -74,7 +94,7 @@ class _ReplayDLL:
         fn = getattr(real, name)
 
         def call(*args):
-            calls.append((fn, args))
+            calls.append((fn, tuple(_replay_arg(a) for a in args)))
             return fn(*args)
 
         return call
