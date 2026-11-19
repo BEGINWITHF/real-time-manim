@@ -5,6 +5,8 @@
 
 Conventions (true for every recipe): `MLWindow` size is forced to **1920×1080 @ 60 fps**; `win.scene = self` and `win.close()` are both **required**; one window per process; RTM-own animation classes come from `real_time_manim.vulkan_bind`, everything else from `real_time_manim` (bundled ManimCE). Never `import manim` first.
 
+**This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/BEGINWITHF/real-time-manim).
+
 ---
 
 ## live-preview scene skeleton
