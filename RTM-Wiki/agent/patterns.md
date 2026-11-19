@@ -644,7 +644,7 @@ notes: verified 2026-11-16 across mesh scenes (Dzhanibekov loop), painter
 scenes (epicycles, heat ring, Pearson dial) and `FrameServer` stills —
 external mobject writes repaint every frame in the record path, and the
 `t >= PERIOD` snap makes frame 0 == frame T bit-exactly (check with
-`scripts/verify_seamless_loop.py --period PERIOD --fps 60`).  Keep every
+`scripts/verify_seamless_loop.py out.mp4 --period PERIOD --fps 60`).  Keep every
 visual a function of `tau` alone — anything stateful (integration,
 `dt`-accumulated clocks) breaks seeking and the closing snap.  For a
 non-looping piece the same class works with the snap removed and
