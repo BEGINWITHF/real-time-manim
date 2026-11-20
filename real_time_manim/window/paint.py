@@ -2771,37 +2771,24 @@ class PaintMixin:
         elif isinstance(mob, Arrow):
             # Same rule as Line: `_send_arrow` strokes the shaft between the
             # path's endpoints plus `mob.tip`, which is only the arrow's shape
-            # while the shaft is still one straight cubic.
-            if self._path_is_a_straight_cubic(mob):
+            # while the shaft is still one straight cubic.  A bent shaft (wave,
+            # Homotopy) takes the point path, and the tip is then a normal
+            # submobject that this walk must draw (issue #93).
+            straight = self._path_is_a_straight_cubic(mob)
+            if straight:
                 self._dbg_arrow(mob, "main", parent_transforming)
                 self._send_arrow(mob, a, w, h, screen_rot, parent_offset)
             else:
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)
-            # `_send_arrow` draws the shaft AND `mob.tip`, which is why Arrow
-            # is left out of the family walk below ("Arrow is already fully
-            # handled by _send_arrow").  True for `tip`, false for anything
-            # else: a LabeledArrow carries a SECOND submobject, its `Label`,
-            # that nothing drew at all (report R10-2 -- BracesAndLabels' last
-            # row, `flow`: CE 329 px of glyphs, RTM 0; label_probe.py shows
-            # `_send(flow)` emitting AddLine x2 + AddBezierPath x1 only).  Walk
-            # every submobject except the tip, so report #9's tip stays drawn
-            # exactly once.
-            _arrow_tip = getattr(mob, "tip", None)
-            for _i, _sub in depth_order(mob.submobjects):
-                if _sub is _arrow_tip:
-                    continue
-                self._dbg_arrow(_sub, "walk", parent_transforming)
-                # `_send_arrow` lends the grow state to the tip itself; a
-                # Label drawn here needs the same loan or it stays full size
-                # while the shaft grows.
-                need_gs, need_gp = lend_grow(mob, _sub)
-                self._send(_sub, rot, parent_alpha=a,
-                           parent_offset=parent_offset,
-                           parent_transforming=parent_transforming,
-                           parent_is_text=is_text)
-                release_grow(getattr(self, '_paint_queue', None), _sub,
-                             need_gs, need_gp)
+            # `_send_arrow` draws the shaft AND `mob.tip`, so the end tip is
+            # skipped only in that case (otherwise it would be painted twice).
+            # Everything else -- a LabeledArrow's `Label`, a DoubleArrow's
+            # `start_tip` -- is always walked: report R10-2's label was once
+            # never drawn at all (`label_probe.py`: AddLine x2 +
+            # AddBezierPath x1 only).
+            self._send_arrow_children(mob, a, rot, parent_offset, is_text,
+                                      parent_transforming, skip_tip=straight)
         elif isinstance(mob, DashedLine):
             self._send_dashed_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Line):
