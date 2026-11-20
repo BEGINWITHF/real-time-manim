@@ -3,6 +3,7 @@
 > Reference for AI agents / bots. **Not optimized for human reading**: dense, structured, greppable.
 > Human-facing version: [`../zh_CN/`](../zh_CN/README.md) (Chinese). This folder is its compressed reformat.
 > Source of truth: the `real_time_manim/` source tree + `../zh_CN/`. On conflict, the source wins.
+> **This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/BEGINWITHF/real-time-manim).
 
 ## 0. TL;DR — minimal runnable
 

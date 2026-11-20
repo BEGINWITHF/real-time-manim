@@ -3,6 +3,8 @@
 > scope: cross-domain pitfalls, RTM-vs-ManimCE deviations, "allowed but discouraged" and "unwired/no-op" items, and an exact error→cause→fix table. Read after the domain file, before writing code.
 > src: condensed from `agent/{runtime,scene-camera,mobject,animation-transform,animation-motion,geometry,text,coords-charts,three-d,graph-vector,utils}.md`; site-wide `提醒`/`无法演示`/`不支持` under `../zh_CN/`. Every error string below is verbatim from those files — none invented.
 
+**This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/BEGINWITHF/real-time-manim).
+
 ---
 
 ## Global / RTM-vs-CE
@@ -125,7 +127,7 @@
 - **Re-animating an already-drawn mobject** (`.animate…`, `Transform`, `MoveToTarget`, `copy()`) used to raise `ValueError: ctypes objects containing pointers cannot be pickled` — RTM's `_rtm_*` replay caches hold ctypes buffers and `Mobject.__deepcopy__` copied `__dict__` wholesale → fixed: `compat.py` shim #10 skips `_rtm_*` keys on deepcopy.
 - **`Create` on a group that is already in the scene** shows it complete from frame 0 — `Create` is an introducer; add the group *through* the animation (`LaggedStart(Create(a), Create(b), …)`), never with `self.add` first.
 - **`TracedPath` records one point per frame** — fast motion (and any 3D path) turns the trail into long chords across the figure; for a comet tail, rebuild a polyline from precomputed samples inside `always_redraw`.
-- **A mobject mutated ONLY from inside a custom `Animation.interpolate_mobject` never paints unless it is in `scene.mobjects`** — never `self.add`'d and never introduced by a play means nothing ever draws it (verified 2026-11-16: an epicycle trace written per frame rendered zero pixels until `self.add(trace)`). Companion positive fact: once it IS in the scene, external per-frame mutations repaint correctly in both `fast_record_scene` and `FrameServer` seeks — the painter's replay caches are keyed on the actual point bytes (`paint.py::_leaf_state`), so a write from an animation that does not own the mobject invalidates them like any other. The animation's own `mobject` can be a dummy/carrier (`self.add`'d caption, empty `VGroup`).
+- **A mobject mutated ONLY from inside a custom `Animation.interpolate_mobject` never paints unless it is in `scene.mobjects`** — never `self.add`'d and never introduced by a play means nothing ever draws it (verified 2026-11-16: an epicycle trace written per frame rendered zero pixels until `self.add(trace)`). Companion positive fact: once it IS in the scene, external per-frame mutations repaint correctly in both `fast_record_scene` and `FrameServer` seeks — the painter's replay caches are keyed on the actual point bytes (`paint.py::_leaf_state`), so a write from an animation that does not own the mobject invalidates them like any other. The animation's own `mobject` can be a dummy/carrier (e.g. an empty `VGroup`, or a caption already in the scene).
 
 ### Geometry
 - **`Polygram(p1, p2, ...)`** (single points as separate args) → `IndexError`; each positional arg must be one vertex group → use `Polygon`.
