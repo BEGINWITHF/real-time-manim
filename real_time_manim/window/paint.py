@@ -1620,6 +1620,35 @@ class PaintMixin:
             return list(enumerate(items))
         return depth_order(items)
 
+    def _send_arrow_children(self, mob, a, rot, parent_offset, is_text,
+                             parent_transforming, skip_tip):
+        """Draw an ``Arrow``'s other descendants (label, start tip, ...).
+
+        ``_send_arrow`` paints the shaft AND ``mob.tip``; the end tip therefore
+        has to be skipped here or a straight arrow draws its head twice.  A
+        wave/Homotopy bends the shaft, which sends the arrow down the point
+        path instead, and ``mob.tip`` is then NOT drawn -- skipping it anyway
+        made the head vanish for the whole wave (issue #93).  The transforming
+        branch used to return before this walk as well, so a ``DoubleArrow``
+        lost its start tip under any transform and a ``LabeledArrow`` lost its
+        label.
+        """
+        arrow_tip = getattr(mob, "tip", None) if skip_tip else None
+        for _i, _sub in depth_order(mob.submobjects):
+            if _sub is arrow_tip:
+                continue
+            self._dbg_arrow(_sub, "walk", parent_transforming)
+            # `_send_arrow` lends the grow state to the tip itself; a Label or
+            # a start tip drawn here needs the same loan or it stays full size
+            # while the shaft grows.
+            need_gs, need_gp = lend_grow(mob, _sub)
+            self._send(_sub, rot, parent_alpha=a,
+                       parent_offset=parent_offset,
+                       parent_transforming=parent_transforming,
+                       parent_is_text=is_text)
+            release_grow(getattr(self, '_paint_queue', None), _sub,
+                         need_gs, need_gp)
+
     @staticmethod
     def _camera_image_prefixes(cam, roots):
         """Indices of the roots that display the camera's own pixel array.
@@ -2489,12 +2518,26 @@ class PaintMixin:
                     self._send_dot(mob, a, w, h)
                     return
                 # Arrow: during Rotating/transforms, _send_vmobject only
-                # renders the shaft bezier — the tip polygon is a submobject
-                # that never gets drawn. Route through _send_arrow instead.
-                if isinstance(mob, Arrow) and self._path_is_a_straight_cubic(mob):
+                # renders the shaft bezier -- the tip polygon is a submobject
+                # that never gets drawn.  Route a straight shaft through
+                # _send_arrow (shaft + mob.tip); a wave/Homotopy bends the
+                # shaft, so draw the points and then walk the family or the
+                # head disappears for the whole wave (issue #93).
+                if isinstance(mob, Arrow):
                     screen_rot = -rot
-                    self._dbg_arrow(mob, "transforming", parent_transforming)
-                    self._send_arrow(mob, a, w, h, screen_rot, None if is_text else parent_offset)
+                    straight = self._path_is_a_straight_cubic(mob)
+                    if straight:
+                        self._dbg_arrow(mob, "transforming",
+                                        parent_transforming)
+                        self._send_arrow(mob, a, w, h, screen_rot,
+                                         None if is_text else parent_offset)
+                    else:
+                        self._send_vmobject(mob, a, w, h,
+                                            None if is_text else parent_offset,
+                                            0.0, is_text=is_text)
+                    self._send_arrow_children(
+                        mob, a, rot, parent_offset, is_text,
+                        parent_transforming, skip_tip=straight)
                     return
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset, 0.0, is_text=is_text)
                 return
@@ -2728,37 +2771,24 @@ class PaintMixin:
         elif isinstance(mob, Arrow):
             # Same rule as Line: `_send_arrow` strokes the shaft between the
             # path's endpoints plus `mob.tip`, which is only the arrow's shape
-            # while the shaft is still one straight cubic.
-            if self._path_is_a_straight_cubic(mob):
+            # while the shaft is still one straight cubic.  A bent shaft (wave,
+            # Homotopy) takes the point path, and the tip is then a normal
+            # submobject that this walk must draw (issue #93).
+            straight = self._path_is_a_straight_cubic(mob)
+            if straight:
                 self._dbg_arrow(mob, "main", parent_transforming)
                 self._send_arrow(mob, a, w, h, screen_rot, parent_offset)
             else:
                 self._send_vmobject(mob, a, w, h, None if is_text else parent_offset,
                                     rot, is_text=is_text)
-            # `_send_arrow` draws the shaft AND `mob.tip`, which is why Arrow
-            # is left out of the family walk below ("Arrow is already fully
-            # handled by _send_arrow").  True for `tip`, false for anything
-            # else: a LabeledArrow carries a SECOND submobject, its `Label`,
-            # that nothing drew at all (report R10-2 -- BracesAndLabels' last
-            # row, `flow`: CE 329 px of glyphs, RTM 0; label_probe.py shows
-            # `_send(flow)` emitting AddLine x2 + AddBezierPath x1 only).  Walk
-            # every submobject except the tip, so report #9's tip stays drawn
-            # exactly once.
-            _arrow_tip = getattr(mob, "tip", None)
-            for _i, _sub in depth_order(mob.submobjects):
-                if _sub is _arrow_tip:
-                    continue
-                self._dbg_arrow(_sub, "walk", parent_transforming)
-                # `_send_arrow` lends the grow state to the tip itself; a
-                # Label drawn here needs the same loan or it stays full size
-                # while the shaft grows.
-                need_gs, need_gp = lend_grow(mob, _sub)
-                self._send(_sub, rot, parent_alpha=a,
-                           parent_offset=parent_offset,
-                           parent_transforming=parent_transforming,
-                           parent_is_text=is_text)
-                release_grow(getattr(self, '_paint_queue', None), _sub,
-                             need_gs, need_gp)
+            # `_send_arrow` draws the shaft AND `mob.tip`, so the end tip is
+            # skipped only in that case (otherwise it would be painted twice).
+            # Everything else -- a LabeledArrow's `Label`, a DoubleArrow's
+            # `start_tip` -- is always walked: report R10-2's label was once
+            # never drawn at all (`label_probe.py`: AddLine x2 +
+            # AddBezierPath x1 only).
+            self._send_arrow_children(mob, a, rot, parent_offset, is_text,
+                                      parent_transforming, skip_tip=straight)
         elif isinstance(mob, DashedLine):
             self._send_dashed_line(mob, a, w, h, screen_rot, parent_offset)
         elif isinstance(mob, Line):
