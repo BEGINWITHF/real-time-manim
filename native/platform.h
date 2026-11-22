@@ -73,6 +73,13 @@ __declspec(dllexport) void AddLineStrip(const float *points, const float *alphas
                                         int num_points, int width,
                                         int r, int g, int b, float alpha);
 
+// Exact-width variant: the quad is `width` pixels, not `width + 1`, so
+// sub-pixel widths rasterise at the requested coverage instead of being
+// truncated to the integer API's core+edge layers.
+__declspec(dllexport) void AddLineStripF(const float *points, const float *alphas,
+                                         int num_points, float width,
+                                         int r, int g, int b, float alpha);
+
 #ifdef __cplusplus
 }
 #endif

@@ -26,6 +26,7 @@ from real_time_manim.camera_state import (
 )
 from manim.mobject.text.tex_mobject import MathTexPart
 
+from real_time_manim.render.shapes.stroke import add_line_strip
 from real_time_manim.render.util import (affine_frame_map, fill_gradient_stops,
                                          get_stroke_w, path_center,
                                          path_extent)
@@ -676,8 +677,8 @@ class PaintMixin:
                 sp = ctypes.cast(ctypes.byref(coords_stroke, i * stride_s),
                                  ptr_t)
                 ap = ctypes.cast(ctypes.byref(alphas_ct, i * stride_a), ptr_t)
-                dll.AddLineStrip(sp, ap, 5, int(stroke_w[i]),
-                                 int(sri[i]), int(sgi[i]), int(sbi[i]), 1.0)
+                add_line_strip(dll, sp, ap, 5, float(px[i]),
+                               sri[i], sgi[i], sbi[i], 1.0)
         # The replay cache stores the cast pointers above; keep their backing
         # arrays alive as long as that cache lives.
         try:
@@ -1428,7 +1429,7 @@ class PaintMixin:
                     float(stroke_w[i]), int(fri[i]), int(fgi[i]),
                     int(fbi[i]), float(fill_alpha[i]),
                     1 if show_fill[i] else 0, float(anim[i]),
-                    sp, ap, bool(do_stroke[i]), int(stroke_w[i]))
+                    sp, ap, bool(do_stroke[i]), float(stw[i]))
 
         for mob, kind in zip(roots, kinds):
             if kind == 0:
@@ -1447,14 +1448,15 @@ class PaintMixin:
                     dll.AddLineStrip(ptr, None, count, _wd, ri, gi, bi, _al)
             else:
                 (fp, sri, sgi, sbi, swd, fri, fgi, fbi, fa0, show,
-                 ai, sp, ap, do_stroke, int_w) = quad_payload[id(mob)]
+                 ai, sp, ap, do_stroke, strip_px) = quad_payload[id(mob)]
                 dll.AddBezierPath(
                     fp, 16, sri, sgi, sbi, swd,
                     fri, fgi, fbi, fa0,
                     1.0, 0, show, ai,
                     fri, fgi, fbi, 0.0, 0.0, 0.0, 0.0)
                 if do_stroke:
-                    dll.AddLineStrip(sp, ap, 5, int_w, sri, sgi, sbi, 1.0)
+                    add_line_strip(dll, sp, ap, 5, strip_px,
+                                   sri, sgi, sbi, 1.0)
         return True
 
     def _try_nonoverlap_batch(self, roots):
