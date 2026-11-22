@@ -26,8 +26,9 @@ jobs:
         run: |
           set -e
           file dist/release/vulkan_core.dylib
-          nm -gU dist/release/vulkan_core.dylib | grep -E "AddMesh|Vulkan_GetReadbackSize"
-          strings dist/release/vulkan_core.dylib | grep -c "AddMesh"
+          nm -gU dist/release/vulkan_core.dylib | grep -E " _AddMesh$| _Vulkan_GetReadbackSize$"
+          nm -gU dist/release/vulkan_core.dylib | grep -q " _AddImageQuad$"
+          nm -gU dist/release/vulkan_core.dylib | grep -q " _SaveScreenshotRawBGRA$"
 
       - name: Upload dylib
         uses: actions/upload-artifact@v4
