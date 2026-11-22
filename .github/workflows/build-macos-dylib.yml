@@ -1,0 +1,35 @@
+name: build-macos-dylib
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-macos-dylib.yml"
+      - "native/**"
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MoltenVK and Vulkan headers
+        run: |
+          brew install molten-vk vulkan-headers
+
+      - name: Build vulkan_core.dylib
+        run: bash native/build_mac.sh
+
+      - name: Verify the mesh pipeline is exported
+        run: |
+          set -e
+          file dist/release/vulkan_core.dylib
+          nm -gU dist/release/vulkan_core.dylib | grep -E "AddMesh|Vulkan_GetReadbackSize"
+          strings dist/release/vulkan_core.dylib | grep -c "AddMesh"
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulkan-core-dylib
+          path: dist/release/vulkan_core.dylib
+          if-no-files-found: error
