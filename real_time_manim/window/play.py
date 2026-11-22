@@ -151,13 +151,13 @@ def _static_root_ids(scene, anims, min_roots=16):
 
     roots = list_update(list(scene.mobjects),
                         list(foreground_mobjects_of(scene)))
-    if len(roots) < min_roots:
+    families = {id(r): _family_ids(r) for r in roots}
+    if sum(len(fam) for fam in families.values()) < min_roots:
         return None
 
     moving_ids = _animation_family_ids(anims)
 
     foreground = {id(m) for m in (getattr(scene, "foreground_mobjects", ()) or ())}
-    families = {id(r): _family_ids(r) for r in roots}
     moving_roots = {rid for rid, fam in families.items()
                     if rid in foreground or (fam & moving_ids)}
     # CE also treats a family updater as motion (get_moving_mobjects); the
@@ -178,9 +178,11 @@ def _static_root_ids(scene, anims, min_roots=16):
 
     static = {rid for rid, fam in families.items()
               if rid not in moving_roots and not (fam & moving_families)}
-    if len(static) < min_roots or not (len(families) - len(static)):
-        # Nothing worth baking (too few statics, or no moving root left to
-        # redraw -- a frozen frame already reuses its encoded bytes).
+    if (not static
+            or sum(len(families[rid]) for rid in static) < min_roots
+            or not (len(families) - len(static))):
+        # Nothing worth baking (too few static leaves, or no moving root left
+        # to redraw -- a frozen frame already reuses its encoded bytes).
         return None
     return static
 
