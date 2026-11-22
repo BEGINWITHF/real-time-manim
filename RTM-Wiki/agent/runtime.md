@@ -269,10 +269,14 @@ before the frame loop (`_prepare_static_layer` → `bake_static_layer`):
 Scope matches CE's `static_image`: moving mobjects always paint over static
 ones, so a mid-play `bring_to_front` on a static root is not re-ordered.
 Measured on 2000 circles + 320 labels + 100 rotating dots (60 frames):
-play loop 12.65 s → 2.01 s (0.211 → 0.033 s/frame); total
-`fast_record_scene` 20.4 s → 10.0 s versus ManimCE 10.1 s. Raw framebuffer
-diff vs the full paint is ~100 pixels (max 29) where a moving AA edge overlaps
-a static one — the MSAA/static-texture interaction CE's own blit has.
+play loop 12.65 s → 2.01 s (0.211 → 0.033 s/frame); ManimCE's own play
+loop is 2.10 s (0.035 s/frame) on the same machine, so the loop is at
+parity (the issue's 4.3 s came from a different machine).  The whole
+`fast_record_scene` run is 20.4 s → 10.0 s; RTM's Python scene
+construction dominates it (ManimCE 7.2 s total), not the frame loop.  Raw
+framebuffer diff vs the full paint on the repro is 603 of 2,073,600 pixels
+(0.029 %, max 42) where a moving AA edge overlaps a static one — the
+MSAA/static-texture interaction CE's own blit has.
 
 ### `MLWindow.hwnd` (property)
 
