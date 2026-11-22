@@ -239,11 +239,40 @@ def tick(self)
 ### `MLWindow.sync`
 
 ```python
-def sync(self, scene, angle=0.0)
+def sync(self, scene, angle=0.0, only_ids=None)
 ```
 
 - `ret`: none. Publishes the frame's camera viewport and walks `scene.mobjects` (+ foreground mobjects) into native draw calls (`ClearShapes` first).
 - `notes`: `render_at` calls `evaluate` → `sync` → `tick` in that order. A custom camera overriding `capture_mobjects`/`get_frame` falls back to per-frame full-screen rasterization (`_rasterise_custom_camera`).
+- `only_ids`: internal, used by the static-layer bake — paints only the roots whose `id()` is in the set (no static quad is composited during that pass).
+
+### Static layer (#85)
+
+`fast_record_scene` bakes the roots a play cannot change into **one texture**
+before the frame loop (`_prepare_static_layer` → `bake_static_layer`):
+
+- the split mirrors ManimCE's `Scene.get_moving_and_static_mobjects`: an
+  animated family, a `foreground_mobjects` entry, or a family updater is
+  moving; everything else is static only when its whole family is disjoint
+  from every moving family;
+- the bake is a static-only `sync` + framebuffer readback (BGRA → RGBA) drawn
+  once per play as `AddImageQuad`; each frame then submits only the moving
+  roots;
+- the layer is dropped (and every root painted again) as soon as the camera
+  viewport or the clear colour differs from the bake, and at the end of the
+  play, because the next play may move anything it captured;
+- it is **off** for visible windows (the extra static-only frame would flash),
+  custom cameras, 3D/rotated viewports, animated `MovingCamera.frame`, mesh
+  batches, camera-image prefixes and `count_only` runs. `RTM_NO_STATIC_LAYER=1`
+  disables it explicitly.
+
+Scope matches CE's `static_image`: moving mobjects always paint over static
+ones, so a mid-play `bring_to_front` on a static root is not re-ordered.
+Measured on 2000 circles + 320 labels + 100 rotating dots (60 frames):
+play loop 12.65 s → 2.01 s (0.211 → 0.033 s/frame); total
+`fast_record_scene` 20.4 s → 10.0 s versus ManimCE 10.1 s. Raw framebuffer
+diff vs the full paint is ~100 pixels (max 29) where a moving AA edge overlaps
+a static one — the MSAA/static-texture interaction CE's own blit has.
 
 ### `MLWindow.hwnd` (property)
 

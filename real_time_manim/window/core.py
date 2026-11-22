@@ -25,6 +25,12 @@ if TYPE_CHECKING:
     from manim import Scene
 
 
+# Texture token for the per-play static bake (#85).  Per-mobject tokens are
+# small counter values (render/image.py), and the custom-camera raster uses
+# 0xCA11E4A5, so this cannot collide.
+_STATIC_TOKEN = 0x5A71C1A7
+
+
 class CoreMixin:
     # This renderer supports exactly ONE output format: 1920x1080 at 60 fps.
     # Anything smaller is refused rather than silently accepted, because a small
@@ -74,6 +80,16 @@ class CoreMixin:
         self.frame_count = 0
         self.scene: Scene | None = None
         self._active_anims = []
+        # Static layer (#85): the roots a play never changes are baked once
+        # into a texture and re-sampled instead of re-submitted every frame.
+        # ``_static_baked_ids`` is the set of root ids inside the bake; sync()
+        # paints every OTHER root.  ``_static_key`` is the (viewport, clear
+        # colour) the bake is valid for -- if either changes the layer is
+        # dropped and the frame falls back to the ordinary full paint.
+        self._static_layer = None        # (digest, w, h, ctypes buffer)
+        self._static_baked_ids = None
+        self._static_key = None
+        self._clear_rgb = None
         # Schedule mode (2.0.0): when the class flag _schedule_mode is True,
         # play() records animations on a global timeline instead of rendering,
         # so any frame can later be produced on demand via build_timeline().
@@ -340,6 +356,9 @@ class CoreMixin:
             return
         if len(values) == 3:
             setter(*values)
+            # Remembered for the static layer: the bake embeds this clear colour,
+            # so an animated background must invalidate it (see sync).
+            self._clear_rgb = tuple(round(v, 6) for v in values)
 
     @staticmethod
     def _camera_needs_raster(scene, cam):
@@ -466,13 +485,154 @@ class CoreMixin:
         """Detach the ``MeshBatch`` attached with :meth:`set_mesh`."""
         self._mesh = None
 
-    def sync(self, scene, angle=0.0):
+    # ------------------------------------------------------------------
+    # Static layer (#85)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _viewport_key(viewport):
+        """A hashable snapshot of everything a paint depends on.
+
+        The static bake is only valid while the camera looks at the same
+        rectangle from the same angle with the same light; anything else
+        (a moving camera, a ThreeDCamera turn) has to repaint the roots.
+        """
+        if viewport is None:
+            return None
+        rot = viewport.rotation
+        light = viewport.light_source
+        return (
+            viewport.center,
+            viewport.height,
+            viewport.unit_height,
+            None if rot is None else np.asarray(rot, dtype=float).tobytes(),
+            viewport.frame_center,
+            viewport.focal_distance,
+            viewport.exponential,
+            None if light is None else np.asarray(light, dtype=float).tobytes(),
+        )
+
+    def _static_frame_key(self, scene):
+        """(viewport, clear colour) the current frame is painted with."""
+        from real_time_manim.camera_state import get_viewport
+        return (self._viewport_key(get_viewport()),
+                getattr(self, "_clear_rgb", None))
+
+    def _drop_static_layer(self):
+        """Stop compositing the bake and paint every root again."""
+        self._static_layer = None
+        self._static_baked_ids = None
+        self._static_key = None
+
+    def _read_readback_bgra(self):
+        """Read the just-presented frame as tight BGRA rows, or ``None``.
+
+        The raw readback only sees a frame when it was requested *before* the
+        tick that drew it (a presented swapchain image belongs to the
+        presentation engine), which is why :meth:`bake_static_layer` arms
+        ``request_readback`` first.
+        """
+        dll = self.dll
+        get_size = getattr(dll, "Vulkan_GetReadbackSize", None)
+        raw = getattr(dll, "SaveScreenshotRawBGRA", None)
+        if get_size is None or raw is None:
+            return None
+        get_size.restype = ctypes.c_int
+        get_size.argtypes = [ctypes.POINTER(ctypes.c_int),
+                             ctypes.POINTER(ctypes.c_int)]
+        w = ctypes.c_int(0)
+        h = ctypes.c_int(0)
+        if not get_size(ctypes.byref(w), ctypes.byref(h)):
+            return None
+        if w.value <= 0 or h.value <= 0:
+            return None
+        need = w.value * h.value * 4
+        buf = (ctypes.c_ubyte * need)()
+        out_size = ctypes.c_int(need)
+        raw.restype = ctypes.c_int
+        raw.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
+                        ctypes.POINTER(ctypes.c_int)]
+        if not raw(buf, need, ctypes.byref(out_size)):
+            return None
+        if out_size.value != need:
+            return None
+        return w.value, h.value, buf
+
+    def bake_static_layer(self, scene, static_ids):
+        """Render the static roots once and keep the pixels as a texture.
+
+        One extra draw + readback per play.  From then on :meth:`sync` samples
+        this texture for those roots and only submits the moving ones, which
+        is what ManimCE does with ``save_static_frame_data`` -- but as one
+        ``AddImageQuad`` instead of ``static_mobjects`` every frame.
+
+        Returns ``False`` (leaving no layer installed) when the DLL has no raw
+        readback, the frame could not be drawn, or the bake is unusable.  The
+        caller then just keeps the ordinary full paint.
+        """
+        self._drop_static_layer()
+        if not static_ids:
+            return False
+        if self._camera_needs_raster(scene, getattr(scene, "camera", None)):
+            return False
+        # Paint ONLY the roots that will be baked, then read that frame back.
+        self.sync(scene, only_ids=static_ids)
+        self.request_readback()
+        if not self.tick():
+            self._drop_static_layer()
+            return False
+        got = self._read_readback_bgra()
+        if got is None:
+            self._drop_static_layer()
+            return False
+        width, height, bgra = got
+        raw = np.frombuffer(bgra, dtype=np.uint8).reshape(height, width, 4)
+        # BGRA -> RGBA.  The bake is already composited over the clear colour
+        # and every source is opaque, so alpha is forced to 255: the quad is
+        # blended with SRC_ALPHA, and a 0 alpha from an odd readback would
+        # erase the whole layer.
+        rgba = np.empty((height, width, 4), dtype=np.uint8)
+        rgba[..., 0] = raw[..., 2]
+        rgba[..., 1] = raw[..., 1]
+        rgba[..., 2] = raw[..., 0]
+        rgba[..., 3] = 255
+        digest = int.from_bytes(hashlib.blake2b(rgba.tobytes(),
+                                                digest_size=8).digest(),
+                                "little")
+        buf = (ctypes.c_ubyte * rgba.nbytes).from_buffer_copy(rgba.tobytes())
+        self._static_layer = (digest, width, height, buf)
+        self._static_baked_ids = set(static_ids)
+        self._static_key = self._static_frame_key(scene)
+        return True
+
+    def _draw_static_layer(self, scene):
+        """Composite the bake, or drop it if the frame no longer matches it."""
+        layer = self._static_layer
+        if layer is None:
+            return
+        if self._static_key != self._static_frame_key(scene):
+            # The camera moved / the background changed after the bake: the
+            # texture is now wrong for every static root, so go back to the
+            # full paint instead of showing a stale picture.
+            self._drop_static_layer()
+            return
+        digest, width, height, buf = layer
+        quad = (ctypes.c_float * 8)(
+            0.0, 0.0, float(self.win_w), 0.0,
+            float(self.win_w), float(self.win_h), 0.0, float(self.win_h))
+        self.dll.AddImageQuad(_STATIC_TOKEN, digest, buf, int(width),
+                              int(height), quad, 1.0)
+
+    def sync(self, scene, angle=0.0, only_ids=None):
         # Phase 5: publish this frame's camera viewport (None for a plain Camera,
         # so non-camera scenes keep the fixed default frame).
         from real_time_manim.camera_state import set_viewport_from_scene
         set_viewport_from_scene(scene)
         self.dll.ClearShapes()
         self._publish_background_color(scene)
+        # #85: the bake is the bottom layer -- before the mesh and every
+        # moving root, exactly like CE's static_image blit.
+        if only_ids is None:
+            self._draw_static_layer(scene)
 
         # Optional depth-tested mesh batch.  It is submitted before the legacy
         # painter primitives (native draws mesh first), so a mesh can occlude
@@ -500,6 +660,15 @@ class CoreMixin:
         # lists without ``list_update`` left duplicates at their old position.
         roots = list_update(list(scene.mobjects),
                             list(foreground_mobjects_of(scene)))
+        if only_ids is not None:
+            # Static bake pass: paint just the roots being captured.
+            roots = [r for r in roots if id(r) in only_ids]
+        elif self._static_baked_ids:
+            # Every baked root is already in the static image.  The bake is
+            # only ever installed for roots whose whole family is disjoint
+            # from the moving ones, so dropping them here leaves every moving
+            # family intact (see play._static_root_ids).
+            roots = [r for r in roots if id(r) not in self._static_baked_ids]
 
         def _family_ids(node):
             stack = [node]

@@ -96,6 +96,97 @@ def _forward_path_kwargs(anims, kwargs):
                 pass
 
 
+def _family_ids(mob):
+    """Ids of ``mob`` and every submobject below it."""
+    out = set()
+    stack = [mob]
+    while stack:
+        cur = stack.pop()
+        out.add(id(cur))
+        stack.extend(getattr(cur, "submobjects", ()) or ())
+    return out
+
+
+def _animation_family_ids(anims):
+    """Ids of every mobject an animation can touch, nested groups included.
+
+    Besides ``anim.mobject``, the timeline pipeline presents detached copies the
+    scene tree cannot reach (``_ghost`` for FadeTransform, ``_fade_target_copy``
+    for TransformMatching*).  Those copies were ``Scene.add``\\ ed before the
+    play, so they *are* roots -- treating them as static would bake their
+    invisible start state and freeze them.
+    """
+    moving = set()
+
+    def collect(anim):
+        mob = getattr(anim, "mobject", None)
+        if mob is not None:
+            moving.update(_family_ids(mob))
+        for name in ("_ghost", "_fade_target_copy"):
+            extra = getattr(anim, name, None)
+            if extra is not None:
+                moving.update(_family_ids(extra))
+        for sub in (getattr(anim, "_anims", None)
+                    or getattr(anim, "animations", None) or ()):
+            collect(sub)
+
+    for anim in anims or ():
+        collect(anim)
+    return moving
+
+
+def _static_root_ids(scene, anims, min_roots=16):
+    """Root ids this play cannot change, or ``None`` when a bake is pointless.
+
+    Mirrors ManimCE's ``Scene.get_moving_and_static_mobjects``: an animated
+    mobject, anything in ``foreground_mobjects`` and anything carrying a family
+    updater is moving.  Everything else is static *only if* its whole family is
+    disjoint from every moving family -- a root that contains a moving child
+    has to be repainted as a whole, because the bake stores pixels, not a
+    subtree.  That disjointness is what lets ``sync`` drop the baked roots
+    without disturbing CE's last-occurrence paint-order rule.
+    """
+    from manim.utils.iterables import list_update
+    from real_time_manim.window.paint_order import foreground_mobjects_of
+
+    roots = list_update(list(scene.mobjects),
+                        list(foreground_mobjects_of(scene)))
+    families = {id(r): _family_ids(r) for r in roots}
+    if sum(len(fam) for fam in families.values()) < min_roots:
+        return None
+
+    moving_ids = _animation_family_ids(anims)
+
+    foreground = {id(m) for m in (getattr(scene, "foreground_mobjects", ()) or ())}
+    moving_roots = {rid for rid, fam in families.items()
+                    if rid in foreground or (fam & moving_ids)}
+    # CE also treats a family updater as motion (get_moving_mobjects); the
+    # blind suffix rule there is conservative, so do the precise check here.
+    for root in roots:
+        if id(root) in moving_roots:
+            continue
+        try:
+            if root.get_family_updaters():
+                moving_roots.add(id(root))
+        except Exception:
+            moving_roots.add(id(root))       # unknown: keep it out of the bake
+
+    moving_families = set()
+    for root in roots:
+        if id(root) in moving_roots:
+            moving_families |= families[id(root)]
+
+    static = {rid for rid, fam in families.items()
+              if rid not in moving_roots and not (fam & moving_families)}
+    if (not static
+            or sum(len(families[rid]) for rid in static) < min_roots
+            or not (len(families) - len(static))):
+        # Nothing worth baking (too few static leaves, or no moving root left
+        # to redraw -- a frozen frame already reuses its encoded bytes).
+        return None
+    return static
+
+
 def print_warning(text):
     """Print an RTM warning, surviving a stdout that cannot encode it.
 
@@ -713,6 +804,64 @@ class PlayMixin:
         self._register_play_subcaption(subcaption, start_cursor,
                                        subcaption_duration, subcaption_offset)
 
+    def _prepare_static_layer(self, scene, anims):
+        """Bake this play's unchanging roots once (#85).
+
+        Costs one extra draw plus one framebuffer readback.  In a visible
+        window that extra static-only frame would flash, so the bake is limited
+        to offline recording, where redrawing a static background every frame
+        is the actual cost.  Anything the bake cannot describe (a custom
+        camera, a 3D/moving viewport, a mesh batch, camera-image prefixes)
+        simply leaves the layer off and keeps the ordinary full paint.
+        """
+        _drop = getattr(self, "_drop_static_layer", None)
+        if _drop is None:
+            # Stand-in window (tests, frame servers): no native layer.
+            return
+        _drop()
+        if os.environ.get("RTM_NO_STATIC_LAYER"):
+            return
+        if not (getattr(self, "_fast_record", False)
+                and getattr(self, "hidden", False)):
+            return
+        if getattr(self, "_fast_record_count_only", False):
+            return                 # counting frames draws nothing
+        if getattr(self, "_mesh", None) is not None:
+            return
+        cam = getattr(scene, "camera", None)
+        if cam is None or self._camera_needs_raster(scene, cam):
+            return
+        if getattr(cam, "image_mobjects_from_cameras", None):
+            return
+        from real_time_manim.camera_state import viewport_from_scene
+        vp = viewport_from_scene(scene)
+        if vp is not None and (vp.rotation is not None
+                               or vp.fixed_orientation is not None):
+            return
+        # A MovingCamera is animated through its ``frame`` mobject, which is
+        # not one of the scene's roots: bake would be wrong from frame 1 and
+        # be dropped there, wasting the extra draw.  Refuse up front.
+        frame = getattr(cam, "frame", None)
+        if (frame is not None
+                and (_animation_family_ids(anims) & _family_ids(frame))):
+            return
+        try:
+            static_ids = _static_root_ids(scene, anims)
+        except Exception:
+            return
+        if not static_ids:
+            return
+        try:
+            bake = self.bake_static_layer
+        except AttributeError:
+            return
+        try:
+            bake(scene, static_ids)
+        except Exception as exc:     # a bake must never kill the play
+            _drop()
+            print_warning("[RTM] static layer disabled (%s: %s)"
+                          % (type(exc).__name__, exc))
+
     def _run_timeline(self, tl, anims=None):
         """Walk a finalized Timeline forward, drawing and capturing each frame.
 
@@ -740,6 +889,15 @@ class PlayMixin:
         if anims is None:
             anims = [e.get("anim") for e in getattr(tl, "_entries", [])]
         n_frames = ce_frame_count(anims, tl.duration, fps)
+
+        # #85: bake the roots this play cannot change, so the frame loop only
+        # submits moving content.  Must run after begin()/finalize() (the
+        # animated copies exist) and before the first evaluate, so the bake
+        # sees the same static state frame 0 will.  Stand-in windows in the
+        # tests implement ``_run_timeline`` without the native layer.
+        _prepare = getattr(self, "_prepare_static_layer", None)
+        if _prepare is not None:
+            _prepare(self.scene, anims)
 
         if self._fast_record:
             self._fast_record_sim_time = time.time()
@@ -914,6 +1072,12 @@ class PlayMixin:
                     # clip beats losing the entire recording.
                     stop_elapsed = (k + 1) * dt
                     break
+
+        # The bake belongs to this play: the next play may move anything it
+        # captured, so never let it leak into another play's frames.
+        _drop = getattr(self, "_drop_static_layer", None)
+        if _drop is not None:
+            _drop()
 
         for entry in tl._entries:
             anim = entry['anim']
