@@ -145,6 +145,10 @@ static int Mac_InitWindow(int w, int h, int hidden) {
     g_aspect_ratio = (double)w / (double)h;
     g_should_close = 0;
     g_preview_bar_reserved = 0;
+    // Mirror platform.c: a hidden window is offline work (fast record, frame
+    // export), so present unpaced.  The swapchain is created a few lines below,
+    // so setting this before Render_Init is enough -- no rebuild needed here.
+    g_unpaced_present = hidden ? 1 : 0;
 
     // macOS may clamp an oversized window to the screen, breaking the
     // requested aspect ratio.  Compute the largest rect with the REQUESTED
@@ -1007,6 +1011,29 @@ void Vulkan_WaitPopupSetProgress(double percent) {
 
 void Vulkan_WaitPopupDestroy(void) {
     if (g_wait_popup) [g_wait_popup destroy];
+}
+
+// Present pacing: same contract as platform.c -- an offline record must not
+// wait for the display, a live window wants vsync.  The mode is a swapchain
+// property (ChoosePresentMode in vulkan_init.c), so a change has to rebuild it.
+// platform.c defers that to the next tick; a record starts immediately after
+// the call, so rebuild now (the same synchronous path Vulkan_SetDrawableSize
+// uses).
+void Vulkan_SetUnpaced(int unpaced) {
+    int want = unpaced ? 1 : 0;
+    if (g_unpaced_present == want) return;
+    g_unpaced_present = want;
+    if (g_is_ready && g_swapchain) RecreateSwapchain();
+}
+
+// Frame clear colour (`camera.background_color`).  platform.c exports this
+// directly; without the wrapper the Cocoa layer had no symbol, so
+// core._publish_background_color bailed out and every macOS scene cleared to
+// black regardless of the requested colour.  The shared render pass already
+// reads g_clear_rgb (Render_SetBackgroundColor in vulkan_draw.c), so this only
+// has to forward to it.
+void SetBackgroundColor(float r, float g, float b) {
+    Render_SetBackgroundColor(r, g, b);
 }
 
 // Show/hide the window after a hidden Vulkan_InitEx.  The preview builds its
