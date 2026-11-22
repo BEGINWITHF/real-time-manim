@@ -185,6 +185,10 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         region.imageSubresource.layerCount = 1;
         region.imageExtent = (VkExtent3D){ g_swapchain_ext.width, g_swapchain_ext.height, 1 };
+        // Ring slot chosen by Vulkan_RequestReadback: the staging buffer holds
+        // MAC_SS_SLOTS frames so a record can read frame k after frame k+1 has
+        // been submitted (see platform_mac.m).
+        region.bufferOffset = (VkDeviceSize)g_readback_slot * g_readback_slot_size;
         vkCmdCopyImageToBuffer(cmd_buf, g_swapchain_imgs[img_idx],
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_readback_buf, 1, &region);
 
@@ -243,10 +247,7 @@ int Render_DrawFrame(uint32_t vertex_count) {
 #ifdef __APPLE__
     if (g_readback_copied) {
         g_readback_copied = 0;
-        g_readback_fence_idx = g_current_frame;
-        // seq-cst store: acts as a release barrier, so the fence_idx write
-        // above is visible to the worker that acquires this flag.
-        __atomic_store_n(&g_readback_available, 1, __ATOMIC_SEQ_CST);
+        Mac_RecordReadbackFrame(g_current_frame);
     }
 #endif
 

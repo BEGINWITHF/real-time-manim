@@ -29,6 +29,7 @@ jobs:
           nm -gU dist/release/vulkan_core.dylib | grep -E " _AddMesh$| _Vulkan_GetReadbackSize$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _AddImageQuad$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _SaveScreenshotRawBGRA$"
+          nm -gU dist/release/vulkan_core.dylib | grep -q " _SaveScreenshotSlotBGRA$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _SetBackgroundColor$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _Vulkan_SetUnpaced$"
 
