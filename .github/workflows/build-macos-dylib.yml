@@ -29,6 +29,8 @@ jobs:
           nm -gU dist/release/vulkan_core.dylib | grep -E " _AddMesh$| _Vulkan_GetReadbackSize$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _AddImageQuad$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _SaveScreenshotRawBGRA$"
+          nm -gU dist/release/vulkan_core.dylib | grep -q " _SetBackgroundColor$"
+          nm -gU dist/release/vulkan_core.dylib | grep -q " _Vulkan_SetUnpaced$"
 
       - name: Upload dylib
         uses: actions/upload-artifact@v4
