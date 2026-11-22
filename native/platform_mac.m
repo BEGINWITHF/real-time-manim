@@ -1267,6 +1267,18 @@ void ClearShapes(void) {
 // the worker later sees available==0 and skips.
 static volatile int g_readback_busy = 0;
 
+// Two-slot ring, matching platform.c: a record arms frame k, draws it, and
+// reads it only after frame k+1 was submitted, so the GPU fence wait drops out
+// of the frame.  Each slot has its own fence index and pending flag; the
+// single-frame SaveScreenshot/Raw exports keep reading the last landed slot.
+#define MAC_SS_SLOTS 2
+int g_readback_slot = 0;                 // slot the armed copy writes into
+VkDeviceSize g_readback_slot_size = 0;   // bytes per slot (w*h*4)
+static int g_readback_pending[MAC_SS_SLOTS] = {0, 0};
+static uint32_t g_readback_slot_frame[MAC_SS_SLOTS] = {0, 0};
+static int g_readback_next_slot = 0;
+static int g_readback_last_slot = 0;
+
 void Mac_CreateReadbackBuffer(uint32_t w, uint32_t h) {
     Mac_FreeReadbackBuffer();
     VkDeviceSize size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
@@ -1274,7 +1286,7 @@ void Mac_CreateReadbackBuffer(uint32_t w, uint32_t h) {
 
     VkBufferCreateInfo bi = {0};
     bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bi.size = size;
+    bi.size = size * MAC_SS_SLOTS;
     bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if (vkCreateBuffer(g_dev, &bi, NULL, &g_readback_buf) != VK_SUCCESS) return;
@@ -1321,7 +1333,15 @@ void Mac_CreateReadbackBuffer(uint32_t w, uint32_t h) {
         g_readback_mem = VK_NULL_HANDLE;
         return;
     }
-    vkMapMemory(g_dev, g_readback_mem, 0, size, 0, &g_readback_map);
+    vkMapMemory(g_dev, g_readback_mem, 0, size * MAC_SS_SLOTS, 0, &g_readback_map);
+    g_readback_slot_size = size;
+    g_readback_slot = 0;
+    g_readback_next_slot = 0;
+    g_readback_last_slot = 0;
+    for (int i = 0; i < MAC_SS_SLOTS; i++) {
+        g_readback_pending[i] = 0;
+        g_readback_slot_frame[i] = 0;
+    }
     g_readback_requested = 0;
     g_readback_available = 0;
 }
@@ -1348,6 +1368,14 @@ void Mac_FreeReadbackBuffer(void) {
     }
     g_readback_requested = 0;
     g_readback_available = 0;
+    g_readback_slot_size = 0;
+    g_readback_slot = 0;
+    g_readback_next_slot = 0;
+    g_readback_last_slot = 0;
+    for (int i = 0; i < MAC_SS_SLOTS; i++) {
+        g_readback_pending[i] = 0;
+        g_readback_slot_frame[i] = 0;
+    }
 }
 
 void Mac_GetDrawableSize(int *w, int *h) {
@@ -1357,13 +1385,16 @@ void Mac_GetDrawableSize(int *w, int *h) {
     *h = (int)(s.height + 0.5);
 }
 
-// Convert the BGRA staging buffer (w*h*4) into BGR with 4-byte row padding.
-// The mapped GPU buffer reads slowly byte-by-byte on Apple Silicon, so bulk
-// copy into CPU cache first (same trick as platform.c).
-static void ConvertBGRAtoBGR(int w, int h, unsigned char *out) {
+// Convert one ring slot's BGRA pixels (w*h*4) into BGR with 4-byte row
+// padding.  The mapped GPU buffer reads slowly byte-by-byte on Apple Silicon,
+// so bulk copy into CPU cache first (same trick as platform.c).
+static void ConvertBGRAtoBGR(int w, int h, int slot, unsigned char *out) {
     VkDeviceSize raw_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+    const unsigned char *base =
+        (const unsigned char *)g_readback_map +
+        (VkDeviceSize)slot * g_readback_slot_size;
     unsigned char *raw = (unsigned char *)malloc((size_t)raw_size);
-    memcpy(raw, g_readback_map, (size_t)raw_size);
+    memcpy(raw, base, (size_t)raw_size);
     int rowBytes = ((w * 3 + 3) & ~3);
     for (int y = 0; y < h; y++) {
         const unsigned char *row = raw + (VkDeviceSize)y * (VkDeviceSize)w * 4;
@@ -1391,11 +1422,15 @@ static int ReadbackFrame(unsigned char **out_bgr, int *out_w, int *out_h) {
     }
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
-    vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_readback_fence_idx], VK_TRUE, UINT64_MAX);
+    int slot = (g_readback_last_slot >= 0 && g_readback_last_slot < MAC_SS_SLOTS)
+                   ? g_readback_last_slot : 0;
+    vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_readback_slot_frame[slot]],
+                    VK_TRUE, UINT64_MAX);
     __atomic_store_n(&g_readback_available, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&g_readback_pending[slot], 0, __ATOMIC_SEQ_CST);
     int rowBytes = ((w * 3 + 3) & ~3);
     unsigned char *bgr = (unsigned char *)malloc((size_t)rowBytes * (size_t)h);
-    ConvertBGRAtoBGR(w, h, bgr);
+    ConvertBGRAtoBGR(w, h, slot, bgr);
     __atomic_store_n(&g_readback_busy, 0, __ATOMIC_SEQ_CST);
     *out_bgr = bgr;
     *out_w = w;
@@ -1472,11 +1507,32 @@ int Vulkan_GetReadbackSize(int *w, int *h) {
 
 int Vulkan_RequestReadback(void) {
     if (!g_is_ready || !g_swapchain) return -1;
+    if (g_readback_buf == VK_NULL_HANDLE || g_readback_slot_size == 0) return -1;
     int w = (int)g_swapchain_ext.width;
     int h = (int)g_swapchain_ext.height;
     if (w <= 0 || h <= 0) return -1;
+    // Prefer a slot nobody still has to read; both pending means a caller
+    // armed more frames than it read, so round-robin and lose the older one.
+    int slot = g_readback_next_slot;
+    int other = (slot + 1) % MAC_SS_SLOTS;
+    if (g_readback_pending[slot] && !g_readback_pending[other]) slot = other;
+    g_readback_next_slot = (slot + 1) % MAC_SS_SLOTS;
+    g_readback_slot = slot;
     g_readback_requested = 1;  // next drawn frame copies before present
-    return 0;                  // slot 0: the single mac staging buffer
+    return slot;
+}
+
+// Called from Render_DrawFrame after the command buffer recorded the copy.
+// Seq-cst stores publish the fence index before the pending/available flags,
+// so a reader that acquires the flag sees the matching fence (release).
+void Mac_RecordReadbackFrame(uint32_t frame_idx) {
+    int slot = (g_readback_slot >= 0 && g_readback_slot < MAC_SS_SLOTS)
+                   ? g_readback_slot : 0;
+    g_readback_slot_frame[slot] = frame_idx;
+    g_readback_fence_idx = frame_idx;          // legacy single-frame path
+    __atomic_store_n(&g_readback_pending[slot], 1, __ATOMIC_SEQ_CST);
+    g_readback_last_slot = slot;
+    __atomic_store_n(&g_readback_available, 1, __ATOMIC_SEQ_CST);
 }
 
 // Pin (or release) the drawable size used while recording.  w/h == 0 restores
@@ -1550,7 +1606,50 @@ int SaveScreenshotRawBGRA(unsigned char *out, int out_cap, int *out_size) {
     vkWaitForFences(g_dev, 1, &g_in_flight_fences[g_readback_fence_idx],
                     VK_TRUE, UINT64_MAX);
     __atomic_store_n(&g_readback_available, 0, __ATOMIC_SEQ_CST);
-    memcpy(out, g_readback_map, (size_t)need);
+    int slot = (g_readback_last_slot >= 0 && g_readback_last_slot < MAC_SS_SLOTS)
+                   ? g_readback_last_slot : 0;
+    __atomic_store_n(&g_readback_pending[slot], 0, __ATOMIC_SEQ_CST);
+    memcpy(out, (const unsigned char *)g_readback_map +
+               (VkDeviceSize)slot * g_readback_slot_size, (size_t)need);
+    __atomic_store_n(&g_readback_busy, 0, __ATOMIC_SEQ_CST);
+    if (out_size) *out_size = (int)need;
+    return 1;
+}
+
+// Read one ring slot (the value Vulkan_RequestReadback returned) and wait for
+// ITS copy.  The deferred reader calls this only after the next frame was
+// submitted, so the fence is normally already signalled.  Returns 0 when the
+// slot holds no completed copy, so the record loop drops that frame instead of
+// encoding stale pixels -- same contract as platform.c's export.
+int SaveScreenshotSlotBGRA(int slot, unsigned char *out, int out_cap,
+                           int *out_size) {
+    if (!g_is_ready || !g_swapchain || !out) return 0;
+    if (g_readback_buf == VK_NULL_HANDLE || g_readback_slot_size == 0) return 0;
+    if (slot < 0 || slot >= MAC_SS_SLOTS) return 0;
+    int w = (int)g_swapchain_ext.width;
+    int h = (int)g_swapchain_ext.height;
+    if (w <= 0 || h <= 0) return 0;
+
+    VkDeviceSize need = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+    if (out_size) *out_size = (int)need;
+    if (out_cap <= 0 || (VkDeviceSize)out_cap < need) return 0;
+    if (!__atomic_load_n(&g_readback_pending[slot], __ATOMIC_SEQ_CST)) return 0;
+
+    __atomic_store_n(&g_readback_busy, 1, __ATOMIC_SEQ_CST);
+    if (!__atomic_load_n(&g_readback_pending[slot], __ATOMIC_SEQ_CST)) {
+        __atomic_store_n(&g_readback_busy, 0, __ATOMIC_SEQ_CST);
+        return 0;
+    }
+    vkWaitForFences(g_dev, 1,
+                    &g_in_flight_fences[g_readback_slot_frame[slot]],
+                    VK_TRUE, UINT64_MAX);
+    __atomic_store_n(&g_readback_pending[slot], 0, __ATOMIC_SEQ_CST);
+    if (slot == g_readback_last_slot) {
+        // The single-frame exports must not hand out pixels we just consumed.
+        __atomic_store_n(&g_readback_available, 0, __ATOMIC_SEQ_CST);
+    }
+    memcpy(out, (const unsigned char *)g_readback_map +
+               (VkDeviceSize)slot * g_readback_slot_size, (size_t)need);
     __atomic_store_n(&g_readback_busy, 0, __ATOMIC_SEQ_CST);
     if (out_size) *out_size = (int)need;
     return 1;

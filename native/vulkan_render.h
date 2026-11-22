@@ -16,6 +16,9 @@ void Render_Init(HWND hwnd, int width, int height, HINSTANCE hinst);
 void Render_Init(void *metal_layer, int width, int height);
 void Mac_GetDrawableSize(int *w, int *h);
 void Mac_CreateReadbackBuffer(uint32_t w, uint32_t h);
+// Called by Render_DrawFrame once a frame recorded a readback copy: publishes
+// the copy's ring slot and the fence that guards it (see platform_mac.m).
+void Mac_RecordReadbackFrame(uint32_t frame_idx);
 #endif
 
 int Render_IsReady(void);

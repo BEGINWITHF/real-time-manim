@@ -52,6 +52,10 @@ extern uint32_t g_readback_fence_idx;
 extern VkBuffer g_readback_buf;
 extern VkDeviceMemory g_readback_mem;
 extern void *g_readback_map;
+// Ring slot (0..MAC_SS_SLOTS-1) the armed copy writes into, and the size of
+// one slot in the staging buffer (see platform_mac.m).
+extern int g_readback_slot;
+extern VkDeviceSize g_readback_slot_size;
 #endif
 extern bool g_is_ready;
 extern uint32_t g_current_frame;
