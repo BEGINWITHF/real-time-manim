@@ -3,7 +3,7 @@
 The renderer bundles platform-native Vulkan binaries
 (``real_time_manim/vulkan_core.dll`` on Windows,
 ``real_time_manim/vulkan_core.dylib`` on macOS), so the wheel must be tagged
-per-platform (``win_amd64`` / ``macosx_11_0_arm64``) rather than
+per-platform (``win_amd64`` / ``macosx_12_0_arm64``) rather than
 ``py3-none-any``.  Metadata lives in ``pyproject.toml``; this file overrides
 
 * the distribution class, so the wheel stays platform-specific
