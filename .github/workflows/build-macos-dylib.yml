@@ -38,3 +38,30 @@ jobs:
           name: vulkan-core-dylib
           path: dist/release/vulkan_core.dylib
           if-no-files-found: error
+
+      # The mac wheel cannot be built on the Windows dev box, so the release
+      # needs this runner for it.  Stage the just-built dylib into the package
+      # (setup.py drops the Windows DLL from a darwin wheel) and assert the
+      # tag/content, so a release can upload the artifact as-is.
+      - name: Build the macOS wheel
+        run: |
+          set -e
+          cp dist/release/vulkan_core.dylib real_time_manim/vulkan_core.dylib
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist/wheel
+          python - <<'PY'
+          import glob, zipfile
+          whl = glob.glob("dist/wheel/*.whl")[0]
+          print("wheel:", whl)
+          assert "macosx_12_0_arm64" in whl, whl
+          names = zipfile.ZipFile(whl).namelist()
+          assert "real_time_manim/vulkan_core.dylib" in names, names
+          assert "real_time_manim/vulkan_core.dll" not in names
+          PY
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-wheel
+          path: dist/wheel/*.whl
+          if-no-files-found: error
