@@ -9,7 +9,9 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    # arm64. macos-14 has been retired from the hosted pool; macos-15 is the
+    # oldest remaining Apple-silicon image with the current Xcode/SDK.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
