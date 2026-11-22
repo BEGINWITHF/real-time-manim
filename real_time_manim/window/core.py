@@ -204,7 +204,7 @@ class CoreMixin:
                 ctypes.c_int,
                 ctypes.c_float,
                 ctypes.c_int, ctypes.c_int,
-                ctypes.c_int, ctypes.c_int,
+                ctypes.c_int,
                 ctypes.c_float,
             ]
         self.dll.AddEllipse.restype = None
