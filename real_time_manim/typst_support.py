@@ -72,6 +72,76 @@ def _debug(msg: str) -> None:
         print(f"[rtm-typst] {msg}")
 
 
+def _reorder_fraction_bars(parent) -> None:
+    """Put Typst's fraction rules where dvisvgm puts them.
+
+    Typst emits a fraction's bar *after* both operands, while dvisvgm (the
+    LaTeX path, and therefore what CE's ``Write`` reveals) emits numerator,
+    bar, denominator.  Mobjects paint and write in document order, so on the
+    Typst path the bar appeared only after the denominator.
+
+    A rule is a zero-height horizontal path with ink both above and below it.
+    Moving it to just after the last overlapping glyph above matches the
+    LaTeX order.  Square-root overbars have no ink *entirely* above them
+    (the radical spans the bar), so they are left where Typst put them --
+    which already matches dvisvgm.
+    """
+    import numpy as np
+
+    kids = list(getattr(parent, "submobjects", []) or [])
+    for kid in kids:
+        if getattr(kid, "submobjects", None):
+            _reorder_fraction_bars(kid)
+    if len(kids) < 3:
+        return
+
+    boxes = []
+    for kid in kids:
+        try:
+            pts = np.asarray(kid.points, dtype=float)
+        except Exception:
+            return
+        if len(pts) == 0:
+            return
+        boxes.append((float(pts[:, 0].min()), float(pts[:, 0].max()),
+                      float(pts[:, 1].min()), float(pts[:, 1].max())))
+    heights = [b[3] - b[2] for b in boxes]
+    tallest = max(heights) if heights else 0.0
+    if tallest <= 0.0:
+        return
+    tiny = max(1e-5, tallest * 0.02)
+    min_rule_width = max(1e-4, tallest * 0.2)
+
+    keys = [float(i) for i in range(len(kids))]
+    for i, (x0, x1, y0, y1) in enumerate(boxes):
+        if y1 - y0 > tiny or x1 - x0 < min_rule_width:
+            continue
+        above = [j for j, (bx0, bx1, by0, by1) in enumerate(boxes)
+                 if j != i and by0 > y1 + tiny
+                 and min(x1, bx1) - max(x0, bx0) > 0.0]
+        below = [j for j, (bx0, bx1, by0, by1) in enumerate(boxes)
+                 if j != i and by1 < y0 - tiny
+                 and min(x1, bx1) - max(x0, bx0) > 0.0]
+        if above and below:
+            keys[i] = float(max(above)) + 0.5
+
+    if keys == [float(i) for i in range(len(kids))]:
+        return
+    parent.submobjects = [m for _k, m in sorted(zip(keys, kids),
+                                                key=lambda p: p[0])]
+
+
+if MathTypst is not None and not getattr(MathTypst, "_rtm_fraction_order", False):
+    _math_typst_init = MathTypst.__init__
+
+    def _math_typst_init_ordered(self, *args, **kwargs):
+        _math_typst_init(self, *args, **kwargs)
+        _reorder_fraction_bars(self)
+
+    MathTypst.__init__ = _math_typst_init_ordered
+    MathTypst._rtm_fraction_order = True
+
+
 # ---------------------------------------------------------------------------
 # LaTeX -> Typst math conversion
 # ---------------------------------------------------------------------------
