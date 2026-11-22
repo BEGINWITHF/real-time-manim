@@ -192,6 +192,21 @@ class CoreMixin:
             ctypes.c_int, ctypes.c_int,
             ctypes.c_float,
         ]
+        # Exact-width strip (see draw_line.c AddLineStripF).  Optional: an
+        # older library only has the integer entry, and add_line_strip() falls
+        # back to it.
+        _strip_f = getattr(self.dll, "AddLineStripF", None)
+        if _strip_f is not None:
+            _strip_f.restype = None
+            _strip_f.argtypes = [
+                ctypes.POINTER(ctypes.c_float),
+                ctypes.POINTER(ctypes.c_float),
+                ctypes.c_int,
+                ctypes.c_float,
+                ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int,
+                ctypes.c_float,
+            ]
         self.dll.AddEllipse.restype = None
         self.dll.AddEllipse.argtypes = [
             ctypes.c_float, ctypes.c_float,

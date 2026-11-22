@@ -50,7 +50,8 @@ void BuildVerticesFromLines(const LineObj *lines, int count) {
 typedef struct {
     int pt_start;                 /* offset into g_strip_pool */
     int num_points;
-    int width;
+    float width;
+    int exact_width;              /* 1 = width IS the pixel band (AddLineStripF) */
     int r, g, b;
     int has_per_vertex_alpha;
     float alpha;
@@ -62,9 +63,10 @@ static float g_strip_pool_a[MAX_STRIP_POOL_POINTS];
 static int g_strip_count = 0;
 static int g_strip_pool_used = 0;
 
-__declspec(dllexport) void AddLineStrip(
+static void AddLineStripImpl(
     const float *points, const float *alphas, int num_points,
-    int width, int r, int g, int b, float alpha)
+    float width, int exact_width,
+    int r, int g, int b, float alpha)
 {
     if (points == NULL) return;
     if (num_points < 2 || g_strip_count >= MAX_LINE_STRIPS) return;
@@ -86,6 +88,7 @@ __declspec(dllexport) void AddLineStrip(
         g_strip_pool_used += take;
         s->num_points = take;
         s->width = width;
+        s->exact_width = exact_width;
         s->r = r; s->g = g; s->b = b;
         s->alpha = alpha;
         s->has_per_vertex_alpha = (alphas != 0);
@@ -106,6 +109,28 @@ __declspec(dllexport) void AddLineStrip(
         src += take - 1;
         if (take < 2) break;
     }
+}
+
+__declspec(dllexport) void AddLineStrip(
+    const float *points, const float *alphas, int num_points,
+    int width, int r, int g, int b, float alpha)
+{
+    /* Legacy API: native renders width + 1 px and Python's _stroke_layers
+       compensates for it.  Kept bit-identical so existing callers do not
+       shift; the float entry below is the exact-width one. */
+    AddLineStripImpl(points, alphas, num_points, (float)width, 0,
+                     r, g, b, alpha);
+}
+
+__declspec(dllexport) void AddLineStripF(
+    const float *points, const float *alphas, int num_points,
+    float width, int r, int g, int b, float alpha)
+{
+    /* Exact width: the quad is `width` px, not `width + 1`, so sub-pixel
+       widths (and the fraction the old int API had to truncate) rasterise at
+       the requested coverage through MSAA -- the Cairo behaviour CE has. */
+    if (width < 0.01f) width = 0.01f;
+    AddLineStripImpl(points, alphas, num_points, width, 1, r, g, b, alpha);
 }
 
 void ResetLineStrips(void) {
@@ -211,8 +236,10 @@ void BuildVerticesFromLineStripAt(int si) {
     int base = s->pt_start;
 
     float nr = s->r / 255.0f, ng = s->g / 255.0f, nb = s->b / 255.0f;
-    float thick = (float)s->width;
-    float half_w = thick * 0.5f + 0.5f;
+    float thick = s->width;
+    /* The int API has always rendered `width + 1` px (see the parity notes in
+       _stroke_layers); AddLineStripF asked for the width itself. */
+    float half_w = s->exact_width ? thick * 0.5f : thick * 0.5f + 0.5f;
 
     /* A strip whose last point comes back to its first is a closed outline:
        its seam is then a joint like any other, while the two open ends of a

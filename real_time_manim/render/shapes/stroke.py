@@ -11,6 +11,24 @@ import numpy as np
 from real_time_manim.render.util import rotate_point, get_fill_rgb, get_fill_rgb_raw, get_stroke_rgb, get_stroke_w, shaded_fill_rgb
 
 
+def add_line_strip(dll, coords, alphas, num_points, px, r, g, b, alpha=1.0):
+    """Submit a stroke strip at exactly ``px`` pixels of width.
+
+    ``AddLineStripF`` (newer DLL/dylib) treats its width as the pixel band, so
+    a fractional ``px`` no longer has to be truncated or split into the
+    integer core/edge layers.  An older library keeps the historical int call
+    (whose quad is ``px + 1``) rather than failing -- the same fallback style
+    the rest of the binding layer uses.
+    """
+    exact = getattr(dll, "AddLineStripF", None)
+    if exact is not None:
+        exact(coords, alphas, num_points, float(px),
+              int(r), int(g), int(b), float(alpha))
+        return
+    dll.AddLineStrip(coords, alphas, num_points, int(px),
+                     int(r), int(g), int(b), float(alpha))
+
+
 class StrokeMixin:
 
     def _color(self, mob, alpha=1.0):
