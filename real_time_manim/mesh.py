@@ -12,10 +12,18 @@ RGBA colours; ``build_vertices`` triangulates and applies the current viewport.
 from __future__ import annotations
 
 import ctypes
+import warnings
 
 import numpy as np
 
 from real_time_manim.camera_state import screen_scale
+
+#: Native depth-tested mesh capacity (``native/shared_types.h``).  Each quad
+#: becomes two triangles, i.e. six vertices, so the last usable quad index is
+#: ``MAX_QUADS - 1``.  Kept as a module constant as well as class attributes so
+#: callers can size a batch without importing the native limit.
+MAX_MESH_VERTS = 262_144
+MAX_QUADS = MAX_MESH_VERTS // 6          # 43,690 quads = 262,140 vertices
 
 
 class MeshBatch:
@@ -24,11 +32,21 @@ class MeshBatch:
     ``quads`` is ``(Q, 4, 3)`` float, ``colors`` is ``(Q, 4, 4)`` float in
     ``[0, 1]``.  The arrays are public so an animation can update Z/colour
     slices in place without rebuilding the Python object.
+
+    The native mesh pipeline holds :data:`MAX_MESH_VERTS` triangulated
+    vertices (:attr:`MAX_QUADS` quads).  ``append`` raises before a batch can
+    cross that limit; ``build_vertices`` additionally truncates to whole quads
+    (one warning) if the public arrays were grown directly, so a partial
+    triangle/quad can never reach native.
     """
+
+    MAX_MESH_VERTS = MAX_MESH_VERTS
+    MAX_QUADS = MAX_QUADS
 
     def __init__(self):
         self.quads = np.empty((0, 4, 3), dtype=np.float64)
         self.colors = np.empty((0, 4, 4), dtype=np.float32)
+        self._capacity_warned = False
 
     def append(self, quads, colors):
         quads = np.asarray(quads, dtype=np.float64)
@@ -37,6 +55,15 @@ class MeshBatch:
             raise ValueError("quads must have shape (Q, 4, 3)")
         if colors.shape != (quads.shape[0], 4, 4):
             raise ValueError("colors must have shape (Q, 4, 4)")
+        total = len(self.quads) + len(quads)
+        if total > self.MAX_QUADS:
+            raise ValueError(
+                "MeshBatch capacity exceeded: %d + %d = %d quads "
+                "(%d vertices), but MAX_QUADS is %d (%d vertices). "
+                "Reduce the quad count, or drop whole quads before appending."
+                % (len(self.quads), len(quads), total, total * 6,
+                   self.MAX_QUADS, self.MAX_QUADS * 6)
+            )
         self.quads = np.concatenate([self.quads, quads], axis=0)
         self.colors = np.concatenate([self.colors, colors], axis=0)
         return self
@@ -46,18 +73,33 @@ class MeshBatch:
         if len(self.quads) == 0:
             return None
 
+        quads = self.quads
+        colors = self.colors
+        if len(quads) > self.MAX_QUADS:
+            if not self._capacity_warned:
+                warnings.warn(
+                    "MeshBatch has %d quads (%d vertices), over MAX_QUADS=%d "
+                    "(%d vertices); dropping the last %d quads so the native "
+                    "mesh stays whole."
+                    % (len(quads), len(quads) * 6, self.MAX_QUADS,
+                       self.MAX_QUADS * 6, len(quads) - self.MAX_QUADS),
+                    RuntimeWarning, stacklevel=2)
+                self._capacity_warned = True
+            quads = quads[:self.MAX_QUADS]
+            colors = colors[:self.MAX_QUADS]
+
         # Two triangles per quad, preserving the quad's vertex colours.
         tri = np.concatenate(
             [
-                self.quads[:, [0, 1, 2], :],
-                self.quads[:, [0, 2, 3], :],
+                quads[:, [0, 1, 2], :],
+                quads[:, [0, 2, 3], :],
             ],
             axis=0,
         )
         cols = np.concatenate(
             [
-                self.colors[:, [0, 1, 2], :],
-                self.colors[:, [0, 2, 3], :],
+                colors[:, [0, 1, 2], :],
+                colors[:, [0, 2, 3], :],
             ],
             axis=0,
         )

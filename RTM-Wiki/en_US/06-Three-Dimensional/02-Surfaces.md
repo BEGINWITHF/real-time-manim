@@ -249,7 +249,7 @@ Attach it to the window:
 ### Limits
 
 - Quads only; split triangles yourself or use the automatic `Surface` path.
-- One batch holds at most `MAX_MESH_VERTS = 262144` vertices, about 43690 quads.
+- One batch holds at most `MAX_MESH_VERTS = 262144` vertices, about 43690 quads (`MeshBatch.MAX_QUADS`).  Adding past it raises `ValueError` instead of clipping the native mesh.
 - `append` appends; `win.set_mesh` submits the current batch each frame and does not stack calls.
 - The mesh is drawn first and 2D afterwards, so text, formulas and images always sit on top.
 - Overlapping translucent quads remain an approximation; there is no per-pixel sort.
