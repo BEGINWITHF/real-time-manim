@@ -395,6 +395,96 @@ static int gradient_run_colors(const BezierPathObj *bp, float xl, float xr,
     return 1;
 }
 
+
+/* One filled horizontal span [xl, xr) on the row at scan_y.  Pulled out of the
+   crossing loop so non-zero winding can merge every pair whose winding stays
+   non-zero (two same-direction subpaths overlapping) into ONE span: emitting
+   the adjacent pieces separately double-composites the boundary pixel and
+   leaves a dark seam through the union.  Returns 0 when the vertex budget is
+   exhausted. */
+static int emit_fill_span(BezierPathObj *bp, float xl, float xr, float scan_y,
+                          int surf_w, float cr, float cg, float cb,
+                          float gr, float gg, float gb,
+                          float gdx, float gdy, float glen2,
+                          float fill_alpha, int gradient) {
+    if (xr <= xl) return 1;
+
+    int px_start = (int)floorf(xl);
+    int px_end = (int)ceilf(xr);
+
+    /* Same clamp as the row loop, for the same reason: a span entirely
+       off-screen cannot ink anything, and the coverage below is a max/min
+       against the pixel span, so trimming the loop bounds leaves every
+       VISIBLE pixel's coverage bit-for-bit identical. */
+    if (surf_w > 0) {
+        if (px_start < 0) px_start = 0;
+        if (px_end > surf_w) px_end = surf_w;
+    }
+
+    FillCtx ctx;
+    ctx.bp = bp;
+    ctx.cr = cr; ctx.cg = cg; ctx.cb = cb;
+    ctx.gr = gr; ctx.gg = gg; ctx.gb = gb;
+    ctx.gdx = gdx; ctx.gdy = gdy; ctx.glen2 = glen2;
+    ctx.fill_alpha = fill_alpha;
+    ctx.gradient = gradient;
+
+    /* Run of FULLY covered pixels: `p >= xl && p + 1 <= xr`, i.e.
+       p in [ceil(xl), floor(xr - 1)].  Every one of them would be
+       pushed with coverage exactly 1.0 and the same colour, so they
+       become a single quad -- this is what keeps a screen-filling
+       path inside the per-frame vertex budget (see the note above
+       `push_fill_quad`). */
+    int full_start = (int)ceilf(xl);
+    int full_end = (int)floorf(xr - 1.0f) + 1;
+    if (full_start < px_start) full_start = px_start;
+    if (full_end > px_end) full_end = px_end;
+    if (full_end <= full_start) {
+        /* No interior pixel: emit every pixel of the span as its
+           own partial quad (the run collapses to nothing). */
+        full_start = px_start;
+        full_end = px_start;
+    }
+
+    for (int px = px_start; px < full_start; px++) {
+        if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return 0;
+    }
+
+    if (full_end > full_start && gradient) {
+        float l_r, l_g, l_b, r_r, r_g, r_b;
+        /* pixel CENTRES of the first/last full pixel, so the two
+           end colours are exactly what the per-pixel loop would
+           have computed for them; Vulkan then interpolates
+           linearly across the quad (affine ramp) and reproduces
+           every interior pixel's colour. */
+        if (gradient_run_colors(bp,
+                (float)full_start + 0.5f,
+                (float)full_end - 0.5f,
+                scan_y, cr, cg, cb,
+                &l_r, &l_g, &l_b, &r_r, &r_g, &r_b)) {
+            if (!push_fill_quad2((float)full_start, (float)full_end,
+                                 scan_y, scan_y + 1.0f,
+                                 l_r, l_g, l_b, r_r, r_g, r_b,
+                                 fill_alpha)) return 0;
+        } else {
+            /* the ramp clamps inside the run: keep the old
+               per-pixel emission for it */
+            for (int px = full_start; px < full_end; px++) {
+                if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return 0;
+            }
+        }
+    } else if (full_end > full_start) {
+        if (!push_fill_quad((float)full_start, (float)full_end,
+                            scan_y, scan_y + 1.0f,
+                            cr, cg, cb, fill_alpha)) return 0;
+    }
+
+    for (int px = full_end; px < px_end; px++) {
+        if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return 0;
+    }
+    return 1;
+}
+
 static void tessellate_fill(BezierPathObj *bp) {
     float fr = bp->fr / 255.0f;
     float fg = bp->fg / 255.0f;
@@ -509,88 +599,28 @@ done_sample_all:
         }
 
         int inside = 0;
+        int have_span = 0;
+        float span_xl = 0.0f;
         for (int i = 0; i < n_cross; i++) {
-            inside ^= 1;
-            if (inside && i + 1 < n_cross) {
-                float xl = g_cross_x[i];
-                float xr = g_cross_x[i + 1];
-                if (xr <= xl) continue;
-
-                int px_start = (int)floorf(xl);
-                int px_end = (int)ceilf(xr);
-
-                /* Same clamp as the row loop, for the same reason: a span
-                   entirely off-screen cannot ink anything, and the coverage
-                   below is a max/min against the pixel span, so trimming the
-                   loop bounds leaves every VISIBLE pixel's coverage bit-for-bit
-                   identical. */
-                if (surf_w > 0) {
-                    if (px_start < 0) px_start = 0;
-                    if (px_end > surf_w) px_end = surf_w;
+            /* Non-zero winding, not even-odd parity.  `g_cross_dir` was
+               already recorded per crossing and then ignored; xor-ing
+               punched holes wherever two same-direction subpaths overlap
+               (Bahnschrift E/L/F/B, compound SVGs).  Nested counters have
+               the opposite orientation, so their winding still returns to
+               zero and the counter stays a hole. */
+            inside += g_cross_dir[i];
+            if (inside != 0) {
+                if (!have_span) {
+                    span_xl = g_cross_x[i];
+                    have_span = 1;
                 }
-
-                FillCtx ctx;
-                ctx.bp = bp;
-                ctx.cr = cr; ctx.cg = cg; ctx.cb = cb;
-                ctx.gr = gr; ctx.gg = gg; ctx.gb = gb;
-                ctx.gdx = gdx; ctx.gdy = gdy; ctx.glen2 = glen2;
-                ctx.fill_alpha = fill_alpha;
-                ctx.gradient = gradient;
-
-                /* Run of FULLY covered pixels: `p >= xl && p + 1 <= xr`, i.e.
-                   p in [ceil(xl), floor(xr - 1)].  Every one of them would be
-                   pushed with coverage exactly 1.0 and the same colour, so they
-                   become a single quad -- this is what keeps a screen-filling
-                   path inside the per-frame vertex budget (see the note above
-                   `push_fill_quad`). */
-                int full_start = (int)ceilf(xl);
-                int full_end = (int)floorf(xr - 1.0f) + 1;
-                if (full_start < px_start) full_start = px_start;
-                if (full_end > px_end) full_end = px_end;
-                if (full_end <= full_start) {
-                    /* No interior pixel: emit every pixel of the span as its
-                       own partial quad (the run collapses to nothing). */
-                    full_start = px_start;
-                    full_end = px_start;
-                }
-
-                for (int px = px_start; px < full_start; px++) {
-                    if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return;
-                }
-
-                if (full_end > full_start && gradient) {
-                    float l_r, l_g, l_b, r_r, r_g, r_b;
-                    /* pixel CENTRES of the first/last full pixel, so the two
-                       end colours are exactly what the per-pixel loop would
-                       have computed for them; Vulkan then interpolates
-                       linearly across the quad (affine ramp) and reproduces
-                       every interior pixel's colour. */
-                    if (gradient_run_colors(bp,
-                            (float)full_start + 0.5f,
-                            (float)full_end - 0.5f,
-                            scan_y, cr, cg, cb,
-                            &l_r, &l_g, &l_b, &r_r, &r_g, &r_b)) {
-                        if (!push_fill_quad2((float)full_start, (float)full_end,
-                                             scan_y, scan_y + 1.0f,
-                                             l_r, l_g, l_b, r_r, r_g, r_b,
-                                             fill_alpha)) return;
-                    } else {
-                        /* the ramp clamps inside the run: keep the old
-                           per-pixel emission for it */
-                        for (int px = full_start; px < full_end; px++) {
-                            if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return;
-                        }
-                    }
-                } else if (full_end > full_start) {
-                    if (!push_fill_quad((float)full_start, (float)full_end,
-                                        scan_y, scan_y + 1.0f,
-                                        cr, cg, cb, fill_alpha)) return;
-                }
-
-                for (int px = full_end; px < px_end; px++) {
-                    if (!push_fill_pixel(&ctx, px, xl, xr, scan_y)) return;
-                }
+                continue;
             }
+            if (!have_span) continue;
+            if (!emit_fill_span(bp, span_xl, g_cross_x[i], scan_y, surf_w,
+                                cr, cg, cb, gr, gg, gb, gdx, gdy, glen2,
+                                fill_alpha, gradient)) return;
+            have_span = 0;
         }
     }
 }
