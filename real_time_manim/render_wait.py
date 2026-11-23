@@ -469,7 +469,13 @@ if sys.platform == "win32":  # pragma: no cover - needs a Windows desktop
 
     from real_time_manim.window import win32
 
-    _u = win32.user32
+    # Private user32 handle: ``preview`` (and anything else) binds its own
+    # prototypes on ``win32.user32`` with its own structure classes, so sharing
+    # the DLL object makes whichever module imported last win.  For example,
+    # preview's ``RegisterClassExW(byref(preview._WNDCLASSEXW))`` then raises
+    # "expected LP__WNDCLASSEXW instance" after a formula compile imported
+    # this module (#119).  Separate DLL objects keep the prototypes isolated.
+    _u = ctypes.WinDLL("user32", use_last_error=True)
     _k = win32.kernel32
     _g = win32.gdi32
     _LRESULT = ctypes.c_ssize_t

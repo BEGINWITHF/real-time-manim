@@ -261,7 +261,13 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
             ("time", ctypes.c_uint), ("pt", wt.POINT),
         ]
 
-    _u = win32.user32
+    # A private user32 handle.  ``render_wait`` installs prototypes on the
+    # shared ``win32.user32`` for its own private structure classes, and ctypes
+    # then rejects this module's ``byref(WNDCLASSEXW)`` ("expected
+    # LP__WNDCLASSEXW instance instead of pointer to _WNDCLASSEXW") whenever a
+    # visible window compiled a formula first.  Separate DLL objects keep each
+    # module's argtypes to itself.
+    _u = ctypes.WinDLL("user32", use_last_error=True)
     _k = win32.kernel32
     _g = win32.gdi32
     for _fn, _res, _args in (
@@ -929,8 +935,10 @@ class FramePreview:
         if not rect:
             return
         left, top, right, bottom = rect
-        win32.user32.MoveWindow(hwnd, int(position[0]), int(position[1]),
-                                right - left, bottom - top, True)
+        # `win32.user32`'s MoveWindow has no prototypes; pass the HWND through
+        # the private handle so it is not truncated to c_int on 64-bit.
+        _u.MoveWindow(hwnd, int(position[0]), int(position[1]),
+                      right - left, bottom - top, True)
 
     def _input_callbacks(self):
         """``(submit, save, quit)`` for the input widgets.
