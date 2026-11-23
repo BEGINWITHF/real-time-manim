@@ -225,6 +225,16 @@ class ImageMobject(AbstractImageMobject):
                 np.iinfo(self.pixel_array_dtype).max - self.pixel_array[:, :, :3]
             )
         self.orig_alpha_pixel_array = self.pixel_array[:, :, 3].copy()
+        # A scalar opacity for uniform-alpha images.  The alpha channel stays
+        # untouched (send_image applies this as the quad's opacity), so a fade
+        # costs no per-pixel write; per-pixel alpha images keep writing the
+        # channel because their mask is the texture.
+        self._rtm_tex_opacity = 1.0
+        self._rtm_uniform_alpha = bool(
+            self.orig_alpha_pixel_array.size
+            and int(self.orig_alpha_pixel_array.min())
+            == int(self.orig_alpha_pixel_array.max())
+        )
         super().__init__(scale_to_resolution, **kwargs)
 
     def get_pixel_array(self) -> PixelArray:
@@ -241,6 +251,11 @@ class ImageMobject(AbstractImageMobject):
         self.pixel_array[:, :, :3] = rgb
         if alpha is not None:
             self.pixel_array[:, :, 3] = int(255 * alpha)
+            # `set_color(alpha=...)` writes the channel directly (manim's
+            # semantics); drop the scalar and let set_opacity write pixels
+            # again so a later fade matches CE exactly.
+            self._rtm_tex_opacity = 1.0
+            self._rtm_uniform_alpha = False
         for submob in self.submobjects:
             submob.set_color(color, alpha, family)
         self.color = ManimColor(color)
@@ -255,9 +270,31 @@ class ImageMobject(AbstractImageMobject):
         alpha
             The alpha value of the object, 1 being opaque and 0 being
             transparent.
+
+        Notes
+        -----
+        For a uniform-alpha image the pixel channel is left untouched: RTM's
+        renderer applies this value as the quad's opacity, so a fade costs no
+        per-pixel write.  An image whose alpha channel is a mask still writes
+        the channel (and re-uploads it when the value changes).
         """
-        self.pixel_array[:, :, 3] = self.orig_alpha_pixel_array * alpha
-        self._rtm_alpha_rev = int(getattr(self, "_rtm_alpha_rev", 0) or 0) + 1
+        if getattr(self, "_rtm_uniform_alpha", False):
+            # Uniform alpha: send_image applies it as the quad opacity.  Keep
+            # the alpha channel untouched so a fade costs no per-pixel write.
+            # Quantise like the old uint8 write so the rendered alpha is
+            # bit-identical to the channel path.
+            base = 0
+            if self.orig_alpha_pixel_array.size:
+                base = int(self.orig_alpha_pixel_array.flat[0])
+            self._rtm_tex_opacity = (
+                (int(base * alpha) / float(base)) if base > 0 else 0.0
+            )
+        else:
+            self.pixel_array[:, :, 3] = self.orig_alpha_pixel_array * alpha
+            self._rtm_tex_opacity = 1.0
+            self._rtm_alpha_rev = (
+                int(getattr(self, "_rtm_alpha_rev", 0) or 0) + 1
+            )
         self.stroke_opacity = alpha
         return self
 
@@ -310,6 +347,19 @@ class ImageMobject(AbstractImageMobject):
             mobject2.stroke_opacity,
             alpha,
         )
+        self._rtm_tex_opacity = interpolate(
+            getattr(mobject1, "_rtm_tex_opacity", 1.0),
+            getattr(mobject2, "_rtm_tex_opacity", 1.0),
+            alpha,
+        )
+        self._rtm_uniform_alpha = (
+            getattr(mobject1, "_rtm_uniform_alpha", False)
+            and getattr(mobject2, "_rtm_uniform_alpha", False)
+        )
+        if not self._rtm_uniform_alpha:
+            # A per-pixel mask already carries the fade; do not apply the
+            # scalar a second time.
+            self._rtm_tex_opacity = 1.0
         self.pixel_array = interpolate(
             mobject1.pixel_array,
             mobject2.pixel_array,
