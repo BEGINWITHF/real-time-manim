@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "real-time-manim"
-version = "2.0.10"
+version = "2.0.11"
 description = "RTM turns a ManimCE scene into a directly addressable timeline — any frame can be rendered on demand, which is what makes live scrubbing and parallel recording possible."
 readme = "PYPI_README.md"
 license = { text = "MIT" }
