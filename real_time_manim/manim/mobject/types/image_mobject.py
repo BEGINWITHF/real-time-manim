@@ -68,6 +68,20 @@ class AbstractImageMobject(Mobject):
     def get_pixel_array(self) -> PixelArray:
         raise NotImplementedError()
 
+    def mark_texture_dirty(self) -> Self:
+        """Invalidate RTM's cached texture for this image.
+
+        ``send_image`` caches the opaque RGB buffer, its digest and its ctypes
+        copy between frames, keyed by these revision counters.  manim's own
+        mutators (``set_color``/``set_opacity``/``interpolate_color``) bump
+        them; raw writes into ``pixel_array`` should call this once, and
+        ``ImageMobjectFromCamera.get_pixel_array`` bumps it because the camera
+        array changes behind the same object.
+        """
+        self._rtm_tex_rev = int(getattr(self, "_rtm_tex_rev", 0) or 0) + 1
+        self._rtm_alpha_rev = int(getattr(self, "_rtm_alpha_rev", 0) or 0) + 1
+        return self
+
     def set_color(
         self,
         color: ParsableManimColor = YELLOW_C,
@@ -230,6 +244,7 @@ class ImageMobject(AbstractImageMobject):
         for submob in self.submobjects:
             submob.set_color(color, alpha, family)
         self.color = ManimColor(color)
+        self.mark_texture_dirty()
         return self
 
     def set_opacity(self, alpha: float) -> Self:
@@ -242,6 +257,7 @@ class ImageMobject(AbstractImageMobject):
             transparent.
         """
         self.pixel_array[:, :, 3] = self.orig_alpha_pixel_array * alpha
+        self._rtm_alpha_rev = int(getattr(self, "_rtm_alpha_rev", 0) or 0) + 1
         self.stroke_opacity = alpha
         return self
 
@@ -299,6 +315,7 @@ class ImageMobject(AbstractImageMobject):
             mobject2.pixel_array,
             alpha,
         ).astype(self.pixel_array_dtype)
+        self.mark_texture_dirty()
         return self
 
     def get_style(self) -> dict[str, Any]:
@@ -334,6 +351,7 @@ class ImageMobjectFromCamera(AbstractImageMobject):
     # TODO: Get rid of this.
     def get_pixel_array(self) -> PixelArray:
         self.pixel_array = self.camera.pixel_array
+        self.mark_texture_dirty()
         return self.pixel_array
 
     def add_display_frame(self, **kwargs: Any) -> Self:
@@ -358,4 +376,5 @@ class ImageMobjectFromCamera(AbstractImageMobject):
             mobject2.pixel_array,
             alpha,
         ).astype(self.pixel_array_dtype)
+        self.mark_texture_dirty()
         return self
