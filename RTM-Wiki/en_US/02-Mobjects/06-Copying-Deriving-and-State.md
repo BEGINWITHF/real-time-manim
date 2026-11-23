@@ -189,17 +189,17 @@ What this code does: after `generate_target()` the yellow square holds an extra 
 ### interpolate
 
 ```python
-def interpolate(mobject1: Mobject, mobject2: Mobject, alpha: float,
-                path_func: PathFuncType = straight_path()) -> Self
+def interpolate(self, starting_mobject: Mobject, target_mobject: Mobject,
+                alpha: float, *args, **kwargs) -> Self
 ```
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `mobject1` / `mobject2` | `Mobject` | — | start state / end state |
+| `starting_mobject` / `target_mobject` | `Mobject` | — | start state / end state |
 | `alpha` | `float` | — | 0 = start, 1 = end |
-| `path_func` | callable | `straight_path()` | the interpolation path; for an arc use the `arc_path` family |
+| `*args` / `**kwargs` | `Any` | — | forwarded to the inner manim original; `path_func` (`straight_path()`, the `arc_path` family) still works |
 
-> **Returns**: self. The layer under `Transform`: it turns the object **instantly** into the interpolated state of the two states at `alpha`. All three **must have the same point count** (usually produce the states with `copy`).
+> **Returns**: self. The layer under `Transform`: it turns the object **instantly** into the interpolated state of the two states at `alpha`. RTM renames the original method to `original_interpolate` in `compat.py` and wraps it: mismatched point counts now **auto** `align_points` (the original's `path_func` arc behavior is unchanged).
 
 #### Sample: taking an interpolated state by hand
 
