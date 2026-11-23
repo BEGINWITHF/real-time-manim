@@ -67,6 +67,103 @@ def _is_manim_animation(anim):
     return type(anim).__module__.startswith("manim")
 
 
+def _owned_roots(anim):
+    """The top-level mobjects ``anim`` (and its nested animations) target."""
+    out = []
+    seen = set()
+
+    def visit(a):
+        mob = getattr(a, "mobject", None)
+        if mob is not None and id(mob) not in seen:
+            seen.add(id(mob))
+            out.append(mob)
+        for sub in (getattr(a, "animations", None)
+                    or getattr(a, "_anims", None) or ()):
+            visit(sub)
+
+    visit(anim)
+    return out
+
+
+# RTM draw channels live in ordinary attributes (and in weak-keyed registries),
+# NOT in the points/colours that ``Mobject.become`` copies.  A start snapshot
+# that misses them would restore a Create's shapes with progress 1, i.e. fully
+# drawn (#122 follow-up).
+_CHANNEL_PREFIXES = ("_vulkan_", "_write_", "_grow_", "_letter_")
+_CHANNEL_NAMES = ("_transforming",)
+
+
+def _is_channel(name):
+    return name in _CHANNEL_NAMES or any(
+        name.startswith(p) for p in _CHANNEL_PREFIXES)
+
+
+def _capture_state(mob):
+    """A restore handle for one mobject: geometry, colours and channels."""
+    import copy as _copy
+    from real_time_manim.state import get_anim_opacity, get_anim_rotation
+
+    d = getattr(mob, "__dict__", {}) or {}
+    channels = {}
+    for name, value in d.items():
+        if _is_channel(name):
+            try:
+                channels[name] = _copy.deepcopy(value)
+            except Exception:
+                pass
+    try:
+        opacity = get_anim_opacity(mob)
+    except Exception:
+        opacity = 1.0
+    try:
+        rotation = get_anim_rotation(mob)
+    except Exception:
+        rotation = 0.0
+    try:
+        copy = mob.copy()
+    except Exception:
+        copy = None
+    return (mob, copy, channels, opacity, rotation,
+            bool(getattr(mob, "updating_suspended", False)))
+
+
+def _restore_state(state):
+    import copy as _copy
+    from real_time_manim.state import set_anim_opacity, set_anim_rotation
+
+    live, copy, channels, opacity, rotation, suspended = state
+    try:
+        d = getattr(live, "__dict__", None)
+        if d is not None:
+            for name in list(d):
+                if _is_channel(name) and name not in channels:
+                    d.pop(name, None)
+            for name, value in channels.items():
+                d[name] = _copy.deepcopy(value)
+        if copy is not None:
+            live.become(copy)
+            for a, b in zip(live.get_family(), copy.get_family()):
+                a.updating_suspended = b.updating_suspended
+                a.stroke_width = b.stroke_width
+                a.z_index = b.z_index
+                if hasattr(b, "color"):
+                    a.color = b.color
+        live.updating_suspended = suspended
+        set_anim_opacity(live, opacity)
+        set_anim_rotation(live, rotation)
+    except Exception:
+        pass
+
+
+def _capture_tree(mob):
+    return [_capture_state(m) for m in mob.get_family()]
+
+
+def _restore_tree(states):
+    for state in states:
+        _restore_state(state)
+
+
 def evaluate_animation(anim, t):
     """Set ``anim``'s mobjects to their state at elapsed time ``t`` (seconds).
 
@@ -264,6 +361,14 @@ class Timeline:
         # computed in finalize(); inside them render_at holds the picture
         # instead of driving updaters (see _frozen_at).
         self._frozen_windows = []
+        # Authored scene state, captured only for a schedule whose entries do
+        # not all start at t=0 (FrameServer / jobs=N).  Preparation calls
+        # begin() -- and a manim/custom begin() may interpolate(0), writing
+        # mobjects that are not its own -- so the scene has to be put back
+        # before an earlier frame is rendered (#122).
+        self._baseline = None
+        self._start_snapshots = {}
+        self._last_eval_t = None
 
     def add(self, anim, start=0.0):
         """Schedule ``anim`` to begin at global time ``start`` (seconds)."""
@@ -290,6 +395,18 @@ class Timeline:
         """
         if self._prepared:
             raise RuntimeError("Timeline already finalized")
+        # A staggered schedule (FrameServer / jobs=N, or a hand-built timeline)
+        # is prepared long before its first frame.  begin() below may write
+        # the live scene (manim's Animation.begin -> interpolate(0), and a
+        # custom interpolate_mobject can write any mobject); without this
+        # snapshot those writes are visible in every earlier frame (#122).
+        # A single play -- every entry starts at 0 -- needs no restore: the
+        # begin state IS its frame 0.
+        starts = {round(float(e["start"]), 9) for e in self._entries}
+        needs_baseline = len(starts) > 1 or (starts and max(starts) > 0.0)
+        if needs_baseline:
+            self._baseline = [state for m in self.scene.mobjects
+                              for state in _capture_tree(m)]
         # Chronological order matters: manim's begin() captures the mobject's
         # CURRENT state as that animation's start, so an entry must see every
         # earlier entry already advanced to its own start time.  Capturing all
@@ -325,12 +442,34 @@ class Timeline:
             # own, so install the adapter that derives them from its state.
             from real_time_manim.render.hooks import install_hooks
             install_hooks(anim)
+            if needs_baseline:
+                # Take one explicit alpha=0 step: RTM's own begin() only stamps
+                # its start time (Create's shapes are still fully opaque), so
+                # the captured start state would be the pre-animation one.
+                # The capture is limited to the animation's OWN family, so a
+                # custom interpolate(0) writing another mobject (#122) is not
+                # baked into it; the baseline restore below undoes that write.
+                evaluate_animation(anim, 0.0)
+                self._start_snapshots[id(anim)] = [
+                    state for root in _owned_roots(anim)
+                    for state in _capture_tree(root)]
             begun.append(entry)
         self.duration = max(
             (e["start"] + e["run_time"] for e in self._entries), default=0.0)
         self._frozen_windows = self._compute_frozen_windows()
+        if self._baseline is not None:
+            # Put the authored state back: the begin() loop above advanced
+            # earlier entries to each later entry's start time and ran every
+            # begin() on the live scene.
+            self._restore_baseline()
+            self._finished.clear()
         self._prepared = True
         return self
+
+    def _restore_baseline(self):
+        """Return the scene to the state captured before ``finalize``."""
+        if self._baseline:
+            _restore_tree(self._baseline)
 
     def _compute_frozen_windows(self):
         """``[start, end)`` spans whose frames CE would ``freeze_current_frame``.
@@ -404,26 +543,39 @@ class Timeline:
         """
         if not self._prepared:
             raise RuntimeError("call finalize()/prepare() first")
-        # Every entry must write *something* at every t, so the result stays a
-        # pure function of t (skipping the unstarted ones makes the frame depend
-        # on which times were rendered before it -- see tests/test_frame_access).
+        # The result must stay a pure function of t: a seek to the same t must
+        # look the same after visiting a later one (tests/test_frame_access).
+        # For a staggered schedule that is guaranteed by restoring the
+        # authored scene on the first/backwards evaluation and then applying
+        # every started entry; unstarted entries are never touched at all.
         #
-        # Reset pass: an entry that has not started yet must restore the
-        # AUTHORED state of its mobjects.  With staggered starts its captured
-        # start state is the accumulator from its predecessors, and writing that
-        # before they have run would jump the picture ahead (at t=0 a chained
-        # second play would already show the first play's END value).  Descending
-        # start order, so the earliest-starting entry of a chain writes last:
-        # with nothing started, the authored state is what must stand.
-        for entry in sorted(self._entries, key=lambda e: e["start"],
-                            reverse=True):
-            if entry["start"] > t:
-                evaluate_animation(entry["anim"], -1.0)   # clamps to alpha 0
-                # A backwards seek into (or before) an entry that had already
-                # finished must let it animate again; its finish() side effects
-                # will be re-applied when the walk crosses its end again.
-                if self.finish_hooks and t < entry["start"] + entry["run_time"]:
-                    self._finished.discard(id(entry["anim"]))
+        # Seek/backwards: restore the authored scene before applying the
+        # entries that have started.  On the FIRST evaluation of a staggered
+        # schedule this also undoes the begin() side effects from finalize.
+        # Forward evaluation (the common render loop) needs no reset: the
+        # scene already carries the previous frame's state and the apply pass
+        # advances the started entries.
+        #
+        # The old reset pass called evaluate_animation(anim, -1.0) for every
+        # unstarted entry, i.e. interpolate(0) on the live scene.  That is
+        # exactly the #122 leak for a custom animation whose alpha=0 state
+        # differs from the authored one -- it re-showed the red circle at
+        # t=0.5 even after begin() was fixed.
+        if self._baseline is not None:
+            if self._last_eval_t is None or t < self._last_eval_t - 1e-9:
+                self._restore_baseline()
+                # An unstarted entry's own family must show its start state
+                # (a Create's shapes are invisible, a Transform's source is
+                # the source).  Descending start order: when chained entries
+                # share a mobject, the EARLIEST unstarted one writes last,
+                # i.e. the authored state before the chain.
+                for entry in sorted(self._entries, key=lambda e: e["start"],
+                                    reverse=True):
+                    if entry["start"] > t + 1e-9:
+                        states = self._start_snapshots.get(id(entry["anim"]))
+                        if states:
+                            _restore_tree(states)
+                self._finished.clear()
         # Apply pass: the entries that have started, earliest first, so the one
         # that started last wins -- exactly manim's play-a-sequence semantics.
         # manim runs each animation's own updater pass BEFORE interpolating it
@@ -468,6 +620,7 @@ class Timeline:
                 if (entry["start"] <= t
                         and entry["start"] + entry["run_time"] > t + 1e-9):
                     evaluate_animation(entry["anim"], t - entry["start"])
+        self._last_eval_t = t
 
     def _finish_one(self, anim):
         key = id(anim)
