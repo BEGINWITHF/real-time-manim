@@ -320,7 +320,7 @@ def fast_record_scene(scene, out_path=None, *, fps=60, hidden=True, count_only=F
 | `count_only` | `bool` | `False` | probe: count frames only, no capture/GPU render |
 | `segment` | `tuple \| None` | `None` | `(start_frame, end_frame)` → BMP directory instead of mp4 |
 | `overwrite` | `bool` | `True` | `False` refuses to overwrite an existing target (n/a for `count_only`) |
-| `cleanup` | `bool` | `True` | delete transient manim `media/` after recording |
+| `cleanup` | `bool` | `True` | remove this run's transient output dirs (videos/images/partials/sections/logs); `media/Tex` + `media/texts` caches survive |
 | `verbose` | `bool` | `True` | print per-window progress lines |
 | `jobs` | `int \| "auto" \| None` | `None` | worker processes for frame-parallel recording |
 
@@ -359,7 +359,7 @@ def record_scene(scene, out_path=None, *, fps=60, overwrite=True, cleanup=True, 
 | `out_path` | `str \| None` | `None` → `~/Downloads/output.mp4` | target mp4; multi-window appends `_partN` |
 | `fps` | `int` | `60` (forced) | background-thread capture rate; only `60` (prints `[rtm] forcing 60 fps`) |
 | `overwrite` | `bool` | `True` | `False` refuses to overwrite existing `out_path` |
-| `cleanup` | `bool` | `True` | delete transient manim `media/` after recording |
+| `cleanup` | `bool` | `True` | remove this run's transient output dirs (videos/images/partials/sections/logs); `media/Tex` + `media/texts` caches survive |
 | `verbose` | `bool` | `True` | print per-window progress lines |
 
 - `notes`: real-time capture against a **visible** window; maps to `start_record` / `stop_record`. The user sees the animation as it is captured.
@@ -633,7 +633,7 @@ def clear_media(media_dir=None, *, verbose=True) -> bool
 - `notes`:
   - Removes the **whole** `media/` folder, not just `Tex`; unconditional (never skipped).
   - Does **not** follow `config.media_dir` — it always targets `<cwd>/media` unless `media_dir` is given.
-  - `record.py` calls it after a run when `cleanup=True`.
+  - The recorders no longer call it: `cleanup=True` redirects manim's output dirs to a private temp dir and removes only that, leaving `media/Tex` / `media/texts` and other processes' files intact.
 - `see`: ../zh_CN/00-快速开始/04-录制视频.md
 
 ## Hard constraints
