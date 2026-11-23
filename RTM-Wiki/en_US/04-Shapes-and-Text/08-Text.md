@@ -86,7 +86,7 @@ What this code does: each of the four lines of text demonstrates one group of pa
 ### `MarkupText`
 
 ```python
-def __init__(self, text: str, fill_opacity: float = 1, stroke_width: float = 0, color: ParsableManimColor | None = None, font_size: float = 48, line_spacing: float = -1, font: str = "", slant: str = "NORMAL", weight: str = "NORMAL", justify: str = "left", indent: float = 0, **kwargs) -> None:
+def __init__(self, text: str, fill_opacity: float = 1, stroke_width: float = 0, color: ParsableManimColor | None = None, font_size: float = DEFAULT_FONT_SIZE, line_spacing: float = -1, font: str = "", slant: str = NORMAL, weight: str = NORMAL, justify: bool = False, gradient: Iterable[ParsableManimColor] | None = None, tab_width: int = 4, height: int | None = None, width: int | None = None, should_center: bool = True, disable_ligatures: bool = False, warn_missing_font: bool = True, **kwargs: Any) -> None:
 ```
 
 | Parameter | Type | Default | Description |
@@ -96,8 +96,11 @@ def __init__(self, text: str, fill_opacity: float = 1, stroke_width: float = 0, 
 | `color` | `ManimColor \| None` | `None` | overall colour; the sample uses `TEAL` |
 | `line_spacing` | `float` | `-1` | line spacing; the sample uses `1.4` |
 | `font` / `weight` / `slant` | `str` | default / `NORMAL` | same as `Text` |
-| `justify` | `str` | `"left"` | multi-line alignment (`left`/`center`/`right`) |
-| `indent` | `float` | `0` | first-line indent |
+| `justify` | `bool` | `False` | Pango justify to both margins (multi-line) |
+| `gradient` | `Iterable[color] \| None` | `None` | whole-string colour gradient |
+| `height` / `width` | `int \| None` | `None` | box the text into the given size (`should_center` controls centring) |
+| `tab_width` | `int` | `4` | spaces per `\t` |
+| `warn_missing_font` | `bool` | `True` | warn when `font` is not loadable |
 
 #### Sample: `<b>`/`<i>` / overall colour / line spacing
 
