@@ -26,6 +26,11 @@ buffer, its digest and its ctypes copy survive until ``_rtm_tex_rev`` /
 them because the camera array changes behind the same object.  A static image
 or a uniform ``set_opacity`` fade therefore does no hash/RGBA work, and a fully
 transparent image returns after one alpha check.
+
+A uniform ``set_opacity`` is a scalar on the mobject (``_rtm_tex_opacity``):
+the alpha channel is not rewritten and the value rides the quad opacity, so a
+fade costs no per-pixel write.  Per-pixel masks still write/re-upload the
+channel, and ``interpolate_color`` carries the scalar for Transform/Fade.
 """
 
 import ctypes
@@ -165,7 +170,8 @@ def send_image(window, mob, alpha=1.0):
         # Uniform alpha: pass it as the quad's opacity and keep the uploaded
         # bytes identical across frames.  An alpha-only change (set_opacity)
         # reuses the opaque RGB buffer; only a texture revision rebuilds it.
-        opacity = alpha * (a_max / 255.0)
+        opacity = alpha * (a_max / 255.0) * float(
+            getattr(mob, "_rtm_tex_opacity", 1.0) or 1.0)
         if opacity <= 0.0:
             return True
         if same_array and state.get("uniform") and "buf" in state:
