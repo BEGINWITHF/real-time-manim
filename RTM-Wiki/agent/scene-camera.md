@@ -966,6 +966,7 @@ def project_points(self, points: Point3D_Array) -> Point3D_Array:
 
 - `args`: `point` / `points` — 3D point(s).
 - `ret`: screen coords `[x,y,z]` under the current view (per-row array for `project_points`). Values change when the view changes.
+- `notes`: safe to call inside `construct()` before the first frame: the rotation is generated from the live `phi`/`theta`/`gamma` trackers on every call (and the setters refresh the cached `rotation_matrix`), so a 3D-anchored label can be placed without knowing the render loop.
 - `see`: ../zh_CN/01-场景与相机/相机/03-ThreeDCamera.md
 
 ### `ThreeDCamera.capture_mobjects` (unavailable)
