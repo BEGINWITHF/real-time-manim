@@ -665,9 +665,10 @@ def _run(scene, out_path: str, on_init, on_close,
             % (rec._n_windows, rec._n_closed)
         )
     # A scene with no MLWindow draws nothing RTM can capture: it ran on
-    # ManimCE's Cairo renderer (writing its own media/ output, which the
-    # cleanup below removes) and used to come back as `files: []` -- success,
-    # with no video and no explanation.  `self.play(...)` is not enough.
+    # ManimCE's Cairo renderer (writing its own output, which
+    # `_private_output_dirs` removes) and used to come back as `files: []` --
+    # success, with no video and no explanation.  `self.play(...)` is not
+    # enough.
     if expect_files and rec._n_windows == 0:
         raise RuntimeError(
             "the scene ran but opened no MLWindow, so nothing was recorded.\n"
@@ -761,8 +762,9 @@ def record_scene(scene: Union[type, Any, Callable[[], None]],
     overwrite:
         When False, refuse to overwrite an existing ``out_path``.
     cleanup:
-        Remove the transient manim ``media`` folder after recording so the
-        caller does not have to (default True).  Set False to keep it.
+        Remove this run's transient output dirs (videos, images, partial movie
+        files, sections, logs); shared ``media/Tex`` / ``media/texts`` caches
+        survive.  Default True; set False to keep this run's transient output.
     verbose:
         Print per-window progress lines.
 
@@ -821,8 +823,9 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
         When False, refuse to overwrite an existing target (ignored when
         ``count_only`` since that writes nothing).
     cleanup:
-        Remove the transient manim ``media`` folder after recording so the
-        caller does not have to (default True).  Set False to keep it.
+        Remove this run's transient output dirs (videos, images, partial movie
+        files, sections, logs); shared ``media/Tex`` / ``media/texts`` caches
+        survive.  Default True; set False to keep this run's transient output.
     verbose:
         Print per-window progress lines.
     jobs:
