@@ -339,9 +339,10 @@ class MeshBatch:
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
   mesh is recorded **before** the painter primitives, so 2D overlays stay on
   top regardless of 3D depth.
-- Limits: quads only, `MAX_MESH_VERTS = 262144` vertices (~43690 quads), one
-  batch per frame (`AddMesh` overwrites, it does not append), no per-pixel
-  transparency sort, CPU re-projection every frame.
+- Limits: quads only, `MAX_MESH_VERTS = 262144` vertices
+  (`MeshBatch.MAX_QUADS = 43690`), one batch per frame (`AddMesh`
+  overwrites, it does not append); `append()` raises when the limit is
+  crossed, no per-pixel transparency sort, CPU re-projection every frame.
 
 ### Automatic depth (`RTM_AUTO_DEPTH=1`)
 
