@@ -102,7 +102,7 @@ differently:
 | what | where | saves | clear with |
 | --- | --- | --- | --- |
 | LaTeX / Typst formulas | `media/Tex` (+ your `tex_cache/`) | recompiling unchanged math | `clear_tex_cache()` |
-| **text → SVG** (Pango) | `media/texts/<hash>.svg` | re-running Pango layout (~2 ms/string) | `clear_media()`, or the recorders' `cleanup=True` default |
+| **text → SVG** (Pango) | `media/texts/<hash>.svg` | re-running Pango layout (~2 ms/string) | `clear_media()` (explicit) |
 | parsed SVG → mobjects | process memory (`SVG_HASH_TO_MOB_MAP`) | `svgelements` parsing + one `VMobjectFromSVGPath` per glyph (4–20 ms/string) | process exit; `Text(use_svg_cache=False)` opts out |
 
 ```python
@@ -117,9 +117,13 @@ clear_tex_cache()                # wipe media/Tex + tex_cache/ (dry_run=True to 
 clear_media()                    # wipe the whole media/ tree, including media/texts
 ```
 
-`fast_record_scene(..., cleanup=True)` (the default) deletes `media/` after every
-render, so the on-disk text cache only survives across renders with
-`cleanup=False`. The in-memory SVG cache is capped at 256 entries and only starts
+`fast_record_scene(..., cleanup=True)` (the default) removes only the transient
+output directories this run created (videos, images, partial movie files,
+sections, logs); `media/Tex` and `media/texts` survive, so the on-disk caches
+keep working across renders and never touch another process's `media/` tree.
+Pass `cleanup=False` to keep this run's transient output as well. Use
+`clear_media()` or `clear_tex_cache()` when you actually want to wipe the
+caches. The in-memory SVG cache is capped at 256 entries and only starts
 caching from the second build of the same string — identical labels are ~2.5×
 faster to construct, while one-off strings (each `DecimalNumber` value) pay
 nothing extra.

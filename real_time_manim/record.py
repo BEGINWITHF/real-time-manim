@@ -31,11 +31,13 @@ so scripts can act on the result.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any, Callable, Dict, List, Optional, Union
 
 
@@ -463,9 +465,8 @@ def _fast_record_parallel(scene, out_path: str, *, fps: int, jobs: int,
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    if cleanup:
-        from real_time_manim.util import clear_media
-        clear_media(verbose=verbose)
+    # The workers each used their own `out_path + ".media"` dir and removed it;
+    # the parent wrote no media output, so never touch the shared tree here.
     muxed = audio_track.apply_sounds([out_path], verbose=verbose)
     return {
         "out_path": out_path,
@@ -567,6 +568,60 @@ class _AutoRecord:
         return False  # never swallow exceptions
 
 
+@contextlib.contextmanager
+def _private_output_dirs(cleanup: bool):
+    """Keep this render's transient output out of the shared media tree.
+
+    ``cleanup=True`` used to ``rmtree(media/)`` after every record.  That also
+    deleted files this process never wrote: a concurrent ManimCE render's
+    ``media/videos/.../partial_movie_files``, shared ``media/Tex`` /
+    ``media/texts`` caches, or another RTM process's output.  Instead, point
+    only the *output* directories (videos, images, partial movie files,
+    sections, logs) at a per-run temp dir and remove just that.  The cache
+    directories stay under the user's ``media_dir``, so ``restore_tex_cache``
+    still warms them and other processes keep their files.
+
+    ``cleanup=False`` leaves every config path untouched, exactly as before.
+    """
+    if not cleanup:
+        yield None
+        return
+
+    from manim import config
+
+    run_dir = tempfile.mkdtemp(prefix="rtm_record_")
+    targets = {
+        "video_dir": os.path.join(run_dir, "videos"),
+        "images_dir": os.path.join(run_dir, "images"),
+        "partial_movie_dir": os.path.join(run_dir, "partial_movie_files",
+                                         "{scene_name}"),
+        "sections_dir": os.path.join(run_dir, "sections"),
+        "log_dir": os.path.join(run_dir, "logs"),
+    }
+    previous = {}
+    for key, value in targets.items():
+        try:
+            previous[key] = getattr(config, key)
+        except Exception:
+            previous[key] = None
+        try:
+            setattr(config, key, value)
+        except Exception:
+            # An older/lean config may not expose one of these; the render
+            # paths that use it then simply keep their existing location.
+            pass
+    try:
+        yield run_dir
+    finally:
+        for key, value in previous.items():
+            if value is not None:
+                try:
+                    setattr(config, key, value)
+                except Exception:
+                    pass
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+
 def _run(scene, out_path: str, on_init, on_close,
          verbose: bool, overwrite: bool, count_only: bool,
          cleanup: bool = True, hidden: Optional[bool] = None,
@@ -588,8 +643,9 @@ def _run(scene, out_path: str, on_init, on_close,
     if hidden is not None:
         MLWindow._hidden_default = bool(hidden)
     try:
-        with rec:
-            runner()
+        with _private_output_dirs(cleanup):
+            with rec:
+                runner()
     finally:
         MLWindow._hidden_default = prev_hidden
     # A window that was opened but never closed never ran the encoder finish
@@ -613,9 +669,6 @@ def _run(scene, out_path: str, on_init, on_close,
     # cleanup below removes) and used to come back as `files: []` -- success,
     # with no video and no explanation.  `self.play(...)` is not enough.
     if expect_files and rec._n_windows == 0:
-        if cleanup:
-            from real_time_manim.util import clear_media
-            clear_media(verbose=verbose)
         raise RuntimeError(
             "the scene ran but opened no MLWindow, so nothing was recorded.\n"
             "RTM only captures frames drawn by an MLWindow. Inside "
@@ -627,11 +680,9 @@ def _run(scene, out_path: str, on_init, on_close,
             "(`self.play(...)` alone runs on ManimCE's Cairo renderer, which "
             "RTM does not record.)"
         )
-    # Rendering leaves transient manim media/Tex output behind; clear it for the
-    # caller so they never have to remember to.  Opt out via cleanup=False.
-    if cleanup:
-        from real_time_manim.util import clear_media
-        clear_media(verbose=verbose)
+    # Rendering leaves transient output behind; `_private_output_dirs` already
+    # removed this run's copy without touching the shared media tree.  The
+    # cache dirs (media/Tex, media/texts) deliberately survive.
     files = [f for f in (rec.windows if rec.windows else _produced_files(out_path))
              if os.path.exists(f)]
     if segment is not None:
