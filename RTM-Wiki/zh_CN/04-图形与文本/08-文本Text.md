@@ -86,7 +86,7 @@ class TextDemo(Scene):
 ### `MarkupText` 
 
 ```python
-def __init__(self, text: str, fill_opacity: float = 1, stroke_width: float = 0, color: ParsableManimColor | None = None, font_size: float = 48, line_spacing: float = -1, font: str = "", slant: str = "NORMAL", weight: str = "NORMAL", justify: str = "left", indent: float = 0, **kwargs) -> None:
+def __init__(self, text: str, fill_opacity: float = 1, stroke_width: float = 0, color: ParsableManimColor | None = None, font_size: float = DEFAULT_FONT_SIZE, line_spacing: float = -1, font: str = "", slant: str = NORMAL, weight: str = NORMAL, justify: bool = False, gradient: Iterable[ParsableManimColor] | None = None, tab_width: int = 4, height: int | None = None, width: int | None = None, should_center: bool = True, disable_ligatures: bool = False, warn_missing_font: bool = True, **kwargs: Any) -> None:
 ```
 
 | 参数 | 类型 | 默认值 | 说明 |
@@ -96,8 +96,11 @@ def __init__(self, text: str, fill_opacity: float = 1, stroke_width: float = 0, 
 | `color` | `ManimColor \| None` | `None` | 整体颜色；样例 `TEAL` |
 | `line_spacing` | `float` | `-1` | 行距；样例 `1.4` |
 | `font` / `weight` / `slant` | `str` | 默认 / `NORMAL` | 同 `Text` |
-| `justify` | `str` | `"left"` | 多行对齐方式（`left`/`center`/`right`） |
-| `indent` | `float` | `0` | 首行缩进 |
+| `justify` | `bool` | `False` | Pango 两端对齐（多行时拉满行宽） |
+| `gradient` | `Iterable[color] \| None` | `None` | 整体颜色渐变 |
+| `height` / `width` | `int \| None` | `None` | 把文本框进给定尺寸（`should_center` 控制是否居中） |
+| `tab_width` | `int` | `4` | 每个 `\t` 展开的空格数 |
+| `warn_missing_font` | `bool` | `True` | `font` 加载不到时打警告 |
 
 #### 样例：`<b>`/`<i>` / 整体颜色 / 行距
 
