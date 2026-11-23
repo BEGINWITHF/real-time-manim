@@ -107,6 +107,34 @@ def _family_ids(mob):
     return out
 
 
+def _scene_has_updaters(scene):
+    """True when an updater could rewrite a mobject this frame.
+
+    manim's updater model is scene-wide: a ``dt`` updater attached to one
+    mobject can write *any* other mobject (``put_start_and_end_on``,
+    ``set_stroke``, ``move_to``, plain point assignment).  A per-root
+    classification cannot see that write, so baking would freeze the target.
+    Any updater -- scene-level, mobject-level, time-based or not (RTM runs
+    both every frame) -- therefore disables the bake.  ``always_update_mobjects``
+    is the explicit opt-in for the same thing.
+
+    A raise here means "unknown", which is also treated as updaters present:
+    a missed bake only costs the #85 speed-up, a wrong bake shows a stale
+    picture for the whole play.
+    """
+    try:
+        if getattr(scene, "always_update_mobjects", False):
+            return True
+        if getattr(scene, "updaters", None):
+            return True
+        for mob in scene.get_mobject_family_members():
+            if getattr(mob, "updaters", None):
+                return True
+    except Exception:
+        return True
+    return False
+
+
 def _animation_family_ids(anims):
     """Ids of every mobject an animation can touch, nested groups included.
 
@@ -810,9 +838,10 @@ class PlayMixin:
         Costs one extra draw plus one framebuffer readback.  In a visible
         window that extra static-only frame would flash, so the bake is limited
         to offline recording, where redrawing a static background every frame
-        is the actual cost.  Anything the bake cannot describe (a custom
-        camera, a 3D/moving viewport, a mesh batch, camera-image prefixes)
-        simply leaves the layer off and keeps the ordinary full paint.
+        is the actual cost.  Anything the bake cannot describe (any updater,
+        a custom camera, a 3D/moving viewport, a mesh batch, camera-image
+        prefixes) simply leaves the layer off and keeps the ordinary full
+        paint.
         """
         _drop = getattr(self, "_drop_static_layer", None)
         if _drop is None:
@@ -826,6 +855,10 @@ class PlayMixin:
             return
         if getattr(self, "_fast_record_count_only", False):
             return                 # counting frames draws nothing
+        if _scene_has_updaters(scene):
+            # Any updater may write any mobject; a per-root bake cannot know
+            # which one, so the only correct choice is the full paint.
+            return
         if getattr(self, "_mesh", None) is not None:
             return
         cam = getattr(scene, "camera", None)
