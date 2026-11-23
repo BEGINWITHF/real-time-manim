@@ -912,13 +912,10 @@ set_color(self, color, family=True)
 
 ### `VMobject.set_color_by_gradient`
 ```python
-# TODO: exact signature not printed in source; observed call form:
-#   vg.set_color_by_gradient(BLUE, PURPLE)          # whole VGroup
-#   cs2.set_color_by_gradient(ORANGE, PURPLE)       # per-segment container
-def set_color_by_gradient(self, *colors, family=True) -> Self
+def set_color_by_gradient(self, *colors: ParsableManimColor) -> Self
 ```
 - `ret`: `self` (used with `.animate`).
-- `args`: one or more colors; applies across all submobjects (whole-group gradient).
+- `args`: one or more colors; applies across all submobjects (whole-group gradient). `family` is **not** a parameter in the bundled 0.21.0 (the old `family=True` form raises `TypeError`).
 - `see`: ../zh_CN/04-图形与文本/06-容器与组合.md
 
 ### `VMobject.set_opacity`
