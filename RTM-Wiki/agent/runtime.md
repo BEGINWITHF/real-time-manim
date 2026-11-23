@@ -264,7 +264,12 @@ before the frame loop (`_prepare_static_layer` → `bake_static_layer`):
 - it is **off** for visible windows (the extra static-only frame would flash),
   custom cameras, 3D/rotated viewports, animated `MovingCamera.frame`, mesh
   batches, camera-image prefixes and `count_only` runs. `RTM_NO_STATIC_LAYER=1`
-  disables it explicitly.
+  disables it explicitly;
+- **any updater disables the bake** — scene updaters, `always_update_mobjects`,
+  and mobject updaters (time-based or not).  An updater on one mobject can
+  write any other (`put_start_and_end_on`, `set_stroke`, ...), which a per-root
+  static classification cannot see; baking would freeze the written mobject.
+  This is the same scene-wide rule `should_update_mobjects` uses for waits.
 
 Scope matches CE's `static_image`: moving mobjects always paint over static
 ones, so a mid-play `bring_to_front` on a static root is not re-ordered.
