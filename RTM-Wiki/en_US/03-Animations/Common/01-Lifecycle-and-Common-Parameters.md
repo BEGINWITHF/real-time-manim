@@ -52,12 +52,12 @@ def set_default(cls, **kwargs) -> None:
 ### `set_rate_func` (chained method)
 
 ```python
-def set_rate_func(self, func: Callable[[float], float]) -> "Animation":
+def set_rate_func(self, rate_func: Callable[[float], float]) -> "Animation":
 ```
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `func` | `Callable[[float], float]` | — | the new rate function (e.g. `linear`). It returns `self`, so chaining continues |
+| `rate_func` | `Callable[[float], float]` | — | the new rate function (e.g. `linear`). It returns `self`, so chaining continues |
 
 > **Returns**: `self` (it changes `rate_func` in place and returns itself). Chained methods such as `set_run_time` / `get_run_time` / `get_rate_func` / `set_name` / `is_introducer` / `is_remover` / `copy` are all implemented on RTM's own `Animation` (test `tests/test_gap_wait_timeline.py`).
 

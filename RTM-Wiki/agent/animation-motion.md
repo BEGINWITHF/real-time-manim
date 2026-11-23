@@ -312,10 +312,10 @@ def set_default(cls, **kwargs) -> None:
 
 ### `Animation.set_rate_func`
 ```python
-def set_rate_func(self, func: Callable[[float], float]) -> "Animation":
+def set_rate_func(self, rate_func: Callable[[float], float]) -> "Animation":
 ```
 - `ret`: `self` (mutates `rate_func` in place, chainable).
-- `args`: `func: Callable[[float], float]` — new rate function (e.g. `linear`).
+- `args`: `rate_func: Callable[[float], float]` — new rate function (e.g. `linear`).
 - `notes`: chainable methods implemented on RTM's own `Animation`: `set_run_time`, `get_run_time`, `get_rate_func`, `set_name`, `is_introducer`, `is_remover`, `copy` (`tests/test_gap_wait_timeline.py`).
 - `see`: ../zh_CN/03-动画/通用/01-生命周期与公共参数.md
 - `eg`:
