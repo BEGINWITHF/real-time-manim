@@ -793,17 +793,17 @@ def generate_target(use_deepcopy: bool = False) -> Self
 
 ### `interpolate`
 ```python
-def interpolate(mobject1: Mobject, mobject2: Mobject, alpha: float,
-                path_func: PathFuncType = straight_path()) -> Self
+def interpolate(self, starting_mobject: Mobject, target_mobject: Mobject,
+                alpha: float, *args, **kwargs) -> Self
 ```
 - `ret`: `self`.
 - `args`:
-  - `mobject1` / `mobject2: Mobject` — start / end state.
+  - `starting_mobject` / `target_mobject: Mobject` — start / end state.
   - `alpha: float` — 0 = start, 1 = end.
-  - `path_func: PathFuncType = straight_path()` — interpolation path (`arc_path` family for arcs).
+  - `*args` / `**kwargs: Any` — forwarded to the inner manim original; `path_func` (`straight_path()`, `arc_path` family) still works.
 - `notes`:
   - Underlies `Transform`; makes self the **instant** interpolated state at `alpha`.
-  - All three must have equal point counts (usually build states via `copy`); else error — `align_points` first for cross-shape.
+  - **RTM wrapper** (`compat.py`): the bundled method is renamed `original_interpolate`; the installed `interpolate` auto-`align_points` when the two states' point counts differ (the original raises).
   - `alpha` may exceed 0–1 (extrapolation), discouraged.
 - `see`: ../zh_CN/02-Mobject通用/06-复制派生与状态.md
 
