@@ -451,13 +451,28 @@ class Timeline:
         # `fast_record_scene(jobs=2)` (timeline workers) silently rendered a
         # different picture from the single-pass recorder for the same scene
         # (measured: Blink scene max 252/255, mean 0.62).
+        finished_any = False
         if self.finish_hooks:
-            self._finish_ended(t)
+            finished_any = self._finish_ended(t)
+        if finished_any:
+            # A manim-native ``Animation.finish()`` calls ``interpolate(1)``,
+            # which also rewrites shared state: a custom camera animation's
+            # terminal camera pose landed on top of a LATER, still-running
+            # entry.  On a cold seek into the middle of a play (the first frame
+            # of a parallel worker) every earlier entry is finished in one go,
+            # so that earlier hold's camera survived for exactly that frame --
+            # the 1-2 frame shift at each jobs=N boundary.  Re-apply the entries
+            # that are still running so the latest one wins, as in a forward
+            # walk; updaters are not re-driven.
+            for entry in sorted(self._entries, key=lambda e: e["start"]):
+                if (entry["start"] <= t
+                        and entry["start"] + entry["run_time"] > t + 1e-9):
+                    evaluate_animation(entry["anim"], t - entry["start"])
 
     def _finish_one(self, anim):
         key = id(anim)
         if key in self._finished:
-            return
+            return False
         self._finished.add(key)
         finish = getattr(anim, "finish", None)
         if callable(finish):
@@ -465,12 +480,15 @@ class Timeline:
                 finish()
             except Exception:
                 pass
+        return True
 
     def _finish_ended(self, t):
         eps = 1e-9
+        finished = False
         for entry in self._entries:
             if entry["start"] + entry["run_time"] <= t + eps:
-                self._finish_one(entry["anim"])
+                finished = self._finish_one(entry["anim"]) or finished
+        return finished
 
     def finish_all(self):
         """Apply every entry's ``finish()`` once (end of a forward walk)."""
