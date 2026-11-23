@@ -224,6 +224,7 @@ class ThreeDCamera(Camera):
             The new value of the polar angle in radians.
         """
         self.phi_tracker.set_value(value)
+        self.reset_rotation_matrix()
 
     def set_theta(self, value: float) -> None:
         """Sets the azimuthal angle i.e the angle that spins the camera around Z_AXIS in radians.
@@ -234,6 +235,7 @@ class ThreeDCamera(Camera):
             The new value of the azimuthal angle in radians.
         """
         self.theta_tracker.set_value(value)
+        self.reset_rotation_matrix()
 
     def set_focal_distance(self, value: float) -> None:
         """Sets the focal_distance of the Camera.
@@ -254,6 +256,7 @@ class ThreeDCamera(Camera):
             The new angle of rotation of the camera.
         """
         self.gamma_tracker.set_value(value)
+        self.reset_rotation_matrix()
 
     def set_zoom(self, value: float) -> None:
         """Sets the zoom amount of the camera.
@@ -274,11 +277,21 @@ class ThreeDCamera(Camera):
     def get_rotation_matrix(self) -> MatrixMN:
         """Returns the matrix corresponding to the current position of the camera.
 
+        The matrix is computed from the live phi/theta/gamma trackers on every
+        call instead of returning the cached ``rotation_matrix``.  The cache was
+        only refreshed by ``capture_mobjects`` (and the setters did not touch
+        it), so ``project_point`` called from ``construct`` -- before the first
+        frame was drawn -- used the identity rotation and put 3D-anchored labels
+        in the wrong place.  Three 3x3 products are negligible next to the
+        projection, and updating the attribute keeps direct
+        ``camera.rotation_matrix`` readers honest too.
+
         Returns
         -------
         np.array
             The matrix corresponding to the current position of the camera.
         """
+        self.rotation_matrix = self.generate_rotation_matrix()
         return self.rotation_matrix
 
     def generate_rotation_matrix(self) -> MatrixMN:
