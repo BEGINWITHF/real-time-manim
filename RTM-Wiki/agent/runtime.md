@@ -367,6 +367,19 @@ def fast_record_scene(scene, out_path=None, *, fps=60, hidden=True, count_only=F
   - `jobs=N` — that many workers; still probes frame count / window count and falls back to single pass otherwise.
   - Splitting requires a `Scene` **class** importable in another process; instances, lambdas, function-local classes, or a script without `if __name__ == "__main__":` fall back to one pass. Multi-window, `count_only`, `segment`, `hidden=False` never parallelise.
   - Parallel workers use the `Timeline.render_at` path and do **not** run per-animation finish hooks (`finish()` / `clean_up_from_scene()`); scenes relying on those need `jobs=None`.
+  - Every worker still constructs the scene (mobjects/animations are not picklable).  Put expensive, pure setup in a `@classmethod prepare()` and read it with `prepared()`; the parent runs it once and workers load the pickle.  `shared_prepare(key, builder)` gives the same one-compute guarantee for a function and also works outside the record helpers.
+    ```python
+    from real_time_manim import Scene, prepared, shared_prepare
+
+    class Film(Scene):
+        @classmethod
+        def prepare(cls):
+            return {"verts": build_terrain()}      # picklable data only
+
+        def construct(self):
+            data = prepared()                      # None outside a record
+            grid = shared_prepare("grid-v2", build_grid)
+    ```
 - `errs`:
   - `FileExistsError: "target already exists: {out_path} (pass overwrite=True to replace it)"` — `overwrite=False` and target exists.
   - `RuntimeError: "recorded {n} window(s) but MLWindow.close() was only called {m} time(s): the encoder was never finished, so the output is incomplete. Call win.close() at the end of construct()."`

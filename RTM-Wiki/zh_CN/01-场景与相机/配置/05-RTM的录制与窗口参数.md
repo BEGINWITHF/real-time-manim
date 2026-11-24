@@ -26,6 +26,23 @@ def fast_record_scene(scene, out_path=None, *, fps=60, hidden=True,
 
 **返回**：`dict` —— `{"out_path": ..., "windows": [...], "files": [...], "with_audio": [...]}`，`files` 是磁盘上真实存在的输出（`count_only` 时为空）。
 
+**并行录制**（`jobs=N`）会把场景分到多个进程。每个 worker 仍然要重建 mobject（manim 场景不能 pickle），但昂贵的纯数据可以只准备一次：放到 `@classmethod prepare()` 里，用 `prepared()` 读取。父进程算一次，各 worker 直接加载 pickle。
+
+```python
+from real_time_manim import Scene, prepared, shared_prepare
+
+class Film(Scene):
+    @classmethod
+    def prepare(cls):
+        return {"verts": build_terrain()}      # 只能是 numpy/dict/list 等
+
+    def construct(self):
+        data = prepared()                      # 不在录制流程里时返回 None
+        world = shared_prepare("world-v3", build_world)   # 同样只算一次
+```
+
+`prepared()` 在场景被直接运行（没有录制器）时返回 `None`，所以需要独立运行的话自己留个兜底。`shared_prepare(key, builder, version=...)` 是一个跨进程小缓存，适合不方便改成 classmethod 的调用；builder 的输入变了就递增 `version`。
+
 #### 样例：`scene`（类 / 实例 / 无参可调用）
 
 同一个场景用三种传法各录一段：传类（RTM 自己建实例、跑 `setup()`+`construct()`）、传实例、传一个不收参数的函数。
