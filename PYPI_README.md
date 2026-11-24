@@ -1,22 +1,29 @@
 # Real-Time-Manim (RTM)
 
+![Real-Time-Manim V2 banner](https://raw.githubusercontent.com/Team-Axioviva/real-time-manim/main/banner.jpg)
+
+[![PyPI](https://img.shields.io/pypi/v/real-time-manim.svg)](https://pypi.org/project/real-time-manim/)
+[![Python](https://img.shields.io/pypi/pyversions/real-time-manim.svg)](https://pypi.org/project/real-time-manim/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS-lightgrey.svg)](https://github.com/Team-Axioviva/real-time-manim)
+[![Downloads](https://img.shields.io/pypi/dm/real-time-manim.svg)](https://pypi.org/project/real-time-manim/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/Team-Axioviva/real-time-manim/blob/main/LICENSE)
+[![AI agents](https://img.shields.io/badge/AI%20agents-llms.txt-blueviolet.svg)](https://github.com/Team-Axioviva/real-time-manim/blob/main/llms.txt)
+
 A **Vulkan-accelerated, real-time rendering backend for
 [ManimCE](https://www.manim.community/)**. RTM drives ManimCE's own `Mobject` /
 `Animation` model through a native Vulkan pipeline, so the same scene can be
 watched **live**, seeked to any frame instantly, and recorded to MP4 several
 times faster than the default renderer.
 
-> **Start here.** This page is only the package overview. For the full picture,
-> visit the [project website](https://team-axioviva.github.io/real-time-manim_website/)
-> for an overview, demos and the interactive wiki graph, and the
-> [GitHub Wiki](https://github.com/BEGINWITHF/real-time-manim/wiki) for the
-> source-level walkthrough. The illustrated README and manuals live in the
-> [repository](https://github.com/BEGINWITHF/real-time-manim).
-> 中文说明：[README.zh-CN.md](https://github.com/BEGINWITHF/real-time-manim/blob/main/README.zh-CN.md).
+> **Start here:** the [project website](https://team-axioviva.github.io/real-time-manim_website/)
+> for demos and the interactive wiki graph, and the
+> [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki) for the
+> source-level walkthrough. 中文说明：
+> [README.zh-CN.md](https://github.com/Team-Axioviva/real-time-manim/blob/main/README.zh-CN.md).
 >
-> **AI agents:** read
-> [`RTM-Wiki/agent/README.md`](https://github.com/BEGINWITHF/real-time-manim/blob/main/RTM-Wiki/agent/README.md)
-> first — the whole API condensed into one greppable reference, with `gotchas.md`,
+> **AI agents:** start with
+> [`RTM-Wiki/agent/README.md`](https://github.com/Team-Axioviva/real-time-manim/blob/main/RTM-Wiki/agent/README.md)
+> — the whole API condensed into one greppable reference, with `gotchas.md`,
 > `patterns.md` and `llms.txt`.
 
 ---
@@ -61,6 +68,44 @@ the way out.
 
 ---
 
+## Three ways to output
+
+| output | API | notes |
+| --- | --- | --- |
+| **Live window** | `MLWindow` | render and watch in real time; no file |
+| **MP4** | `fast_record_scene` / `record_scene` | hidden offline (fastest) or visible real-time; `jobs=N` splits frames |
+| **PNG frames** | `FrameServer` / `FramePreview` | any frame at any `t` in O(1), or scrub the timeline |
+
+```python
+from real_time_manim import MLWindow, Square, Create, FrameServer, FramePreview
+from real_time_manim.record import fast_record_scene, record_scene
+
+# 1. Live window
+win = MLWindow(1920, 1080)
+win.scene = MyScene()
+win.play(Create(Square()), run_time=1.0)
+win.close()
+
+# 2. MP4: hidden/offline (fastest), parallel, or visible/real-time
+fast_record_scene(MyScene)
+fast_record_scene(MyScene, "out.mp4", jobs=4)
+record_scene(MyScene, "live.mp4")
+
+# 3. PNG frames: one frame, a list of times, or interactive scrubbing
+fs = FrameServer(MyScene)
+fs.save_frame(2.5, "frame.png")
+fs.export_frames("frames/", [0.0, 1.5, 3.0])
+fs.close()
+FramePreview(MyScene).run()
+```
+
+The recorders accept a `Scene` subclass / instance / no-arg callable and return
+`{out_path, windows, files, with_audio}`. `jobs="auto"` splits only for an
+importable single-window scene of at least 240 frames; move expensive pure setup
+into `prepare()` so every worker shares it.
+
+---
+
 ## Highlights
 
 - **Real-time window** — 1920x1080 @ 60 fps, no export step.
@@ -102,13 +147,11 @@ class Terrain(ThreeDScene):
         win = MLWindow(1920, 1080)
         win.scene = self
         self.set_camera_orientation(phi=60 * DEGREES, theta=-45 * DEGREES)
-
         surf = Surface(
             lambda u, v: np.array([u, v, 0.35 * np.sin(2 * u) * np.cos(2 * v)]),
             u_range=(-2, 2), v_range=(-2, 2), resolution=(48, 48), fill_color=BLUE,
         ).set_stroke(width=0)
-
-        mesh = MeshMobject.from_surface(surf, shade=True)   # Manim-style lighting
+        mesh = MeshMobject.from_surface(surf, shade=True)
         self.add(mesh)
         win.play(mesh.animate.shift(0.4 * UP), run_time=1.0)
         win.close()
@@ -127,44 +170,6 @@ class Terrain(ThreeDScene):
 
 ---
 
-## Three ways to output
-
-| output | API | notes |
-| --- | --- | --- |
-| **Live window** | `MLWindow` | render and watch in real time; no file |
-| **MP4** | `fast_record_scene` / `record_scene` | hidden offline (fastest) or visible real-time; `jobs=N` splits frames |
-| **PNG frames** | `FrameServer` / `FramePreview` | any frame at any `t` in O(1), or scrub the timeline |
-
-```python
-from real_time_manim import MLWindow, Square, Create, FrameServer, FramePreview
-from real_time_manim.record import fast_record_scene, record_scene
-
-# 1. Live window
-win = MLWindow(1920, 1080)
-win.scene = MyScene()
-win.play(Create(Square()), run_time=1.0)
-win.close()
-
-# 2. MP4: hidden/offline (fastest), parallel, or visible/real-time
-fast_record_scene(MyScene)
-fast_record_scene(MyScene, "out.mp4", jobs=4)
-record_scene(MyScene, "live.mp4")
-
-# 3. PNG frames: one frame, a list of times, or interactive scrubbing
-fs = FrameServer(MyScene)
-fs.save_frame(2.5, "frame.png")
-fs.export_frames("frames/", [0.0, 1.5, 3.0])
-fs.close()
-FramePreview(MyScene).run()
-```
-
-The recorders accept a `Scene` subclass / instance / no-arg callable and return
-`{out_path, windows, files, with_audio}`. `jobs="auto"` splits only for an
-importable single-window scene of at least 240 frames; move expensive pure setup
-into `prepare()` so every worker shares it.
-
----
-
 ## Constraints
 
 - Output is **fixed at 1920x1080 @ 60 fps**; other values are corrected with a
@@ -178,4 +183,4 @@ into `prepare()` so every worker shares it.
 
 ## License
 
-[MIT](https://github.com/BEGINWITHF/real-time-manim/blob/C-version-clean/LICENSE)
+MIT. ManimCE, Vulkan and Typst belong to their respective projects.
