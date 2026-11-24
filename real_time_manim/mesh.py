@@ -15,7 +15,10 @@ Coordinates are world (manim) coordinates.  Two storage forms are supported:
   same shared corner six times.  The gathered triangle buffer and (for indexed
   batches) the projected coordinates are reused across frames; call
   ``mark_geometry_dirty()`` after editing ``vertices`` in place.
-"""
+
+``from_surface(surface)`` bakes an ordinary flat-shaded ``Surface`` into the
+indexed form, so a scene does not have to write quads by hand."""
+
 from __future__ import annotations
 
 import ctypes
@@ -31,6 +34,141 @@ from real_time_manim.camera_state import screen_scale
 #: callers can size a batch without importing the native limit.
 MAX_MESH_VERTS = 262_144
 MAX_QUADS = MAX_MESH_VERTS // 6          # 43,690 quads = 262,140 vertices
+
+
+def _surface_corners(face):
+    """A face's convex corner ring, or ``None`` for unsupported geometry."""
+    try:
+        pts = np.asarray(face.points, dtype=np.float64)
+    except Exception:
+        pts = None
+    if (pts is not None and pts.ndim == 2 and pts.shape[1] == 3
+            and len(pts) >= 12):
+        # Surface cells are 3-4 cubics; their corner anchors are the p0 of
+        # every fourth point.  Reading the array directly avoids the per-face
+        # get_start_anchors() method overhead (10k faces: ~0.7 s -> ~10 ms).
+        anchors = pts[::4]
+    else:
+        try:
+            anchors = np.asarray(face.get_start_anchors(), dtype=np.float64)
+        except Exception:
+            return None
+    if anchors.ndim != 2 or anchors.shape[1] != 3 or len(anchors) < 3:
+        return None
+    if not np.isfinite(anchors).all():
+        return None
+    # Drop repeated anchors vectorized: a closed cell repeats its first corner
+    # at the end.  The old per-corner np.allclose loop cost ~83 us/face, which
+    # dominated a 10k-face bake; this is ~1 us.
+    step = np.abs(np.diff(anchors, axis=0)).max(axis=1)
+    anchors = anchors[np.concatenate([[True], step > 1e-9])]
+    if len(anchors) > 1 and np.abs(anchors[0] - anchors[-1]).max() <= 1e-9:
+        anchors = anchors[:-1]
+    return anchors if len(anchors) >= 3 else None
+
+
+def _surface_face_colors(face, n_corners):
+    """Four per-corner RGBA rows for a face, or ``None``."""
+    try:
+        rgba = np.asarray(face.fill_rgbas, dtype=np.float64)
+    except Exception:
+        rgba = None
+    if rgba is None or rgba.ndim != 2 or rgba.shape[1] < 4 or len(rgba) == 0:
+        try:
+            rgb = np.asarray(face.get_fill_color().to_rgb(), dtype=np.float64)
+            return np.tile(np.array([rgb[0], rgb[1], rgb[2], 1.0]), (4, 1))
+        except Exception:
+            return None
+    rows = rgba[:, :4]
+    if len(rows) == 1:
+        return np.tile(rows[0], (4, 1))
+    if len(rows) == n_corners:
+        out = np.empty((4, 4), dtype=np.float64)
+        out[:n_corners] = rows
+        out[n_corners:] = rows[-1]
+        return out
+    # A multi-stop fill (gradient) has no per-corner mapping here; a flat
+    # bake uses the average, like the painter's single-colour fallback.
+    return np.tile(rows.mean(axis=0), (4, 1))
+
+
+def _check_surface_faces(faces, ignore_strokes):
+    """Validate the supported ``Surface`` face subset.
+
+    Returns ``True`` when visible strokes were dropped (only possible with
+    ``ignore_strokes=True``).  Gathering the per-face flags into arrays keeps
+    the check out of the per-face Python loop (10k faces: ~25 ms).
+    """
+    index = np.arange(len(faces))
+    opacity = np.array([float(face.get_fill_opacity()) for face in faces])
+    bad = index[opacity < 0.999]
+    if len(bad):
+        i = int(bad[0])
+        raise ValueError(
+            "MeshBatch.from_surface: face %d is not opaque; the depth mesh "
+            "does not sort transparent faces" % i)
+    shaded = np.array([bool(getattr(face, "shade_in_3d", False))
+                       for face in faces])
+    bad = index[shaded]
+    if len(bad):
+        i = int(bad[0])
+        raise ValueError(
+            "MeshBatch.from_surface: face %d has shade_in_3d=True; call "
+            "surface.set_shade_in_3d(False) (the mesh carries flat colours, "
+            "not the painter's lighting)" % i)
+    widths = np.array([float(face.get_stroke_width()) for face in faces])
+    stroke_ops = np.array([float(face.get_stroke_opacity()) for face in faces])
+    visible = (widths > 0.01) & (stroke_ops > 0.01)
+    if not visible.any():
+        return False
+    if not ignore_strokes:
+        i = int(np.flatnonzero(visible)[0])
+        raise ValueError(
+            "MeshBatch.from_surface: face %d has a visible stroke (width "
+            "%.2f, opacity %.2f); call surface.set_stroke(width=0), or pass "
+            "ignore_strokes=True to drop it deliberately"
+            % (i, widths[i], stroke_ops[i]))
+    return True
+
+
+def _uniform_surface_arrays(faces):
+    """Vectorized corners/colours for a uniform 4-corner grid, else ``None``.
+
+    Ordinary ``Surface`` faces are four cubic curves, i.e. four anchors at
+    ``points[::4]``.  Stacking the whole grid keeps the bake near numpy speed
+    instead of paying a ``get_start_anchors``/``np.allclose`` call per face
+    (10k faces: ~70 ms vs ~460 ms).  Any irregular face makes this return
+    ``None`` so ``append_surface`` uses the per-face path and its clearer
+    error messages instead.
+    """
+    try:
+        lengths = {len(face.points) for face in faces}
+        if len(lengths) != 1:
+            return None
+        npts = lengths.pop()
+        if npts // 4 != 4:
+            return None
+        points = np.stack([np.asarray(face.points, dtype=np.float64)
+                           for face in faces])
+        corners = points[:, ::4]
+        if not np.isfinite(corners).all():
+            return None
+        if (np.abs(np.diff(corners, axis=1)).max(axis=2) <= 1e-9).any():
+            return None          # degenerate cell repeats a corner
+        rgba = np.stack([np.asarray(face.fill_rgbas, dtype=np.float64)
+                         for face in faces])
+    except Exception:
+        return None
+    if rgba.ndim != 3 or rgba.shape[0] != len(faces) or rgba.shape[2] < 4:
+        return None
+    stops = rgba.shape[1]
+    if stops == 1:
+        colors = np.repeat(rgba[:, :1, :4], 4, axis=1)
+    elif stops == 4:
+        colors = rgba[:, :, :4]
+    else:
+        return None
+    return corners, colors
 
 
 class MeshBatch:
@@ -163,6 +301,78 @@ class MeshBatch:
             self._indexed = True
         self._geometry_rev += 1
         self._built_key = None
+        return self
+
+    @classmethod
+    def from_surface(cls, surface, *, ignore_strokes=False):
+        """Bake a flat-shaded ``Surface`` into an indexed depth mesh.
+
+        One step instead of hand-writing quads and a custom animation.  The
+        supported subset is deliberately explicit:
+
+        * every face must be opaque (``fill_opacity >= 0.999``) and
+          ``shade_in_3d=False`` -- a MeshBatch carries flat per-corner colours,
+          not the painter's per-face lighting;
+        * faces must have a visible fill and 3-4 corners (a centre wedge is
+          duplicated into a quad);
+        * visible strokes are rejected unless ``ignore_strokes=True`` (a
+          warning is emitted): the native mesh has triangles only and does not
+          stroke face outlines.
+
+        Call ``surface.set_shade_in_3d(False)`` and ``surface.set_stroke(width=0)``
+        for the normal case.  The result is a snapshot; rebuild it or edit the
+        private arrays plus ``mark_geometry_dirty()`` when the geometry/colours
+        change.  Attach it with ``win.set_mesh(mesh)``; do not also add the
+        surface to the scene, or the painter draws it a second time (bake
+        first, then ``surface.set_opacity(0)`` if the mobject must stay).
+        """
+        return cls().append_surface(surface, ignore_strokes=ignore_strokes)
+
+    def append_surface(self, surface, *, ignore_strokes=False):
+        """Append one flat-shaded ``Surface`` to this batch."""
+        faces = list(getattr(surface, "list_of_faces", ()) or ())
+        if not faces:
+            raise ValueError(
+                "MeshBatch.from_surface: object has no Surface.list_of_faces")
+        strokes_dropped = _check_surface_faces(faces, ignore_strokes)
+        arrays = _uniform_surface_arrays(faces)
+        if arrays is not None:
+            corners, colors = arrays
+        else:
+            rows = []
+            color_rows = []
+            for index, face in enumerate(faces):
+                ring = _surface_corners(face)
+                if ring is None:
+                    raise ValueError(
+                        "MeshBatch.from_surface: face %d has no usable corner "
+                        "ring" % index)
+                if len(ring) > 4:
+                    raise ValueError(
+                        "MeshBatch.from_surface: face %d has %d corners; only "
+                        "quads/triangles are supported" % (index, len(ring)))
+                cols = _surface_face_colors(face, len(ring))
+                if cols is None:
+                    raise ValueError(
+                        "MeshBatch.from_surface: face %d has no fill colour"
+                        % index)
+                if len(ring) == 3:
+                    ring = np.vstack([ring, ring[-1]])
+                    cols = np.vstack([cols[:3], cols[2]])
+                rows.extend(ring)
+                color_rows.append(cols)
+            corners = np.asarray(rows, dtype=np.float64)
+            colors = np.asarray(color_rows, dtype=np.float64)
+
+        if strokes_dropped:
+            warnings.warn(
+                "MeshBatch.from_surface: visible Surface strokes were ignored; "
+                "the depth mesh draws fills only.", RuntimeWarning,
+                stacklevel=2)
+        vertices, inverse = np.unique(corners.reshape(-1, 3), axis=0,
+                                      return_inverse=True)
+        self.append_indexed(vertices, inverse.reshape(-1, 4),
+                            np.asarray(colors, dtype=np.float32))
         return self
 
     def mark_geometry_dirty(self):

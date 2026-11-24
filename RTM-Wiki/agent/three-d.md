@@ -329,6 +329,8 @@ class MeshBatch:
     def __init__(self)
     def append(self, quads, colors) -> Self
     def append_indexed(self, vertices, quads, colors=None) -> Self
+    @classmethod
+    def from_surface(cls, surface, *, ignore_strokes=False) -> MeshBatch
     def mark_geometry_dirty(self) -> Self
     def build_vertices(self, viewport, width, height) -> tuple[int, ctypes pointer] | None
 ```
@@ -340,6 +342,11 @@ class MeshBatch:
   are unchanged, the projection) is reused.  Call `mark_geometry_dirty()` after
   editing `vertices` in place.  `append` and `append_indexed` cannot be mixed in
   one batch.
+- `from_surface`: bake a flat `Surface` (`set_shade_in_3d(False)`,
+  `set_stroke(width=0)`) into one indexed batch.  Faces must be opaque, flat and
+  3–4-cornered; shading, transparency or a visible stroke raise `ValueError`
+  with the face index (`ignore_strokes=True` drops strokes with one warning).
+  The bake is a snapshot — later `Surface` transforms do not move the mesh.
 - `colors`: `(Q, 4, 4)` float, RGBA per corner in 0–1.
 - Attach with `win.set_mesh(mesh)`; detach with `win.clear_mesh()` or
   `win.set_mesh(None)`. `sync()` calls `build_vertices` once per frame and
@@ -356,6 +363,15 @@ class MeshBatch:
   (unique projection + gather), ~0.04 ms when the indexed batch/view is
   unchanged.  Native still receives expanded vertices; an index buffer is a
   future native step.
+- `from_surface` bake cost scales with faces, once: 400 faces ~1.6 ms
+  (fast vectorized path), 3,600 ~14 ms, 9,800 ~73 ms.  The old per-face
+  `get_start_anchors`/`np.allclose` loop cost ~460 ms for 9,800 faces, so the
+  uniform-grid path stacks `points[::4]` and falls back per face only for
+  irregular cells (degenerate pole cells, 3-corner rings).
+- Dense painter warning: when a 3D scene keeps a `Surface` with
+  `DENSE_SURFACE_FACES = 2000` or more faces on the painter (and
+  `RTM_AUTO_DEPTH` is off), `window/core.py` emits one `RuntimeWarning` per
+  scene pointing at `MeshBatch.from_surface`; it never changes rendering.
 
 ### Automatic depth (`RTM_AUTO_DEPTH=1`)
 

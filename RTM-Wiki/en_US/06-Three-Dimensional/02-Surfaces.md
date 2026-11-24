@@ -239,6 +239,29 @@ The orange quad sits at `z = 0.6` and the blue one at `z = -0.6`; depth testing 
 | `colors` | `(Q, 4, 4)` float, RGBA per corner in 0–1 |
 | `build_vertices(viewport, width, height)` | called by the window each frame; projects to NDC + depth (rarely called by hand) |
 
+Bake a flat `Surface` instead of writing quads by hand:
+
+```python
+from real_time_manim import MeshBatch
+
+surf = Surface(...)
+surf.set_shade_in_3d(False)          # the mesh carries flat colours
+surf.set_stroke(width=0)             # the mesh does not stroke faces
+mesh = MeshBatch.from_surface(surf)
+win.set_mesh(mesh)
+```
+
+| Member | Meaning |
+| --- | --- |
+| `MeshBatch.from_surface(surface)` | bake every face into one indexed batch; returns a new `MeshBatch` |
+| `append_indexed(vertices, quads, colors=None)` | unique `(N, 3)` vertices + `(Q, 4)` indices; shared corners are projected once |
+| `mark_geometry_dirty()` | drop the cached projection after editing the private vertex arrays |
+| `len(mesh)` / `mesh.quad_count` | number of quads |
+
+`from_surface` accepts opaque faces with a flat fill and 3–4 corners. A shaded face (`shade_in_3d=True`), a translucent fill, or a visible stroke raises `ValueError` with the offending face index; pass `ignore_strokes=True` to drop strokes deliberately (one warning). The bake is a snapshot: it does not follow later `Surface` transforms or colour changes — rebuild it, or edit the arrays and call `mark_geometry_dirty()`.
+
+The mesh replaces the painter for that surface, so do not `self.add(surf)` as well. If the mobject has to stay in the scene (for example to animate it), bake first and then call `surf.set_opacity(0)`.
+
 Attach it to the window:
 
 | Method | Meaning |
@@ -248,12 +271,13 @@ Attach it to the window:
 
 ### Limits
 
-- Quads only; split triangles yourself or use the automatic `Surface` path.
+- Quads only; split triangles yourself, or use `MeshBatch.from_surface` / the automatic `Surface` path.
 - One batch holds at most `MAX_MESH_VERTS = 262144` vertices, about 43690 quads (`MeshBatch.MAX_QUADS`).  Adding past it raises `ValueError` instead of clipping the native mesh.
 - `append` appends; `win.set_mesh` submits the current batch each frame and does not stack calls.
 - The mesh is drawn first and 2D afterwards, so text, formulas and images always sit on top.
 - Overlapping translucent quads remain an approximation; there is no per-pixel sort.
-- Every camera move re-projects the batch on the CPU, which costs time on large meshes.
+- An indexed batch projects each unique vertex once and reuses the gathered triangles and the projection until the view or geometry changes (18k quads: ~4.5 ms per rebuild, ~0.04 ms cached). An `append` batch is still re-projected every frame.
+- A `Surface` with thousands of faces that stays on the painter emits one `RuntimeWarning` pointing at `MeshBatch.from_surface` (`RTM_AUTO_DEPTH=1` is the automatic alternative).
 
 ### Automatic depth (experimental)
 
