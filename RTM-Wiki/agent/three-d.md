@@ -329,20 +329,31 @@ class MeshBatch:
     def __init__(self)
     def append(self, quads, colors) -> Self
     def build_vertices(self, viewport, width, height) -> tuple[int, ctypes pointer] | None
+    def build_indexed_vertices(self, viewport, width, height) -> tuple[int, ndarray, int, ndarray] | None
+
+class MeshGroup:
+    def __init__(self, *batches)
+    def append(self, batch) -> Self
 ```
 
 - `quads`: `(Q, 4, 3)` float, four corners in world coordinates.
 - `colors`: `(Q, 4, 4)` float, RGBA per corner in 0–1.
 - Attach with `win.set_mesh(mesh)`; detach with `win.clear_mesh()` or
-  `win.set_mesh(None)`. `sync()` calls `build_vertices` once per frame and
-  hands the result to native `AddMesh(vertex_count, x,y,z,rgba)`.
+  `win.set_mesh(None)`. `set_mesh` also accepts a list/tuple (→ `MeshGroup`).
+  `sync()` builds once per frame and hands the result to native
+  `AddMeshIndexed(vertex_count, x,y,z,rgba, index_count, indices)`.
+- `MeshGroup(terrain, markers)` lets independent parts own their geometry:
+  batches concatenate in list order into the frame's single native mesh, so
+  draw order (which translucent quads need) is explicit and no part has to
+  append into another's arrays.  It does not add capacity.
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
   mesh is recorded **before** the painter primitives, so 2D overlays stay on
   top regardless of 3D depth.
-- Limits: quads only, `MAX_MESH_VERTS = 262144` vertices
-  (`MeshBatch.MAX_QUADS = 43690`), one batch per frame (`AddMesh`
-  overwrites, it does not append); `append()` raises when the limit is
-  crossed, no per-pixel transparency sort, CPU re-projection every frame.
+- Limits: quads only, `MAX_MESH_VERTS = 524288` vertices
+  (`MeshBatch.MAX_QUADS = 131072` indexed; the six-vertex fallback on native
+  builds without `AddMeshIndexed` holds 87381), one native batch per frame;
+  `append()` raises when the limit is crossed, no per-pixel transparency sort,
+  CPU re-projection every frame.
 
 ### Automatic depth (`RTM_AUTO_DEPTH=1`)
 

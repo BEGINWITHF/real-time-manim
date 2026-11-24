@@ -238,19 +238,32 @@ The orange quad sits at `z = 0.6` and the blue one at `z = -0.6`; depth testing 
 | `quads` | `(Q, 4, 3)` float, four corners in world coordinates |
 | `colors` | `(Q, 4, 4)` float, RGBA per corner in 0–1 |
 | `build_vertices(viewport, width, height)` | called by the window each frame; projects to NDC + depth (rarely called by hand) |
+| `build_indexed_vertices(viewport, width, height)` | indexed variant used by current native builds: four vertices + six indices per quad |
 
 Attach it to the window:
 
 | Method | Meaning |
 | --- | --- |
-| `win.set_mesh(mesh)` | submit this frame's mesh; `None` is the same as `clear_mesh()` |
+| `win.set_mesh(mesh)` | submit this frame's mesh; accepts a `MeshBatch`, a `MeshGroup`, or a list of batches. `None` is the same as `clear_mesh()` |
 | `win.clear_mesh()` | detach the mesh and return to the painter |
+| `MeshGroup(*batches)` | several batches drawn as one mesh, in list order |
+
+A `MeshGroup` exists so independent parts of a scene can own their geometry without appending into each other's arrays:
+
+```python
+terrain, markers = MeshBatch(), MeshBatch()
+win.set_mesh(MeshGroup(terrain, markers))       # or win.set_mesh([terrain, markers])
+```
+
+List order is draw order, which matters for translucent quads; opaque quads are resolved per pixel by the depth buffer.
 
 ### Limits
 
 - Quads only; split triangles yourself or use the automatic `Surface` path.
-- One batch holds at most `MAX_MESH_VERTS = 262144` vertices, about 43690 quads (`MeshBatch.MAX_QUADS`).  Adding past it raises `ValueError` instead of clipping the native mesh.
+- Per frame: `MAX_MESH_VERTS = 524288` vertices — up to 131072 quads through the indexed path (`MeshBatch.MAX_QUADS`).  Adding past it raises `ValueError` instead of clipping the native mesh; only arrays grown directly are truncated, with one `RuntimeWarning`.
+- Older native builds without `AddMeshIndexed` use the six-vertex fallback: 87381 quads.
 - `append` appends; `win.set_mesh` submits the current batch each frame and does not stack calls.
+- Several batches share that single frame budget; a `MeshGroup` changes ownership and order, not capacity.
 - The mesh is drawn first and 2D afterwards, so text, formulas and images always sit on top.
 - Overlapping translucent quads remain an approximation; there is no per-pixel sort.
 - Every camera move re-projects the batch on the CPU, which costs time on large meshes.

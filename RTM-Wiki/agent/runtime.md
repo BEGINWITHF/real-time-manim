@@ -145,12 +145,13 @@ def clear_mesh(self)
 ```
 
 - `ret`: none.
-- `args`: `mesh` — a `real_time_manim.mesh.MeshBatch`, or `None` to detach (`clear_mesh()` is the explicit form).
+- `args`: `mesh` — a `real_time_manim.mesh.MeshBatch`, a `MeshGroup`, a list/tuple of batches (shorthand for `MeshGroup(*mesh)`), or `None` to detach (`clear_mesh()` is the explicit form).
 - `notes`:
   - Stores `win._mesh`; `sync()` submits it before the painter primitives, so the native depth buffer resolves per-pixel occlusion.
+  - A `MeshGroup` concatenates its batches into the frame's single native mesh; list order is draw order (transparency), not extra capacity.
   - 2D overlays (text, formulas, images) paint after the mesh, i.e. always on top.
-  - `mesh.build_vertices(get_viewport(), win_w, win_h)` runs once per frame; cost scales with quad count.
-  - Limits: quads only, `MAX_MESH_VERTS = 262144` vertices (`MeshBatch.MAX_QUADS = 43690`), no per-pixel transparency sort, one batch per frame.  `append()` raises `ValueError` past that; `build_vertices()` truncates to whole quads (one `RuntimeWarning`) only if the public arrays were grown directly, so native never receives a partial quad.
+  - `mesh.build_indexed_vertices(get_viewport(), win_w, win_h)` runs once per frame (four vertices + six indices per quad); `build_vertices` is the six-vertex fallback for native builds without `AddMeshIndexed`.  Cost scales with quad count.
+  - Limits: quads only, `MAX_MESH_VERTS = 524288` vertices (`MeshBatch.MAX_QUADS = 131072` indexed, `MAX_QUADS_LEGACY = 87381`), no per-pixel transparency sort, one native batch per frame.  `append()` raises `ValueError` past that; a builder truncates to whole quads (one `RuntimeWarning`) only if the public arrays were grown directly, so native never receives a partial quad.
   - `RTM_AUTO_DEPTH=1` is the automatic alternative for eligible `Surface` roots; it does not remove per-face `set_fill` cost.
 - `see`: ../zh_CN/06-三维/02-三维表面.md
 
