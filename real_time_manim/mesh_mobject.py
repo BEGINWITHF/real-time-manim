@@ -32,7 +32,7 @@ import numpy as np
 from manim.mobject.mobject import Mobject
 
 from real_time_manim.camera_state import get_viewport
-from real_time_manim.mesh import MeshBatch, bake_surface
+from real_time_manim.mesh import MeshBatch, _batch_unit_normal, bake_surface
 
 
 class MeshMobject(Mobject):
@@ -106,19 +106,41 @@ class MeshMobject(Mobject):
         """Compute the lit colours for ``shade=True`` surfaces."""
         data = self.__dict__["_shade_data"]
         light = np.asarray(light_source, dtype=np.float64)
-        axis = data["points"][:, 1] - data["points"][:, 0]
-        p0 = self.points[self._indices[:, 0]]
-        points = np.stack([p0, p0 + axis], axis=1)
+        corners = self.points[self._indices]              # (F, 4, 3)
+        # Recover the affine map from the baked corners to the current ones,
+        # so rotate/scale/shear move the shading tangents with the mesh.
+        source = data["bake_corners"].reshape(-1, 3)
+        target = corners.reshape(-1, 3)
+        design = np.column_stack([source, np.ones(len(source))])
+        try:
+            affine, *_ = np.linalg.lstsq(design, target, rcond=None)
+            vec = data["rel"] @ affine[:3]                # (F, 5, 3)
+        except np.linalg.LinAlgError:                     # pragma: no cover
+            vec = data["rel"]
+        normals = np.stack([
+            _batch_unit_normal(vec[:, 0], vec[:, 1]),
+            _batch_unit_normal(vec[:, 2], vec[:, 3]),
+        ], axis=1)
+        points = np.stack([corners[:, 0], corners[:, 0] + vec[:, 4]], axis=1)
+        axis = points[:, 1] - points[:, 0]
+        den = (axis * axis).sum(axis=1)
+        offsets = corners - corners[:, None, 0]
+        t = np.where(den[:, None] > 1e-18,
+                     np.clip((offsets * axis[:, None, :]).sum(axis=2)
+                             / np.where(den > 1e-18, den, 1.0)[:, None],
+                             0.0, 1.0),
+                     0.5)
+        self._shade_t = t
         to_light = light[None, None, :] - points
         norm = np.linalg.norm(to_light, axis=2)
         good = norm > 1e-12
         unit = np.zeros_like(to_light)
         unit[good] = to_light[good] / norm[good, None]
-        dot = (data["normals"] * unit).sum(axis=2)
+        dot = (normals * unit).sum(axis=2)
         term = 0.5 * dot ** 3
         term = np.where(term < 0.0, term * 0.5, term)
         lit = np.clip(data["base"][..., :3] + term[..., None], 0.0, 1.0)
-        t = data["t"][..., None]
+        t = self._shade_t[..., None]
         cols = lit[:, 0][:, None, :] * (1.0 - t) + lit[:, 1][:, None, :] * t
         alpha = np.repeat(data["base"][:, 0, 3][:, None], 4, axis=1)
         colors = np.concatenate([cols, alpha[..., None]], axis=2)

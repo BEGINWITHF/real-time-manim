@@ -207,45 +207,110 @@ def _surface_geometry(faces):
             np.asarray(color_rows, dtype=np.float64))
 
 
+def _batch_unit_normal(v1, v2, tol=1e-6):
+    """Vectorised ``render.util._unit_normal`` for ``(F, 3)`` tangent pairs.
+
+    Same three branches (cross product; the aligned 90-degree turn toward +Z;
+    DOWN for a degenerate pair), so the reconstructed normals match the scalar
+    helper bit for bit on the untransformed geometry.
+    """
+    v1 = np.asarray(v1, dtype=np.float64)
+    v2 = np.asarray(v2, dtype=np.float64)
+    n = len(v1)
+    out = np.zeros((n, 3), dtype=np.float64)
+    if n == 0:
+        return out
+    out[:] = (0.0, -1.0, 0.0)
+    div1 = np.max(np.abs(v1), axis=1)
+    div2 = np.max(np.abs(v2), axis=1)
+    u = np.zeros((n, 3), dtype=np.float64)
+
+    only2 = (div1 == 0.0) & (div2 != 0.0)
+    if only2.any():
+        u[only2] = v2[only2] / div2[only2, None]
+    only1 = (div1 != 0.0) & (div2 == 0.0)
+    if only1.any():
+        u[only1] = v1[only1] / div1[only1, None]
+
+    resolved = np.zeros(n, dtype=bool)
+    both = (div1 != 0.0) & (div2 != 0.0)
+    if both.any():
+        idx = np.flatnonzero(both)
+        u1 = v1[idx] / div1[idx, None]
+        u2 = v2[idx] / div2[idx, None]
+        cp = np.cross(u1, u2)
+        length = np.sqrt(np.sum(cp * cp, axis=1))
+        ok = length > tol
+        out[idx[ok]] = cp[ok] / length[ok, None]
+        aligned = ~ok
+        if aligned.any():
+            u[idx[aligned]] = u1[aligned]
+        resolved[idx[ok]] = True
+
+    turn = (~resolved) & (np.max(np.abs(u), axis=1) > 0.0)
+    idx = np.flatnonzero(turn)
+    if len(idx):
+        ux, uy, uz = u[idx, 0], u[idx, 1], u[idx, 2]
+        cx = -ux * uz
+        cy = -uy * uz
+        cz = ux * ux + uy * uy
+        length = np.sqrt(cx * cx + cy * cy + cz * cz)
+        flat = (np.abs(ux) < tol) & (np.abs(uy) < tol)
+        good = (~flat) & (length > 0.0)
+        res = np.zeros((len(idx), 3), dtype=np.float64)
+        res[good] = np.stack([cx[good] / length[good],
+                              cy[good] / length[good],
+                              cz[good] / length[good]], axis=1)
+        out[idx[flat | ~good]] = (0.0, -1.0, 0.0)
+        out[idx[good]] = res[good]
+    return out
+
+
+def _corner_tangent_indices(npoints, index):
+    """The two point indices ``_corner_normal`` uses for ``index``."""
+    im3 = index - 3 if index > 2 else (npoints - 4)
+    ip3 = index + 3 if index < (npoints - 3) else 3
+    return im3, ip3
+
+
 def _surface_shading(faces, corners):
     """Inputs for baking manim's two-stop face lighting, or ``None``.
 
     ``corners`` is ``(F, 4, 3)`` in face order.  For every ``shade_in_3d`` face
-    this stores manim's two shading corners (path start and its "end corner"),
-    their unit normals, the raw first/last fill colours, and where each of the
-    four mesh corners sits along that start->end axis.  The lit colours are
-    computed on the first frame that has a 3D light -- the light source only
-    exists in a published viewport -- and then frozen, like every other baked
-    colour.
+    this stores manim's two shading corners as *tangent vectors expressed in
+    the face's own corner frame* (``u = c1-c0``, ``v = c3-c0``, ``u x v``) and
+    the raw first/last fill colours.
+
+    Expressing the tangents in the face frame matters: the light is evaluated
+    on the first frame that has a 3D camera, by which time the mesh may already
+    have been shifted/rotated/scaled.  Rebuilding the tangents from the current
+    corners makes the normals follow any affine transform exactly, instead of
+    shading with the pre-transform normals.
     """
     mask = np.array([bool(getattr(face, "shade_in_3d", False))
                      for face in faces])
     if not mask.any():
         return None
-    from real_time_manim.render.util import _corner_normal
     n = len(faces)
-    points = np.zeros((n, 2, 3), dtype=np.float64)
-    normals = np.zeros((n, 2, 3), dtype=np.float64)
+    rel = np.zeros((n, 5, 3), dtype=np.float64)
     base = np.ones((n, 2, 4), dtype=np.float64)
-    t = np.full((n, 4), 0.5, dtype=np.float64)
     for i in np.flatnonzero(mask):
         face = faces[i]
         pts = np.asarray(face.points, dtype=np.float64)
-        end = ((len(pts) - 1) // 6) * 3
-        points[i, 0] = pts[0]
-        points[i, 1] = pts[end]
-        normals[i, 0] = _corner_normal(pts, 0)
-        normals[i, 1] = _corner_normal(pts, end)
+        npts = len(pts)
+        end = ((npts - 1) // 6) * 3
+        im0, ip0 = _corner_tangent_indices(npts, 0)
+        ime, ipe = _corner_tangent_indices(npts, end)
+        rel[i, 0] = pts[ip0] - pts[0]
+        rel[i, 1] = pts[im0] - pts[0]
+        rel[i, 2] = pts[ipe] - pts[end]
+        rel[i, 3] = pts[ime] - pts[end]
+        rel[i, 4] = pts[end] - pts[0]
         rgba = np.asarray(face.fill_rgbas, dtype=np.float64)
         base[i, 0] = rgba[0][:4]
         base[i, 1] = rgba[min(1, len(rgba) - 1)][:4]
-        axis = points[i, 1] - points[i, 0]
-        den = float(axis @ axis)
-        if den > 1e-18:
-            t[i] = np.clip((corners[i] - points[i, 0]) @ axis / den,
-                           0.0, 1.0)
-    return {"mask": mask, "points": points, "normals": normals,
-            "base": base, "t": t}
+    return {"mask": mask, "rel": rel, "base": base,
+            "bake_corners": np.array(corners, dtype=np.float64, copy=True)}
 
 
 def bake_surface(surface, *, ignore_strokes=False, allow_shaded=False,
