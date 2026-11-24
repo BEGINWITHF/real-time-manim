@@ -328,10 +328,18 @@ def __init__(self, major_radius: float = 3, minor_radius: float = 1, u_range: tu
 class MeshBatch:
     def __init__(self)
     def append(self, quads, colors) -> Self
+    def append_indexed(self, vertices, quads, colors=None) -> Self
+    def mark_geometry_dirty(self) -> Self
     def build_vertices(self, viewport, width, height) -> tuple[int, ctypes pointer] | None
 ```
 
 - `quads`: `(Q, 4, 3)` float, four corners in world coordinates.
+- `append_indexed`: unique `vertices` `(N, 3)` + `(Q, 4)` integer indices + `(Q, 4, 4)`
+  corner colours.  Shared corners are projected **once** and gathered into the
+  two triangles per quad; the gathered buffer (and, while the view and geometry
+  are unchanged, the projection) is reused.  Call `mark_geometry_dirty()` after
+  editing `vertices` in place.  `append` and `append_indexed` cannot be mixed in
+  one batch.
 - `colors`: `(Q, 4, 4)` float, RGBA per corner in 0–1.
 - Attach with `win.set_mesh(mesh)`; detach with `win.clear_mesh()` or
   `win.set_mesh(None)`. `sync()` calls `build_vertices` once per frame and
@@ -339,9 +347,15 @@ class MeshBatch:
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
   mesh is recorded **before** the painter primitives, so 2D overlays stay on
   top regardless of 3D depth.
-- Limits: quads only, `MAX_MESH_VERTS = 262144` vertices (~43690 quads), one
-  batch per frame (`AddMesh` overwrites, it does not append), no per-pixel
-  transparency sort, CPU re-projection every frame.
+- Limits: quads only, `MAX_MESH_VERTS = 262144` vertices
+  (`MeshBatch.MAX_QUADS = 43690`), one batch per frame (`AddMesh`
+  overwrites, it does not append); `append`/`append_indexed` raise when the
+  limit is crossed, no per-pixel transparency sort.
+- Performance (18,432 quads / 18,705 unique vertices / 110,592 expanded):
+  `build_vertices` ~13.4 ms with `append`, ~4.45 ms with `append_indexed`
+  (unique projection + gather), ~0.04 ms when the indexed batch/view is
+  unchanged.  Native still receives expanded vertices; an index buffer is a
+  future native step.
 
 ### Automatic depth (`RTM_AUTO_DEPTH=1`)
 

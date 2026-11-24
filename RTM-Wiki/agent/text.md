@@ -780,6 +780,7 @@ def __init__(self, filename_or_array: StrPath | np.ndarray, scale_to_resolution:
 - `notes`:
   - **Naming**: class is `ImageMobject` (lowercase `m`), not `ImageMObject`. `real_time_manim` top level exports `ImageMobject`, `ImageMobjectFromCamera`, `SVGMobject`, `VMobjectFromSVGPath`, `Camera`.
   - `scale_to_resolution` sets the load-time pixel count; on-screen size is set by `.scale()`/`.set(height=…)`.
+  - **Texture cache**: RTM keeps the uploaded RGBA buffer and digest between frames. `set_color` / `set_opacity` / `interpolate_color` invalidate it automatically; after writing `pixel_array` yourself, call `mark_texture_dirty()`. Fully transparent images and unchanged static images do no per-pixel work per frame. A uniform-alpha `set_opacity` is applied as quad opacity and leaves `pixel_array` untouched; a per-pixel alpha mask still rewrites/upload its channel.
 - `see`: ../zh_CN/04-图形与文本/15-图片与SVG.md
 
 ### `ImageMobjectFromCamera`

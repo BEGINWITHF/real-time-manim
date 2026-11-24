@@ -150,7 +150,7 @@ Three different things are cached, and each is cleared differently:
 | what | where | what it saves | clear it with |
 | --- | --- | --- | --- |
 | LaTeX / Typst results | `media/Tex` (+ your `tex_cache/`) | recompiling unchanged formulas | `clear_tex_cache()` |
-| **text → SVG** (Pango) | `media/texts/<hash>.svg` | re-running Pango layout (~2 ms per string) | `clear_media()`, or a recorder's `cleanup=True` |
+| **text → SVG** (Pango) | `media/texts/<hash>.svg` | re-running Pango layout (~2 ms per string) | `clear_media()` (explicit) |
 | parsed SVG → Manim mobjects | process memory (`SVG_HASH_TO_MOB_MAP`) | `svgelements` parsing + one `VMobjectFromSVGPath` per glyph (4–20 ms) | process exit; `Text(use_svg_cache=False)` opts out |
 
 Formulas are content-hashed, so unchanged math is never recompiled:
@@ -170,9 +170,11 @@ Text is hashed by content **and** style — text, font, size, colour, `t2c`/`t2f
 files. The in-memory layer is capped (256 entries, FIFO) and only starts caching
 from the *second* build of a given string: repeated labels are ~2.5× cheaper to
 construct, while one-off strings (each `DecimalNumber` value) never pay for a
-copy they will not use. `fast_record_scene(..., cleanup=True)` deletes the whole
-`media/` folder after recording, so the on-disk text cache lasts one render
-unless you pass `cleanup=False`:
+copy they will not use. `fast_record_scene(..., cleanup=True)` removes only the
+transient output directories this run created (videos, images, partial movie
+files, sections, logs); `media/Tex` and `media/texts` survive, so the on-disk
+cache keeps working across renders and never touches another process's `media/`
+tree. Pass `cleanup=False` to keep this run's transient output too.
 
 ```python
 from real_time_manim import clear_media

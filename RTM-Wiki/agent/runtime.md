@@ -7,7 +7,7 @@
 
 | Item | Value |
 | --- | --- |
-| Package | `real-time-manim` (import `real_time_manim`), version `2.0.10` (`pyproject.toml`) |
+| Package | `real-time-manim` (import `real_time_manim`), version `2.0.11` (`pyproject.toml`) |
 | Python | `>=3.11` |
 | Windows 10/11 | wheel ships `vulkan_core.dll` + window icon; no build |
 | macOS | build native lib first (below) |
@@ -132,7 +132,8 @@ def close(self)
 
 - `ret`: none. Calls `_unregister()` + `Vulkan_Shutdown()`.
 - `notes`:
-  - **Required** at the end of `construct()`; without it nothing is flushed and the run may not exit.
+  - **Required** at the end of `construct()`; explicit `close()` finishes a manual record and flushes the window.  Forgetting it no longer means "no output": an `atexit` hook closes windows still alive at interpreter exit, but that best-effort path cannot report encoder errors.
+  - Use it as a context manager: `with MLWindow(1920, 1080) as win:` closes on leaving the block (also on exception).
   - Does **not** finish a record by itself. `fast_record_scene` / `record_scene` install `record._AutoRecord`, which runs `_finish_fast_record()` / `stop_record()` *before* the real `close()`. If you call `enable_fast_record(...)` manually you must call the internal `win._finish_fast_record()` yourself.
   - If `_defer_close` is True (schedule mode) `close()` returns without shutting down.
 
@@ -149,7 +150,7 @@ def clear_mesh(self)
   - Stores `win._mesh`; `sync()` submits it before the painter primitives, so the native depth buffer resolves per-pixel occlusion.
   - 2D overlays (text, formulas, images) paint after the mesh, i.e. always on top.
   - `mesh.build_vertices(get_viewport(), win_w, win_h)` runs once per frame; cost scales with quad count.
-  - Limits: quads only, `MAX_MESH_VERTS = 262144` vertices (~43690 quads), no per-pixel transparency sort, one batch per frame.
+  - Limits: quads only, `MAX_MESH_VERTS = 262144` vertices (`MeshBatch.MAX_QUADS = 43690`), no per-pixel transparency sort, one batch per frame.  `append()` raises `ValueError` past that; `build_vertices()` truncates to whole quads (one `RuntimeWarning`) only if the public arrays were grown directly, so native never receives a partial quad.
   - `RTM_AUTO_DEPTH=1` is the automatic alternative for eligible `Surface` roots; it does not remove per-face `set_fill` cost.
 - `see`: ../zh_CN/06-三维/02-三维表面.md
 
@@ -320,7 +321,7 @@ def fast_record_scene(scene, out_path=None, *, fps=60, hidden=True, count_only=F
 | `count_only` | `bool` | `False` | probe: count frames only, no capture/GPU render |
 | `segment` | `tuple \| None` | `None` | `(start_frame, end_frame)` → BMP directory instead of mp4 |
 | `overwrite` | `bool` | `True` | `False` refuses to overwrite an existing target (n/a for `count_only`) |
-| `cleanup` | `bool` | `True` | delete transient manim `media/` after recording |
+| `cleanup` | `bool` | `True` | remove this run's transient output dirs (videos/images/partials/sections/logs); `media/Tex` + `media/texts` caches survive |
 | `verbose` | `bool` | `True` | print per-window progress lines |
 | `jobs` | `int \| "auto" \| None` | `None` | worker processes for frame-parallel recording |
 
@@ -359,7 +360,7 @@ def record_scene(scene, out_path=None, *, fps=60, overwrite=True, cleanup=True, 
 | `out_path` | `str \| None` | `None` → `~/Downloads/output.mp4` | target mp4; multi-window appends `_partN` |
 | `fps` | `int` | `60` (forced) | background-thread capture rate; only `60` (prints `[rtm] forcing 60 fps`) |
 | `overwrite` | `bool` | `True` | `False` refuses to overwrite existing `out_path` |
-| `cleanup` | `bool` | `True` | delete transient manim `media/` after recording |
+| `cleanup` | `bool` | `True` | remove this run's transient output dirs (videos/images/partials/sections/logs); `media/Tex` + `media/texts` caches survive |
 | `verbose` | `bool` | `True` | print per-window progress lines |
 
 - `notes`: real-time capture against a **visible** window; maps to `start_record` / `stop_record`. The user sees the animation as it is captured.
@@ -554,6 +555,14 @@ def export_srt(path, entries=None, windows=None, verbose=False)
 | `RTM_WAIT_POPUP_DELAY` | `0.35` | seconds before it appears |
 | `RTM_LANG` | auto | force `zh` / `en` / `ja` / `ko` |
 | `RTM_WAIT_ICON` | bundled `wait.ico` | override the popup icon (`.ico` path) |
+| `RTM_DIAGNOSTICS` | unset | `1` prints one line per play: frame count, wall time, whether the static layer was used, the largest mesh batch (vertices), and texture uploads |
+
+`RTM_DIAGNOSTICS=1` sample:
+
+```text
+[rtm] play 3: 60f 0.42s | static=on mesh=0v tex_uploads=0
+[rtm] play 4: 120f 1.10s | static=off mesh=228000v tex_uploads=12
+```
 
 - `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
 
@@ -633,7 +642,7 @@ def clear_media(media_dir=None, *, verbose=True) -> bool
 - `notes`:
   - Removes the **whole** `media/` folder, not just `Tex`; unconditional (never skipped).
   - Does **not** follow `config.media_dir` — it always targets `<cwd>/media` unless `media_dir` is given.
-  - `record.py` calls it after a run when `cleanup=True`.
+  - The recorders no longer call it: `cleanup=True` redirects manim's output dirs to a private temp dir and removes only that, leaving `media/Tex` / `media/texts` and other processes' files intact.
 - `see`: ../zh_CN/00-快速开始/04-录制视频.md
 
 ## Hard constraints

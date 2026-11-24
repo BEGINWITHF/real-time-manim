@@ -318,6 +318,14 @@ class RecordingMixin:
         # A hidden window has nothing to pace for, a visible one does.
         self._set_unpaced(not visible)
 
+    def __enter__(self):
+        """``with MLWindow(...) as win:`` -- close on leaving the block."""
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
     def close(self):
         if getattr(self, '_closed', False):
             return                    # idempotent: second close is a no-op

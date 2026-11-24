@@ -923,6 +923,15 @@ class PlayMixin:
             anims = [e.get("anim") for e in getattr(tl, "_entries", [])]
         n_frames = ce_frame_count(anims, tl.duration, fps)
 
+        # Diagnostics (`RTM_DIAGNOSTICS=1`): one summary per play.  Counters
+        # live on the window so sync()/bake/image upload can update them
+        # without threading a context object through the paint path.
+        self._diag_play_no = getattr(self, "_diag_play_no", 0) + 1
+        self._diag_play_static = False
+        self._diag_play_mesh = 0
+        _diag_tex0 = getattr(self, "_diag_tex_uploads", 0)
+        _diag_t0 = time.time()
+
         # #85: bake the roots this play cannot change, so the frame loop only
         # submits moving content.  Must run after begin()/finalize() (the
         # animated copies exist) and before the first evaluate, so the bake
@@ -1108,6 +1117,14 @@ class PlayMixin:
 
         # The bake belongs to this play: the next play may move anything it
         # captured, so never let it leak into another play's frames.
+        if os.environ.get("RTM_DIAGNOSTICS"):
+            print("[rtm] play %d: %df %.2fs | static=%s mesh=%dv "
+                  "tex_uploads=%d"
+                  % (self._diag_play_no, n_frames, time.time() - _diag_t0,
+                     "on" if self._diag_play_static else "off",
+                     self._diag_play_mesh,
+                     getattr(self, "_diag_tex_uploads", 0) - _diag_tex0),
+                  flush=True)
         _drop = getattr(self, "_drop_static_layer", None)
         if _drop is not None:
             _drop()
