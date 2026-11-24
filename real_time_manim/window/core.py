@@ -128,6 +128,15 @@ class CoreMixin:
         self._static_baked_ids = None
         self._static_key = None
         self._clear_rgb = None
+        # Native lit-mesh light/material.  direction=None means "derive it from
+        # the camera's light_source each frame".
+        self._mesh_light = {
+            "direction": None,
+            "ambient": 0.35,
+            "diffuse": 0.75,
+            "specular": 0.0,
+            "shininess": 32.0,
+        }
         # Aggregate diagnostics (`RTM_DIAGNOSTICS=1`): one line per play with
         # the static layer state, the largest mesh batch and texture uploads.
         self._diag_play_no = 0
@@ -562,6 +571,69 @@ class CoreMixin:
         """Detach the ``MeshBatch`` attached with :meth:`set_mesh`."""
         self._mesh = None
 
+    def set_mesh_light(self, direction=None, *, ambient=None, diffuse=None,
+                       specular=None, shininess=None):
+        """Set the light/material for lit meshes (``MeshBatch(lit=True)``).
+
+        Args:
+            direction: camera-space direction *towards* the light, or ``None``
+                to derive it each frame from the camera's ``light_source``.
+            ambient: flat light added everywhere (default 0.35).
+            diffuse: Lambert term scale (default 0.75).
+            specular: Blinn-Phong highlight scale (default 0.0).
+            shininess: highlight exponent (default 32).
+
+        Only affects ``lit=True`` / ``normals=`` geometry; unlit batches and
+        ``MeshMobject.from_surface(shade=True)`` (CPU-baked lighting) are
+        untouched.
+        """
+        params = dict(self._mesh_light)
+        if direction is not None:
+            values = [float(v) for v in direction]
+            if len(values) != 3 or not np.all(np.isfinite(values)):
+                raise ValueError("direction must be three finite numbers")
+            params["direction"] = tuple(values)
+        for key, value in (("ambient", ambient), ("diffuse", diffuse),
+                           ("specular", specular), ("shininess", shininess)):
+            if value is None:
+                continue
+            value = float(value)
+            if not np.isfinite(value):
+                raise ValueError("%s must be finite" % key)
+            params[key] = value
+        self._mesh_light = params
+        return self
+
+    def _apply_mesh_light(self, viewport):
+        setter = getattr(self.dll, "SetMeshLight", None)
+        if setter is None:
+            return
+        params = self._mesh_light
+        direction = params["direction"]
+        if direction is None:
+            direction = (0.3, -0.5, 0.8)
+            light = getattr(viewport, "light_source", None)
+            if light is not None:
+                center = getattr(viewport, "frame_center", (0.0, 0.0, 0.0))
+                world = np.asarray(light, dtype=float) - np.asarray(
+                    center, dtype=float)
+                rot = getattr(viewport, "rotation", None)
+                if rot is not None:
+                    world = np.asarray(rot, dtype=float) @ world
+                length = float(np.linalg.norm(world))
+                if length > 1e-6:
+                    direction = tuple(world / length)
+        setter.argtypes = [
+            ctypes.c_float, ctypes.c_float, ctypes.c_float,
+            ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+        ]
+        setter.restype = None
+        setter(
+            float(direction[0]), float(direction[1]), float(direction[2]),
+            float(params["ambient"]), float(params["diffuse"]),
+            float(params["specular"]), float(params["shininess"]),
+        )
+
     def set_post(self, enabled=True, *, bloom=None, threshold=None, knee=None,
                  exposure=None, radius=None, tonemap=None):
         """Enable or disable native bloom + tonemap for this window.
@@ -828,22 +900,25 @@ class CoreMixin:
                     else MeshGroup(*resolved))
         if only_ids is None and mesh is not None:
             from real_time_manim.camera_state import get_viewport
+            viewport = get_viewport()
             add_indexed = getattr(self.dll, "AddMeshIndexed", None)
             build_indexed = getattr(mesh, "build_indexed_vertices", None)
-            built_idx = None
-            if add_indexed is not None and build_indexed is not None:
-                built_idx = build_indexed(
-                    get_viewport(), self.win_w, self.win_h)
-            if built_idx is not None:
-                vcount, verts, icount, indices = built_idx
-                add_indexed.argtypes = [
+            add_lit = getattr(self.dll, "AddMeshIndexedLit", None)
+            build_lit = getattr(mesh, "build_indexed_lit_vertices", None)
+            built_lit = None
+            if add_lit is not None and build_lit is not None:
+                built_lit = build_lit(viewport, self.win_w, self.win_h)
+            if built_lit is not None:
+                vcount, verts, icount, indices = built_lit
+                self._apply_mesh_light(viewport)
+                add_lit.argtypes = [
                     ctypes.c_int,
                     ctypes.POINTER(ctypes.c_float),
                     ctypes.c_int,
                     ctypes.POINTER(ctypes.c_uint),
                 ]
-                add_indexed.restype = None
-                add_indexed(
+                add_lit.restype = None
+                add_lit(
                     int(vcount),
                     verts.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                     int(icount),
@@ -852,19 +927,41 @@ class CoreMixin:
                 self._diag_play_mesh = max(
                     self._diag_play_mesh, int(vcount))
             else:
-                built = mesh.build_vertices(get_viewport(), self.win_w,
-                                            self.win_h)
-                if built is not None:
-                    count, vertices = built
-                    add_mesh = self.dll.AddMesh
-                    add_mesh.argtypes = [
+                built_idx = None
+                if add_indexed is not None and build_indexed is not None:
+                    built_idx = build_indexed(
+                        viewport, self.win_w, self.win_h)
+                if built_idx is not None:
+                    vcount, verts, icount, indices = built_idx
+                    add_indexed.argtypes = [
                         ctypes.c_int,
                         ctypes.POINTER(ctypes.c_float),
+                        ctypes.c_int,
+                        ctypes.POINTER(ctypes.c_uint),
                     ]
-                    add_mesh.restype = None
-                    add_mesh(int(count), vertices)
+                    add_indexed.restype = None
+                    add_indexed(
+                        int(vcount),
+                        verts.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                        int(icount),
+                        indices.ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+                    )
                     self._diag_play_mesh = max(
-                        self._diag_play_mesh, int(count))
+                        self._diag_play_mesh, int(vcount))
+                else:
+                    built = mesh.build_vertices(viewport, self.win_w,
+                                                self.win_h)
+                    if built is not None:
+                        count, vertices = built
+                        add_mesh = self.dll.AddMesh
+                        add_mesh.argtypes = [
+                            ctypes.c_int,
+                            ctypes.POINTER(ctypes.c_float),
+                        ]
+                        add_mesh.restype = None
+                        add_mesh(int(count), vertices)
+                        self._diag_play_mesh = max(
+                            self._diag_play_mesh, int(count))
         # Phase 5.4: a custom camera's frame comes back as pixels, not geometry.
         if self._rasterise_custom_camera(scene):
             return

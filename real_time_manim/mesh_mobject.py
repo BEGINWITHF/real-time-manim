@@ -54,13 +54,17 @@ class MeshMobject(Mobject):
     _rtm_mesh_skip = True
 
     def __init__(self, vertices, quads, colors=None, *, shade_data=None,
-                 **kwargs):
+                 normals=None, lit=False, **kwargs):
         super().__init__(**kwargs)
-        batch = MeshBatch().append_indexed(vertices, quads, colors)
+        self._lit = bool(lit or normals is not None)
+        batch = MeshBatch(lit=self._lit).append_indexed(
+            vertices, quads, colors, normals=normals)
         self.points = np.array(batch._vertices, dtype=np.float64, copy=True)
         self._indices = np.array(batch._indices, dtype=np.int64, copy=True)
         self._colors = np.array(batch._index_colors, dtype=np.float32,
                                 copy=True)
+        self._normals = (np.array(batch._index_normals, dtype=np.float64,
+                                  copy=True) if self._lit else None)
         self._batch = None
         self._points_sig = None
         self._shade_data = shade_data
@@ -68,18 +72,25 @@ class MeshMobject(Mobject):
 
     @classmethod
     def from_surface(cls, surface, *, ignore_strokes=False, shade=False,
-                     **kwargs):
-        """Bake a ``Surface``; ``shade=True`` bakes its 3D face lighting too.
+                     lit=False, **kwargs):
+        """Bake a ``Surface``; ``shade=True`` or ``lit=True`` adds lighting.
 
-        Without ``shade`` the Surface must be flat (``set_shade_in_3d(False)``,
-        ``set_stroke(width=0)``), exactly like :meth:`MeshBatch.from_surface`.
-        With ``shade=True`` a shaded Surface is accepted: manim's two-stop
-        per-face lighting is baked from the world light on the first frame that
-        has a 3D camera, and the four mesh corners interpolate between those
-        stops.  The lighting is refreshed when the mesh vertices or the world
-        light change (so transforms and light moves follow the painter);
-        a colour-only transform keeps its interpolated colours.
+        ``shade=True`` bakes manim's own per-face lighting into the colours
+        (CPU, follows transforms and the world light).  ``lit=True`` keeps the
+        base colours and carries face normals for the native GPU light
+        (``win.set_mesh_light``), which adds a material/specular model.  The two
+        are mutually exclusive.
         """
+        if shade and lit:
+            raise ValueError(
+                "MeshMobject.from_surface: pass shade=True (CPU-baked manim "
+                "lighting) or lit=True (native material), not both")
+        if lit:
+            batch = MeshBatch.from_surface(surface,
+                                           ignore_strokes=ignore_strokes,
+                                           lit=True)
+            return cls(batch._vertices, batch._indices, batch._index_colors,
+                       normals=batch._index_normals, lit=True, **kwargs)
         if not shade:
             batch = MeshBatch.from_surface(surface,
                                            ignore_strokes=ignore_strokes)
@@ -191,18 +202,35 @@ class MeshMobject(Mobject):
         self._refresh_lighting(sig)
         batch = self.__dict__.get('_batch')
         if batch is None:
-            batch = MeshBatch()
-            batch.append_indexed(points, self._indices, self._colors)
+            batch = MeshBatch(lit=self._lit)
+            batch.append_indexed(
+                points, self._indices, self._colors,
+                normals=self._normals if self._lit else None)
             self._batch = batch
         elif sig != self._points_sig:
             batch._vertices = points
+            if self._lit:
+                from real_time_manim.mesh import _face_normals
+                batch._index_normals = np.repeat(
+                    _face_normals(points[self._indices])[:, None, :], 4,
+                    axis=1)
             batch.mark_geometry_dirty()
         self._points_sig = sig
+        if self._lit:
+            self._normals = np.array(batch._index_normals, dtype=np.float64,
+                                     copy=True)
         return batch
 
     def build_indexed_vertices(self, viewport, width, height):
         """Let ``win.set_mesh(mesh_mobject)`` submit it like a batch."""
         return self.to_mesh_batch().build_indexed_vertices(
+            viewport, width, height)
+
+    def build_indexed_lit_vertices(self, viewport, width, height):
+        """Native lit submission path; ``None`` for CPU-shaded/unlit meshes."""
+        if not self._lit:
+            return None
+        return self.to_mesh_batch().build_indexed_lit_vertices(
             viewport, width, height)
 
     def interpolate_color(self, mobject1, mobject2, alpha):
@@ -243,4 +271,6 @@ class MeshMobject(Mobject):
         clone.__dict__['_batch'] = None
         clone.__dict__['_points_sig'] = None
         clone.__dict__['_shade_data'] = shade
+        clone.__dict__['_lit'] = self.__dict__.get('_lit', False)
+        clone.__dict__['_normals'] = self.__dict__.get('_normals')
         return clone
