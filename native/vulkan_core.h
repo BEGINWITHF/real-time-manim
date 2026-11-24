@@ -42,6 +42,16 @@ extern VkDeviceMemory g_mesh_vert_buf_mem;
 extern VkBuffer g_mesh_index_buf;
 extern VkDeviceMemory g_mesh_index_buf_mem;
 extern VkPipeline g_mesh_pipeline;
+
+/* Lit mesh: x,y,z,nx,ny,nz,r,g,b,a per vertex, camera-space normals. */
+extern float g_mesh_lit_vertices[MAX_MESH_VERTS * MESH_LIT_FLOATS];
+extern uint32_t g_mesh_lit_count;
+extern VkPipeline g_mesh_lit_pipeline;
+extern VkPipelineLayout g_mesh_lit_layout;
+/* light: xyz direction (camera space) + ambient; material: diffuse,
+   specular, shininess. */
+extern float g_mesh_light[4];
+extern float g_mesh_material[4];
 extern VkImage g_depth_img;
 extern VkDeviceMemory g_depth_mem;
 extern VkImageView g_depth_view;
@@ -90,6 +100,7 @@ void CreateImageViews(void);
 void CreateFramebuffers(void);
 void update_vertex_buffer(const void *data, VkDeviceSize size);
 void update_mesh_vertex_buffer(const void *data, VkDeviceSize size);
+void update_mesh_lit_vertex_buffer(const void *data, VkDeviceSize size);
 void update_mesh_index_buffer(const void *data, VkDeviceSize size);
 
 // Block until every frame currently in flight has finished reading the shared
