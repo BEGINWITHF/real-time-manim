@@ -40,6 +40,8 @@ import sys
 import tempfile
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from real_time_manim.prepare import scene_prepared
+
 
 def _default_out_path() -> str:
     """Where output lands when the caller passes no ``out_path``.
@@ -391,6 +393,8 @@ def _fast_record_parallel(scene, out_path: str, *, fps: int, jobs: int,
     its own contiguous block into its own mp4; the segments are then
     concatenated with ``-c copy``.  Each worker pays its own ``construct()`` and
     window, so this wins when the scene is long compared with that setup cost.
+    Expensive pure setup can be shared once via ``Scene.prepare()`` /
+    ``shared_prepare`` (see ``real_time_manim/prepare.py``).
     """
     import tempfile
 
@@ -779,9 +783,11 @@ def record_scene(scene: Union[type, Any, Callable[[], None]],
     def on_close(win: Any) -> None:
         win.stop_record()
 
-    return _run(scene, out_path if out_path is not None else _default_out_path(),
-                on_init, on_close, verbose, overwrite, count_only=False,
-                cleanup=cleanup)
+    with scene_prepared(scene):
+        return _run(scene,
+                    out_path if out_path is not None else _default_out_path(),
+                    on_init, on_close, verbose, overwrite, count_only=False,
+                    cleanup=cleanup)
 
 
 def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
@@ -840,28 +846,34 @@ def fast_record_scene(scene: Union[type, Any, Callable[[], None]],
         the classic single pass.  Splitting needs a Scene *class* importable in
         another process, so instances, lambdas and classes defined inside a
         function (or a script with no ``if __name__ == "__main__"`` guard)
-        always fall back to one pass.  Ignored for ``count_only``, ``segment``
-        and ``hidden=False``.
+        always fall back to one pass.  Workers still reconstruct the scene;
+        move expensive pure setup into a ``@classmethod prepare()`` (read with
+        ``prepared()``) or ``shared_prepare()`` so it is computed once.
+        Ignored for ``count_only``, ``segment`` and ``hidden=False``.
 
     Returns
     -------
     dict with ``out_path``, ``windows`` and ``files`` (see :func:`record_scene`).
     """
-    plan = _parallel_plan(scene, jobs, fps, hidden, count_only, segment, verbose)
-    if plan is not None:
-        return _fast_record_parallel(
-            scene, out_path if out_path is not None else _default_out_path(),
-            fps=fps, overwrite=overwrite, cleanup=cleanup, verbose=verbose,
-            **plan)
+    with scene_prepared(scene):
+        plan = _parallel_plan(scene, jobs, fps, hidden, count_only, segment,
+                               verbose)
+        if plan is not None:
+            return _fast_record_parallel(
+                scene, out_path if out_path is not None else _default_out_path(),
+                fps=fps, overwrite=overwrite, cleanup=cleanup, verbose=verbose,
+                **plan)
 
-    def on_init(win: Any, out: str) -> None:
-        win.enable_fast_record(out, fps=fps, hidden=hidden,
-                               segment=segment, count_only=count_only)
+        def on_init(win: Any, out: str) -> None:
+            win.enable_fast_record(out, fps=fps, hidden=hidden,
+                                   segment=segment, count_only=count_only)
 
-    def on_close(win: Any) -> None:
-        win._finish_fast_record()
+        def on_close(win: Any) -> None:
+            win._finish_fast_record()
 
-    return _run(scene, out_path if out_path is not None else _default_out_path(),
-                on_init, on_close, verbose, overwrite, count_only=count_only,
-                cleanup=cleanup, hidden=hidden, segment=segment,
-                expect_files=(not count_only) and segment is None)
+        return _run(scene,
+                    out_path if out_path is not None else _default_out_path(),
+                    on_init, on_close, verbose, overwrite,
+                    count_only=count_only, cleanup=cleanup, hidden=hidden,
+                    segment=segment,
+                    expect_files=(not count_only) and segment is None)

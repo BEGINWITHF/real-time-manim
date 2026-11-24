@@ -26,6 +26,23 @@ def fast_record_scene(scene, out_path=None, *, fps=60, hidden=True,
 
 **Returns**: `dict` — `{"out_path": ..., "windows": [...], "files": [...], "with_audio": [...]}`; `files` is the output that really exists on disk (empty when `count_only`).
 
+**Parallel records** (`jobs=N`) run the scene in several processes. Every worker still has to rebuild the mobjects (manim scenes are not picklable), but expensive pure data can be prepared once: put it in a `@classmethod prepare()` and read it with `prepared()`. The parent computes it once and each worker loads the pickle.
+
+```python
+from real_time_manim import Scene, prepared, shared_prepare
+
+class Film(Scene):
+    @classmethod
+    def prepare(cls):
+        return {"verts": build_terrain()}      # numpy/dicts/lists only
+
+    def construct(self):
+        data = prepared()                      # None outside a record
+        world = shared_prepare("world-v3", build_world)   # also once
+```
+
+`prepared()` returns `None` when the scene is run directly (no recorder), so keep a fallback if the scene must also run standalone. `shared_prepare(key, builder, version=...)` is a small cross-process cache for cases where restructuring into a classmethod is inconvenient; bump `version` when the builder's inputs change.
+
 #### Sample: `scene` (class / instance / no-arg callable)
 
 The same scene recorded three times with three different passing styles: pass the class (RTM builds an instance itself and runs `setup()`+`construct()`), pass an instance, pass a function that takes no arguments.
