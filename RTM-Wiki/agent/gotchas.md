@@ -45,6 +45,7 @@
 - **`next_section` is callable but produces nothing** (no CLI/file-writer); `.srt`/segments need manual ffmpeg cuts.
 - **`interactive_embed`/`embed`/`set_key_function` unavailable** (RTM Vulkan window, no embed link).
 - **Manual `enable_fast_record` + `close()` does not finish** → call the internal `win._finish_fast_record()`.
+- **Never install a module-private `ctypes` structure on the shared `win32.user32`** → two modules that each bind their own `_WNDCLASSEXW`/`_MSG` overwrite each other's `argtypes` (whichever imported last wins), and the loser's `byref(wc)` raises `ctypes.ArgumentError: expected LP__WNDCLASSEXW instance instead of pointer to _WNDCLASSEXW`. Seen in #119: compiling a `MathTex` imports `render_wait` *after* `preview`, which killed the slider bar; without a TTY the preview then exits entirely. Fixed in 2.0.11 — every Win32 module binds its **own** `ctypes.WinDLL("user32", use_last_error=True)`; new Win32 code must do the same.
 
 ### Scene & camera
 - **`self.camera.frame` on a plain `Camera`** → `AttributeError` (no `frame`; use `hasattr`). `MovingCameraScene`'s `camera_class` must have a `frame` (not plain `Camera`).
@@ -242,6 +243,7 @@
 | `FileNotFoundError: "vulkan_core.dll not found. If running from source, build it with native/build.ps1 (requires Vulkan SDK + MinGW-w64)."` | native lib missing | Windows: reinstall the wheel; macOS: `bash native/build_mac.sh` | `runtime.md` |
 | `RuntimeError: "Vulkan_Init failed"` / `"Vulkan_InitEx failed"` | device/init failure | check Vulkan GPU+driver | `runtime.md` |
 | `RuntimeError: "win.play() called before the scene was bound: run \`win.scene = self\` inside construct(), or pass the scene explicitly; without it RTM has nothing to draw or record."` | `win.scene` unset | `win.scene = self` before `win.play` | `runtime.md` |
+| `ctypes.ArgumentError: expected LP__WNDCLASSEXW instance instead of pointer to _WNDCLASSEXW` (preview bar dies after a formula compile) | two modules installed prototypes on the shared `win32.user32` | fixed in 2.0.11 (#119): each Win32 module binds its own `WinDLL("user32")`; upgrade and follow that pattern | `runtime.md` |
 | `TypeError: "Unexpected argument {Type} passed to MLWindow.play(): pass an Animation or a .animate(...) builder (or Scene.add() the mobject first)."` | bare `Mobject` passed to `play()` | wrap in an animation or `Scene.add()` first | `runtime.md` |
 | `[RTM] win.play(): unsupported keyword(s) {...} ignored -- RTM 不支持该参数: only run_time, rate_func, path_arc, path_arc_axis, path_arc_centers, path_func are honoured at play level; pass the rest to the animation constructor instead (e.g. Create(sq, lag_ratio=...)).` | unsupported play-level kwarg | pass it to the animation constructor | `runtime.md` |
 | `[RTM] Scene.add_sound(): unsupported parameter(s) … ignored -- RTM 不支持该参数: the RTM audio mix supports only sound_file, time_offset, gain, gain_to_background.` | unsupported `add_sound` kwarg | drop the keyword | `scene-camera.md` |
