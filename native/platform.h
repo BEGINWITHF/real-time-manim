@@ -48,6 +48,12 @@ __declspec(dllexport) void AddMeshIndexed(int vertex_count, const float *verts,
                                           int index_count,
                                           const unsigned int *indices);
 
+// Offscreen bloom + tonemap.  `enabled` 0 restores the untouched scene path.
+// tonemap: 0 none, 1 aces, 2 reinhard.
+__declspec(dllexport) void SetPost(int enabled, float threshold, float knee,
+                                   float strength, float exposure,
+                                   float radius, int tonemap);
+
 // Background colour used to clear the frame (linear RGB 0..1); scenes with a
 // custom `camera.background_color` publish theirs each frame.
 __declspec(dllexport) void SetBackgroundColor(float r, float g, float b);
