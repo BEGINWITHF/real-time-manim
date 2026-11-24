@@ -266,13 +266,25 @@ Attach it to the window:
 
 | Method | Meaning |
 | --- | --- |
-| `win.set_mesh(mesh)` | submit this frame's mesh; `None` is the same as `clear_mesh()` |
+| `win.set_mesh(mesh)` | submit this frame's mesh (a `MeshBatch`, a `MeshGroup`, or a list of batches); `None` is the same as `clear_mesh()` |
 | `win.clear_mesh()` | detach the mesh and return to the painter |
+| `MeshGroup(*batches)` | several batches drawn as one mesh, in list order |
+
+A `MeshGroup` lets independent parts own their geometry without appending into each other's arrays:
+
+```python
+terrain, markers = MeshBatch(), MeshBatch()
+win.set_mesh(MeshGroup(terrain, markers))       # or win.set_mesh([terrain, markers])
+```
+
+List order is draw order, which matters for translucent quads; opaque quads are resolved per pixel by the depth buffer.
 
 ### Limits
 
 - Quads only; split triangles yourself, or use `MeshBatch.from_surface` / the automatic `Surface` path.
-- One batch holds at most `MAX_MESH_VERTS = 262144` vertices, about 43690 quads (`MeshBatch.MAX_QUADS`).  Adding past it raises `ValueError` instead of clipping the native mesh.
+- Per frame: `MAX_MESH_VERTS = 524288` vertices — up to 131072 quads through the indexed submission path (`MeshBatch.MAX_QUADS`).  Adding past it raises `ValueError` instead of clipping the native mesh; only arrays grown directly are truncated, with one `RuntimeWarning`.
+- Older native builds without `AddMeshIndexed` use the expanded six-vertex fallback: 87381 quads.
+- Several batches share that single frame budget; `MeshGroup` changes ownership and order, not capacity.
 - `append` appends; `win.set_mesh` submits the current batch each frame and does not stack calls.
 - The mesh is drawn first and 2D afterwards, so text, formulas and images always sit on top.
 - Overlapping translucent quads remain an approximation; there is no per-pixel sort.
