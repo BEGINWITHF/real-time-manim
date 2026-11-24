@@ -253,14 +253,36 @@ win.set_mesh(mesh)
 
 | Member | Meaning |
 | --- | --- |
-| `MeshBatch.from_surface(surface)` | bake every face into one indexed batch; returns a new `MeshBatch` |
-| `append_indexed(vertices, quads, colors=None)` | unique `(N, 3)` vertices + `(Q, 4)` indices; shared corners are projected once |
+| `MeshBatch.from_surface(surface, shade=False)` | bake every face into one indexed batch; `shade=True` also builds face normals |
+| `append_indexed(vertices, quads, colors=None, normals=None)` | unique `(N, 3)` vertices + `(Q, 4)` indices; shared corners are projected once |
 | `mark_geometry_dirty()` | drop the cached projection after editing the private vertex arrays |
 | `len(mesh)` / `mesh.quad_count` | number of quads |
 
-`from_surface` accepts opaque faces with a flat fill and 3–4 corners. A shaded face (`shade_in_3d=True`), a translucent fill, or a visible stroke raises `ValueError` with the offending face index; pass `ignore_strokes=True` to drop strokes deliberately (one warning). The bake is a snapshot: it does not follow later `Surface` transforms or colour changes — rebuild it, or edit the arrays and call `mark_geometry_dirty()`.
+`from_surface` accepts opaque faces with a flat fill and 3–4 corners. A shaded face (`shade_in_3d=True`) is rejected unless you pass `shade=True`; a translucent fill or a visible stroke still raises `ValueError` with the offending face index (`ignore_strokes=True` drops strokes deliberately, one warning). The bake is a snapshot: it does not follow later `Surface` transforms or colour changes — rebuild it, or edit the arrays and call `mark_geometry_dirty()`.
 
 The mesh replaces the painter for that surface, so do not `self.add(surf)` as well. To move or animate the geometry, use `MeshMobject` below: it is a scene mobject, so `shift`/`rotate`/`.animate` edit the mesh.
+
+### Lit meshes (`shade=True`)
+
+A lit batch carries a normal per vertex, so the GPU can shade it instead of using one flat colour:
+
+```python
+mesh = MeshBatch.from_surface(surf, shade=True)      # face normals
+# or: MeshBatch(shade=True).append(quads, colors)
+# or: MeshBatch().append(quads, colors, normals=face_normals)
+win.set_mesh(mesh)
+win.set_mesh_light(ambient=0.30, diffuse=0.80, specular=0.25, shininess=24)
+```
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `direction` | `None` | camera-space direction towards the light; `None` follows the camera's `light_source` |
+| `ambient` | 0.35 | flat light everywhere |
+| `diffuse` | 0.75 | Lambert term |
+| `specular` | 0.0 | Blinn-Phong highlight |
+| `shininess` | 32 | highlight exponent |
+
+Normals point wherever your quad winding says; the shader flips them towards the viewer, so open two-sided surfaces are lit on both sides. Shared vertices with a `(N, 3)` normal array shade smoothly; per-corner `(Q, 4, 3)` normals (or `shade=True`) shade each face flat. `ambient=1, diffuse=0, specular=0` is pixel-identical to the unlit path, which makes the lighting easy to A/B.
 
 ### Animating the mesh: `MeshMobject`
 

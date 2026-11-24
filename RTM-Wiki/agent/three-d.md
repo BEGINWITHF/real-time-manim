@@ -327,23 +327,24 @@ def __init__(self, major_radius: float = 3, minor_radius: float = 1, u_range: tu
 
 ```python
 class MeshBatch:
-    def __init__(self)
-    def append(self, quads, colors) -> Self
-    def append_indexed(self, vertices, quads, colors=None) -> Self
+    def __init__(self, shade=False)
+    def append(self, quads, colors, normals=None) -> Self
+    def append_indexed(self, vertices, quads, colors=None, normals=None) -> Self
     @classmethod
-    def from_surface(cls, surface, *, ignore_strokes=False) -> MeshBatch
+    def from_surface(cls, surface, *, ignore_strokes=False, shade=False) -> MeshBatch
     def mark_geometry_dirty(self) -> Self
     def build_vertices(self, viewport, width, height) -> tuple[int, ctypes pointer] | None
     def build_indexed_vertices(self, viewport, width, height) -> tuple[int, ndarray, int, ndarray] | None
+    def build_indexed_lit_vertices(self, viewport, width, height) -> tuple[int, ndarray, int, ndarray] | None
 
 class MeshGroup:
     def __init__(self, *batches)
     def append(self, batch) -> Self
 
 class MeshMobject(Mobject):
-    def __init__(self, vertices, quads, colors=None)
+    def __init__(self, vertices, quads, colors=None, normals=None, shade=False)
     @classmethod
-    def from_surface(cls, surface, *, ignore_strokes=False) -> MeshMobject
+    def from_surface(cls, surface, *, ignore_strokes=False, shade=False) -> MeshMobject
     def to_mesh_batch(self) -> MeshBatch
 ```
 
@@ -358,8 +359,21 @@ class MeshMobject(Mobject):
   `set_stroke(width=0)`) into one indexed batch.  Faces must be opaque, flat and
   3–4-cornered; shading, transparency or a visible stroke raise `ValueError`
   with the face index (`ignore_strokes=True` drops strokes with one warning).
-  The bake is a snapshot — later `Surface` transforms do not move the mesh.
+  Pass `shade=True` to accept `shade_in_3d` faces and light the mesh natively
+  from base fill colours.  The bake is a snapshot — later `Surface` transforms
+  do not move the mesh.
 - `colors`: `(Q, 4, 4)` float, RGBA per corner in 0–1.
+- `shade` / `normals`: `MeshBatch(shade=True)` computes one flat normal per
+  quad; `append(..., normals=)` takes `(Q, 3)` or `(Q, 4, 3)`, and
+  `append_indexed(..., normals=)` takes `(N, 3)` per unique vertex (smooth) or
+  `(Q, 4, 3)` per corner (flat).  Normals are world-space and rotated into
+  camera space at submission.  Shaded and unshaded quads cannot be mixed.
+- Lit submission uses `build_indexed_lit_vertices` → native
+  `AddMeshIndexedLit(vertex_count, x,y,z,nx,ny,nz,rgba, index_count, indices)`.
+  `win.set_mesh_light(direction=None, ambient=0.35, diffuse=0.75,
+  specular=0.0, shininess=32)` sets the material; `direction=None` derives a
+  camera-space direction from the camera's `light_source` each frame.
+  `ambient=1, diffuse=0, specular=0` is pixel-identical to the unlit path.
 - Attach with `win.set_mesh(mesh)`; detach with `win.clear_mesh()` or
   `win.set_mesh(None)`. `sync()` builds once per frame and hands four corner
   vertices + six uint32 indices per quad to native
