@@ -97,10 +97,14 @@ class _PaintQueue:
     """
 
     __slots__ = ("viewport", "units", "_seq", "index", "z_mode", "cleanup",
-                 "owner")
+                 "owner", "depth")
 
     def __init__(self, viewport=None, index=None, z_mode=False, owner=None):
         self.viewport = viewport
+        # Depth-testing the painter against a mesh only makes sense with a 3D
+        # camera; 2D scenes skip the per-unit ctypes call entirely.
+        self.depth = bool(viewport is not None
+                          and getattr(viewport, "rotation", None) is not None)
         # (depth key, z_index, family pre-order, visit order, paint callback,
         #  batch descriptor, mob)
         self.units = []
@@ -139,7 +143,9 @@ class _PaintQueue:
                     j = i + 1
                     while j < n_units and units[j][5] == batch:
                         j += 1
-                    if j - i >= 4:
+                    if j - i >= 4 and all(
+                            not math.isfinite(units[k][0])
+                            for k in range(i, j)):
                         run = [units[k][6] for k in range(i, j)]
                         if batch[0] == 'poly':
                             self.owner._send_polygon_batch(run, batch[1])
@@ -147,6 +153,9 @@ class _PaintQueue:
                             self.owner._send_quad_batch(run, batch[1])
                         i = j
                         continue
+                depth = getattr(self.owner, "_set_paint_depth", None)
+                if self.depth and depth is not None:
+                    depth(units[i][0])
                 units[i][4]()
                 i += 1
         finally:
