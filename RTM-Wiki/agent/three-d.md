@@ -419,6 +419,14 @@ class MeshMobject(Mobject):
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
   mesh is recorded **before** the painter primitives, so 2D overlays stay on
   top regardless of 3D depth.
+- Painter depth: when a mesh is present, the solid-colour and image pipelines
+  depth-test against it but do **not** write depth.  A paint unit marked
+  `shade_in_3d=True` uses its camera-space queue depth (mapped like the mesh's
+  `0.5 - 0.5*z/scale`) and is hidden where the mesh is nearer; text, 2D
+  overlays and images without that flag map to 0 and stay on top, exactly as
+  before.  Opt in with `text.set_shade_in_3d(True)` /
+  `img.set_shade_in_3d(True)`.  The batched flat-quad fast path is bypassed
+  when finite-depth units are present, because each mobject needs its own z.
 - Limits: quads only, `MAX_MESH_VERTS = 524288` vertices
   (`MeshBatch.MAX_QUADS = 131072` through the indexed path; the expanded
   fallback holds 87381), one native batch per frame; `append`/`append_indexed`
