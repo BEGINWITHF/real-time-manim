@@ -76,8 +76,9 @@ def warn_dense_surface(roots, scene) -> None:
         warnings.warn(
             "Surface with %d faces is still painted face-by-face; for a big "
             "speed-up use MeshBatch.from_surface(surface) "
-            "(shade_in_3d=False, no visible strokes), MeshMobject.from_surface "
-            "when it must transform, or set RTM_AUTO_DEPTH=1."
+            "(shade_in_3d=False, no visible strokes), "
+            "MeshMobject.from_surface(surface, shade=True) to keep the "
+            "lighting, or set RTM_AUTO_DEPTH=1."
             % len(faces), RuntimeWarning, stacklevel=3)
         return
 

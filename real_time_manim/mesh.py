@@ -93,12 +93,15 @@ def _surface_face_colors(face, n_corners):
     return np.tile(rows.mean(axis=0), (4, 1))
 
 
-def _check_surface_faces(faces, ignore_strokes):
+def _check_surface_faces(faces, ignore_strokes, allow_shaded=False):
     """Validate the supported ``Surface`` face subset.
 
     Returns ``True`` when visible strokes were dropped (only possible with
     ``ignore_strokes=True``).  Gathering the per-face flags into arrays keeps
     the check out of the per-face Python loop (10k faces: ~25 ms).
+
+    ``allow_shaded`` accepts ``shade_in_3d=True`` faces for a caller that will
+    bake the lighting itself (``MeshMobject.from_surface(shade=True)``).
     """
     index = np.arange(len(faces))
     opacity = np.array([float(face.get_fill_opacity()) for face in faces])
@@ -111,12 +114,13 @@ def _check_surface_faces(faces, ignore_strokes):
     shaded = np.array([bool(getattr(face, "shade_in_3d", False))
                        for face in faces])
     bad = index[shaded]
-    if len(bad):
+    if len(bad) and not allow_shaded:
         i = int(bad[0])
         raise ValueError(
             "MeshBatch.from_surface: face %d has shade_in_3d=True; call "
-            "surface.set_shade_in_3d(False) (the mesh carries flat colours, "
-            "not the painter's lighting)" % i)
+            "surface.set_shade_in_3d(False) for a flat mesh, or use "
+            "MeshMobject.from_surface(surface, shade=True) to bake the "
+            "lighting" % i)
     widths = np.array([float(face.get_stroke_width()) for face in faces])
     stroke_ops = np.array([float(face.get_stroke_opacity()) for face in faces])
     visible = (widths > 0.01) & (stroke_ops > 0.01)
@@ -170,6 +174,92 @@ def _uniform_surface_arrays(faces):
     else:
         return None
     return corners, colors
+
+
+def _surface_geometry(faces):
+    """``(corners, colors)`` for every face, in face order."""
+    arrays = _uniform_surface_arrays(faces)
+    if arrays is not None:
+        return arrays
+    rows = []
+    color_rows = []
+    for index, face in enumerate(faces):
+        ring = _surface_corners(face)
+        if ring is None:
+            raise ValueError(
+                "MeshBatch.from_surface: face %d has no usable corner "
+                "ring" % index)
+        if len(ring) > 4:
+            raise ValueError(
+                "MeshBatch.from_surface: face %d has %d corners; only "
+                "quads/triangles are supported" % (index, len(ring)))
+        cols = _surface_face_colors(face, len(ring))
+        if cols is None:
+            raise ValueError(
+                "MeshBatch.from_surface: face %d has no fill colour"
+                % index)
+        if len(ring) == 3:
+            ring = np.vstack([ring, ring[-1]])
+            cols = np.vstack([cols[:3], cols[2]])
+        rows.extend(ring)
+        color_rows.append(cols)
+    return (np.asarray(rows, dtype=np.float64),
+            np.asarray(color_rows, dtype=np.float64))
+
+
+def _surface_shading(faces, corners):
+    """Inputs for baking manim's two-stop face lighting, or ``None``.
+
+    ``corners`` is ``(F, 4, 3)`` in face order.  For every ``shade_in_3d`` face
+    this stores manim's two shading corners (path start and its "end corner"),
+    their unit normals, the raw first/last fill colours, and where each of the
+    four mesh corners sits along that start->end axis.  The lit colours are
+    computed on the first frame that has a 3D light -- the light source only
+    exists in a published viewport -- and then frozen, like every other baked
+    colour.
+    """
+    mask = np.array([bool(getattr(face, "shade_in_3d", False))
+                     for face in faces])
+    if not mask.any():
+        return None
+    from real_time_manim.render.util import _corner_normal
+    n = len(faces)
+    points = np.zeros((n, 2, 3), dtype=np.float64)
+    normals = np.zeros((n, 2, 3), dtype=np.float64)
+    base = np.ones((n, 2, 4), dtype=np.float64)
+    t = np.full((n, 4), 0.5, dtype=np.float64)
+    for i in np.flatnonzero(mask):
+        face = faces[i]
+        pts = np.asarray(face.points, dtype=np.float64)
+        end = ((len(pts) - 1) // 6) * 3
+        points[i, 0] = pts[0]
+        points[i, 1] = pts[end]
+        normals[i, 0] = _corner_normal(pts, 0)
+        normals[i, 1] = _corner_normal(pts, end)
+        rgba = np.asarray(face.fill_rgbas, dtype=np.float64)
+        base[i, 0] = rgba[0][:4]
+        base[i, 1] = rgba[min(1, len(rgba) - 1)][:4]
+        axis = points[i, 1] - points[i, 0]
+        den = float(axis @ axis)
+        if den > 1e-18:
+            t[i] = np.clip((corners[i] - points[i, 0]) @ axis / den,
+                           0.0, 1.0)
+    return {"mask": mask, "points": points, "normals": normals,
+            "base": base, "t": t}
+
+
+def bake_surface(surface, *, ignore_strokes=False, allow_shaded=False,
+                 shading=False):
+    """Corners, per-corner colours and optional shading inputs for a Surface."""
+    faces = list(getattr(surface, "list_of_faces", ()) or ())
+    if not faces:
+        raise ValueError(
+            "MeshBatch.from_surface: object has no Surface.list_of_faces")
+    strokes_dropped = _check_surface_faces(faces, ignore_strokes,
+                                           allow_shaded=allow_shaded)
+    corners, colors = _surface_geometry(faces)
+    shade = _surface_shading(faces, corners) if shading else None
+    return corners, colors, shade, strokes_dropped
 
 
 class MeshBatch:
@@ -322,9 +412,11 @@ class MeshBatch:
         One step instead of hand-writing quads and a custom animation.  The
         supported subset is deliberately explicit:
 
-        * every face must be opaque (``fill_opacity >= 0.999``) and
-          ``shade_in_3d=False`` -- a MeshBatch carries flat per-corner colours,
-          not the painter's per-face lighting;
+        * every face must be opaque (``fill_opacity >= 0.999``);
+          ``shade_in_3d=True`` faces are rejected -- a MeshBatch carries the
+          colours it is given, not the painter's per-face lighting; use
+          :meth:`MeshMobject.from_surface <real_time_manim.mesh_mobject.MeshMobject.from_surface>`
+          with ``shade=True`` to bake that lighting;
         * faces must have a visible fill and 3-4 corners (a centre wedge is
           duplicated into a quad);
         * visible strokes are rejected unless ``ignore_strokes=True`` (a
@@ -344,40 +436,8 @@ class MeshBatch:
 
     def append_surface(self, surface, *, ignore_strokes=False):
         """Append one flat-shaded ``Surface`` to this batch."""
-        faces = list(getattr(surface, "list_of_faces", ()) or ())
-        if not faces:
-            raise ValueError(
-                "MeshBatch.from_surface: object has no Surface.list_of_faces")
-        strokes_dropped = _check_surface_faces(faces, ignore_strokes)
-        arrays = _uniform_surface_arrays(faces)
-        if arrays is not None:
-            corners, colors = arrays
-        else:
-            rows = []
-            color_rows = []
-            for index, face in enumerate(faces):
-                ring = _surface_corners(face)
-                if ring is None:
-                    raise ValueError(
-                        "MeshBatch.from_surface: face %d has no usable corner "
-                        "ring" % index)
-                if len(ring) > 4:
-                    raise ValueError(
-                        "MeshBatch.from_surface: face %d has %d corners; only "
-                        "quads/triangles are supported" % (index, len(ring)))
-                cols = _surface_face_colors(face, len(ring))
-                if cols is None:
-                    raise ValueError(
-                        "MeshBatch.from_surface: face %d has no fill colour"
-                        % index)
-                if len(ring) == 3:
-                    ring = np.vstack([ring, ring[-1]])
-                    cols = np.vstack([cols[:3], cols[2]])
-                rows.extend(ring)
-                color_rows.append(cols)
-            corners = np.asarray(rows, dtype=np.float64)
-            colors = np.asarray(color_rows, dtype=np.float64)
-
+        corners, colors, _shade, strokes_dropped = bake_surface(
+            surface, ignore_strokes=ignore_strokes)
         if strokes_dropped:
             warnings.warn(
                 "MeshBatch.from_surface: visible Surface strokes were ignored; "
