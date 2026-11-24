@@ -339,6 +339,12 @@ class MeshBatch:
 class MeshGroup:
     def __init__(self, *batches)
     def append(self, batch) -> Self
+
+class MeshMobject(Mobject):
+    def __init__(self, vertices, quads, colors=None)
+    @classmethod
+    def from_surface(cls, surface, *, ignore_strokes=False) -> MeshMobject
+    def to_mesh_batch(self) -> MeshBatch
 ```
 
 - `quads`: `(Q, 4, 3)` float, four corners in world coordinates.
@@ -363,6 +369,19 @@ class MeshGroup:
   independently owned batches into the frame's single native mesh, in list
   order.  Draw order is explicit (translucent quads need it) without appending
   into another part's arrays; it does not add capacity.
+- `MeshMobject` (``real_time_manim.mesh_mobject``) is the scene-side wrapper:
+  `points` are the unique `(N, 3)` vertices, so `shift`/`rotate`/`scale` and
+  `.animate` edit the mesh.  `to_mesh_batch()` points the batch at the current
+  array and calls `mark_geometry_dirty()` when the vertex bytes changed (a
+  `shift` mutates in place, `scale`/`rotate` rebind).  `window/core.py`
+  collects every `MeshMobject` in the scene (nested ones too) and merges them
+  with `win.set_mesh`, identity-deduplicated, into the frame's single batch;
+  `paint.py::_send_impl` skips the class via `_rtm_mesh_skip` so its vertices
+  are never drawn as a path.  `interpolate_color` ramps `_colors` (base
+  `Mobject` raises `NotImplementedError`); `__deepcopy__` drops the frame batch
+  so a `Transform` target does not copy the projected buffers.
+  `win.set_mesh(mesh_mobject)` also works through its
+  `build_indexed_vertices`.
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
   mesh is recorded **before** the painter primitives, so 2D overlays stay on
   top regardless of 3D depth.

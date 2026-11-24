@@ -260,7 +260,33 @@ win.set_mesh(mesh)
 
 `from_surface` accepts opaque faces with a flat fill and 3–4 corners. A shaded face (`shade_in_3d=True`), a translucent fill, or a visible stroke raises `ValueError` with the offending face index; pass `ignore_strokes=True` to drop strokes deliberately (one warning). The bake is a snapshot: it does not follow later `Surface` transforms or colour changes — rebuild it, or edit the arrays and call `mark_geometry_dirty()`.
 
-The mesh replaces the painter for that surface, so do not `self.add(surf)` as well. If the mobject has to stay in the scene (for example to animate it), bake first and then call `surf.set_opacity(0)`.
+The mesh replaces the painter for that surface, so do not `self.add(surf)` as well. To move or animate the geometry, use `MeshMobject` below: it is a scene mobject, so `shift`/`rotate`/`.animate` edit the mesh.
+
+### Animating the mesh: `MeshMobject`
+
+A `MeshBatch` is a snapshot: `shift`/`rotate`/`scale` on the baked `Surface` never reaches it. `MeshMobject` puts the mesh in the scene as a mobject, so ordinary manim transforms (and `.animate`) edit it and the window submits it every frame:
+
+```python
+from real_time_manim import MeshMobject
+
+surf.set_shade_in_3d(False)
+surf.set_stroke(width=0)
+mesh = MeshMobject.from_surface(surf)
+self.add(mesh)                       # no win.set_mesh needed
+self.play(mesh.animate.shift(RIGHT * 2))
+```
+
+| Member | Meaning |
+| --- | --- |
+| `MeshMobject.from_surface(surface)` | bake a flat `Surface` into a scene mobject |
+| `MeshMobject(vertices, quads, colors=None)` | explicit unique vertices + `(Q, 4)` indices + per-corner RGBA |
+| `mesh.quad_count` | number of quads |
+| `mesh.to_mesh_batch()` | the frame's `MeshBatch`, refreshed after a transform |
+
+- Add the `MeshMobject` to the scene; do not add the baked `Surface` as well.
+- Every `MeshMobject` in the scene (also nested inside a `Group`) and an explicit `win.set_mesh(...)` batch are merged into the frame's single native mesh. The merged total is still bounded by `MeshBatch.MAX_QUADS`.
+- The mesh is recorded before the painter primitives, so 2D overlays stay on top; other 3D mobjects are painted after the mesh regardless of depth (see Limits).
+- A `Transform` between two `MeshMobject`s which changes the per-corner colours ramps them; a geometry-only transform keeps the projection cache.
 
 Attach it to the window:
 
@@ -281,12 +307,12 @@ List order is draw order, which matters for translucent quads; opaque quads are 
 
 ### Limits
 
-- Quads only; split triangles yourself, or use `MeshBatch.from_surface` / the automatic `Surface` path.
+- Quads only; split triangles yourself, or use `MeshBatch.from_surface` / `MeshMobject.from_surface` / the automatic `Surface` path.
 - Per frame: `MAX_MESH_VERTS = 524288` vertices — up to 131072 quads through the indexed submission path (`MeshBatch.MAX_QUADS`).  Adding past it raises `ValueError` instead of clipping the native mesh; only arrays grown directly are truncated, with one `RuntimeWarning`.
 - Older native builds without `AddMeshIndexed` use the expanded six-vertex fallback: 87381 quads.
 - Several batches share that single frame budget; `MeshGroup` changes ownership and order, not capacity.
 - `append` appends; `win.set_mesh` submits the current batch each frame and does not stack calls.
-- The mesh is drawn first and 2D afterwards, so text, formulas and images always sit on top.
+- The mesh is drawn first and 2D afterwards, so text, formulas and images always sit on top. A `MeshMobject` paints nothing itself: the painter skips it and the window contributes its batch.
 - Overlapping translucent quads remain an approximation; there is no per-pixel sort.
 - An indexed batch projects each unique vertex once, then gathers four corner vertices per quad (six indices) for the native path; the projection and index buffer are reused until the view or geometry changes (18k quads: ~4.5 ms per rebuild, ~0.04 ms cached). An `append` batch is still re-projected every frame. On a native build without `AddMeshIndexed`, the expanded six-vertex fallback is used instead.
 - A `Surface` with thousands of faces that stays on the painter emits one `RuntimeWarning` pointing at `MeshBatch.from_surface` (`RTM_AUTO_DEPTH=1` is the automatic alternative).
