@@ -222,12 +222,34 @@ class TerminalInput:
         while self._alive:
             try:
                 line = input(self._prompt)
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
+                # A detached launch has no interactable stdin.  Do NOT send
+                # "q": the preview window is still usable, and quitting here
+                # killed it before the first frame.  Ctrl-C still quits;
+                # normal users close the window.
+                self._alive = False
+                return
+            except KeyboardInterrupt:
                 self._on_line("q")
                 return
             if not self._alive:
                 return
             self._on_line(line)
+
+
+def stdin_is_tty():
+    """True when a terminal can service ``TerminalInput``.
+
+    Detached launches (double-click, ``Start-Process``, a parent with no
+    console) have a stdin that is not a TTY; ``input()`` then raises EOF
+    immediately, which used to send "q" and kill the preview before the window
+    could be used.  In that case the window stays open on its own.
+    """
+    stream = getattr(sys, "stdin", None)
+    try:
+        return bool(stream is not None and stream.isatty())
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -918,8 +940,12 @@ class FramePreview:
                     self._bar = None
             if self._bar is None:
                 self._log(HELP)
-                self._term = TerminalInput(submit)
-                self._term.start()
+                if stdin_is_tty():
+                    self._term = TerminalInput(submit)
+                    self._term.start()
+                else:
+                    self._log("no native control bar and stdin is not a TTY; "
+                              "the preview window stays open (close it to quit)")
             self._status()
             self._loop()
         finally:
