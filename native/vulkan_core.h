@@ -35,8 +35,12 @@ extern VkDeviceMemory g_vert_buf_mem;
 /* Depth-tested mesh batch (x,y,z,r,g,b,a per vertex). */
 extern float g_mesh_vertices[MAX_MESH_VERTS * 7];
 extern uint32_t g_mesh_vertex_count;
+extern unsigned int g_mesh_indices[MAX_MESH_INDICES];
+extern uint32_t g_mesh_index_count;
 extern VkBuffer g_mesh_vert_buf;
 extern VkDeviceMemory g_mesh_vert_buf_mem;
+extern VkBuffer g_mesh_index_buf;
+extern VkDeviceMemory g_mesh_index_buf_mem;
 extern VkPipeline g_mesh_pipeline;
 extern VkImage g_depth_img;
 extern VkDeviceMemory g_depth_mem;
@@ -86,6 +90,7 @@ void CreateImageViews(void);
 void CreateFramebuffers(void);
 void update_vertex_buffer(const void *data, VkDeviceSize size);
 void update_mesh_vertex_buffer(const void *data, VkDeviceSize size);
+void update_mesh_index_buffer(const void *data, VkDeviceSize size);
 
 // Block until every frame currently in flight has finished reading the shared
 // host-visible buffers.  Both writers of those buffers (the geometry buffer in

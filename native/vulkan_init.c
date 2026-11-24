@@ -79,6 +79,10 @@ VkBuffer g_mesh_vert_buf = VK_NULL_HANDLE;
 
 VkDeviceMemory g_mesh_vert_buf_mem = VK_NULL_HANDLE;
 
+VkBuffer g_mesh_index_buf = VK_NULL_HANDLE;
+
+VkDeviceMemory g_mesh_index_buf_mem = VK_NULL_HANDLE;
+
 VkPipeline g_mesh_pipeline = VK_NULL_HANDLE;
 
 VkImage g_depth_img = VK_NULL_HANDLE;
@@ -1212,6 +1216,11 @@ static void CreateVertexBuffer(void) {
                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                  &g_mesh_vert_buf, &g_mesh_vert_buf_mem);
 
+    VkDeviceSize mesh_index_size = sizeof(unsigned int) * MAX_MESH_INDICES;
+    CreateBuffer(mesh_index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 &g_mesh_index_buf, &g_mesh_index_buf_mem);
+
 }
 
 void update_mesh_vertex_buffer(const void *data, VkDeviceSize size) {
@@ -1221,6 +1230,15 @@ void update_mesh_vertex_buffer(const void *data, VkDeviceSize size) {
     vkMapMemory(g_dev, g_mesh_vert_buf_mem, 0, size, 0, &mapped_data);
     memcpy(mapped_data, data, size);
     vkUnmapMemory(g_dev, g_mesh_vert_buf_mem);
+}
+
+void update_mesh_index_buffer(const void *data, VkDeviceSize size) {
+    if (g_mesh_index_buf == VK_NULL_HANDLE || size == 0) return;
+    Render_WaitAllInFlight();
+    void *mapped_data;
+    vkMapMemory(g_dev, g_mesh_index_buf_mem, 0, size, 0, &mapped_data);
+    memcpy(mapped_data, data, size);
+    vkUnmapMemory(g_dev, g_mesh_index_buf_mem);
 }
 
 /* Clamp the requested MSAA count to what this device can actually render.
@@ -1483,6 +1501,8 @@ void Render_Cleanup(void) {
     vkFreeMemory(g_dev, g_vert_buf_mem, NULL);
     vkDestroyBuffer(g_dev, g_mesh_vert_buf, NULL);
     vkFreeMemory(g_dev, g_mesh_vert_buf_mem, NULL);
+    vkDestroyBuffer(g_dev, g_mesh_index_buf, NULL);
+    vkFreeMemory(g_dev, g_mesh_index_buf_mem, NULL);
 
     vkDestroySurfaceKHR(g_inst, g_surface, NULL);
     vkDestroyDevice(g_dev, NULL);
