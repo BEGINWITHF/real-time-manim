@@ -2103,6 +2103,10 @@ class PaintMixin:
         return bool(mob.has_points())
 
     def _send_impl(self, mob, angle=0.0, parent_alpha=1.0, parent_offset=None, parent_transforming=False, parent_is_text=False, _skip_children=False, _batch=None):
+        if getattr(type(mob), '_rtm_mesh_skip', False):
+            # MeshMobject: MLWindow.sync already submitted its geometry to the
+            # native depth mesh; painting its vertices as a path would be wrong.
+            return
         w, h = self.win_w, self.win_h
         own_alpha = get_anim_opacity(mob)
         a = parent_alpha * own_alpha

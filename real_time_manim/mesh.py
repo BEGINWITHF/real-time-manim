@@ -335,8 +335,10 @@ class MeshBatch:
         for the normal case.  The result is a snapshot; rebuild it or edit the
         private arrays plus ``mark_geometry_dirty()`` when the geometry/colours
         change.  Attach it with ``win.set_mesh(mesh)``; do not also add the
-        surface to the scene, or the painter draws it a second time (bake
-        first, then ``surface.set_opacity(0)`` if the mobject must stay).
+        surface to the scene, or the painter draws it a second time.  For a mesh
+        that follows manim transforms, use :class:`MeshMobject
+        <real_time_manim.mesh_mobject.MeshMobject>` instead: it lives in the
+        scene and is submitted automatically.
         """
         return cls().append_surface(surface, ignore_strokes=ignore_strokes)
 

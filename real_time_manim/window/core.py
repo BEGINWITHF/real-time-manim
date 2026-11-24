@@ -496,9 +496,9 @@ class CoreMixin:
     def set_mesh(self, mesh):
         """Attach depth-tested 3D geometry to the window.
 
-        ``mesh`` is a ``MeshBatch``, a ``MeshGroup``, or a list/tuple of
-        batches (shorthand for ``MeshGroup(*mesh)``); pass ``None`` (or call
-        :meth:`clear_mesh`) to detach it.
+        ``mesh`` is a ``MeshBatch``, a ``MeshMobject``, a ``MeshGroup``, or a
+        list/tuple of batches (shorthand for ``MeshGroup(*mesh)``); pass
+        ``None`` (or call :meth:`clear_mesh`) to detach it.
 
         The geometry is submitted before the painter primitives, so a mesh can
         occlude itself per pixel while 2D overlays still paint on top.  Several
@@ -653,6 +653,26 @@ class CoreMixin:
                               int(height), quad, 1.0)
         self._diag_play_static = True
 
+    @staticmethod
+    def _scene_mesh_mobjects(scene):
+        """Every :class:`MeshMobject` in the scene, in document order."""
+        from real_time_manim.mesh_mobject import MeshMobject
+        found = []
+        seen = set()
+        stack = (list(scene.mobjects)
+                 + list(foreground_mobjects_of(scene)))[::-1]
+        while stack:
+            mob = stack.pop()
+            mid = id(mob)
+            if mid in seen:
+                continue
+            seen.add(mid)
+            if isinstance(mob, MeshMobject):
+                found.append(mob)
+                continue
+            stack.extend(reversed(getattr(mob, 'submobjects', ()) or ()))
+        return found
+
     def sync(self, scene, angle=0.0, only_ids=None):
         # Phase 5: publish this frame's camera viewport (None for a plain Camera,
         # so non-camera scenes keep the fixed default frame).
@@ -667,9 +687,43 @@ class CoreMixin:
 
         # Optional depth-tested mesh batch.  It is submitted before the legacy
         # painter primitives (native draws mesh first), so a mesh can occlude
-        # itself per pixel while 2D overlays still paint on top.
+        # itself per pixel while 2D overlays still paint on top.  The static
+        # bake pass (``only_ids``) must not include any mesh: the layer is kept
+        # as pixels while the mesh is submitted live every frame, so baking it
+        # would draw it twice and freeze a moving one in the image.
         mesh = getattr(self, "_mesh", None)
-        if mesh is not None:
+        if only_ids is None:
+            scene_meshes = self._scene_mesh_mobjects(scene)
+        else:
+            scene_meshes = []
+        if scene_meshes:
+            # MeshMobject lives in the scene so normal transforms move it; the
+            # frame still has one native mesh, so merge it with any explicit
+            # win.set_mesh batch (identity-deduplicated).
+            from real_time_manim.mesh import MeshGroup
+            from real_time_manim.mesh_mobject import MeshMobject
+            parts = []
+            seen = set()
+
+            def _add(part):
+                if part is None or id(part) in seen:
+                    return
+                seen.add(id(part))
+                parts.append(part)
+
+            if isinstance(mesh, MeshGroup):
+                for part in mesh.batches:
+                    _add(part)
+            else:
+                _add(mesh)
+            for mob in scene_meshes:
+                _add(mob)
+            resolved = [part.to_mesh_batch()
+                        if isinstance(part, MeshMobject) else part
+                        for part in parts]
+            mesh = (resolved[0] if len(resolved) == 1
+                    else MeshGroup(*resolved))
+        if only_ids is None and mesh is not None:
             from real_time_manim.camera_state import get_viewport
             add_indexed = getattr(self.dll, "AddMeshIndexed", None)
             build_indexed = getattr(mesh, "build_indexed_vertices", None)
@@ -799,7 +853,7 @@ class CoreMixin:
         # untouched.  Opt-in only (RTM_AUTO_DEPTH=1) and only when the whole
         # frame is eligible -- see window/depth_mesh.py.
         auto_ids = set()
-        if is_3d and mesh is None:
+        if only_ids is None and is_3d and mesh is None:
             from real_time_manim.window import depth_mesh
             depth_mesh.warn_dense_surface(roots, scene)
             if depth_mesh.enabled():
