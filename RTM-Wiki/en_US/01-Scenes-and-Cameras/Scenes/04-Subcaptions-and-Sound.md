@@ -121,4 +121,4 @@ RTM emits frames with its own Vulkan window and Timeline, has no such interactiv
 
 ---
 
-See also: [Play and wait](03-Play-and-Wait.md) · [Scene basics](01-Scene-Basics.md) · [Recording video](../../00-Getting-Started/04-Recording-Video.md) · [Live window MLWindow](../../00-Getting-Started/03-Live-Window-MLWindow.md)
+See also: [Play and wait](03-Play-and-Wait.md) · [Scene basics](01-Scene-Basics.md) · [Recording methods](../../00-Getting-Started/03-Recording-Methods.md) · [Quickstart](../../00-Getting-Started/02-Quickstart.md)

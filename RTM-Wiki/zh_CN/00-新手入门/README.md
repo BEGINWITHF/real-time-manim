@@ -1,11 +1,11 @@
-# 00-Getting-Started
+# 00-新手入门
 
-> Feature index · 5 pages.
+> 功能目录 · 5 页。
 
-| Page | Function |
+| 页面 | 功能 |
 | --- | --- |
-| [01 Installation](01-Installation.md) | Install real-time-manim |
-| [02 First Scene](02-First-Scene.md) | First Scene |
-| [03 Live Window MLWindow](03-Live-Window-MLWindow.md) | MLWindow.__init__ · win.scene · MLWindow.play · MLWindow.close |
-| [04 Recording Video](04-Recording-Video.md) | record_scene · fast_record_scene |
-| [05 Frame Preview](05-Frame-Preview.md) | Frame Preview (frame skipping) |
+| [01-下载与安装](01-下载与安装.md) | Python 3.11+ · pip install real-time-manim · Vulkan / MoltenVK · ffmpeg · typst · LaTeX |
+| [02-快速开始](02-快速开始.md) | 第一个 scene · MLWindow · win.scene · win.play · fast_record_scene · Transform |
+| [03-三种录制方法](03-三种录制方法.md) | fast_record_scene · record_scene · FramePreview · FrameServer.save_frame |
+| [04-manimCE用户指南](04-manimCE用户指南.md) | ManimCE 行话 → RTM · 无 CLI · win.play · fast_record_scene · 错误对照 |
+| [05-manimGL用户指南](05-manimGL用户指南.md) | ManimGL 行话 → RTM · 无 embed · FramePreview · fast_record_scene · 错误对照 |

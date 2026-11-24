@@ -4,7 +4,7 @@ This section covers the three typesetting classes `Tex` / `MathTex` / `SingleStr
 
 > **Both RTM and ManimCE go through LaTeX**: `Tex` / `MathTex` need a usable LaTeX distribution on the machine; if you do not want to install LaTeX, use [Typst](10-Typst.md) (`Typst` / `TypstMath`, or just write `MathTex` and let RTM route it automatically).
 >
-> **The first render waits for the compiler**: with a cold cache a LaTeX compile can stall for 1–2 seconds; with a visible window RTM pops up a small "compiling formula" notice (see [Live window MLWindow](../00-Getting-Started/03-Live-Window-MLWindow.md)); it is not a hang.
+> **The first render waits for the compiler**: with a cold cache a LaTeX compile can stall for 1–2 seconds; with a visible window RTM pops up a small "compiling formula" notice (see [Quickstart](../00-Getting-Started/02-Quickstart.md)); it is not a hang.
 
 ## Parameters
 

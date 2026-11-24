@@ -2,10 +2,10 @@
 
 > Feature index · 5 pages.
 
-| Page | Function |
+| Page | Features |
 | --- | --- |
-| [01 Installation](01-Installation.md) | Install real-time-manim |
-| [02 First Scene](02-First-Scene.md) | First Scene |
-| [03 Live Window MLWindow](03-Live-Window-MLWindow.md) | MLWindow.__init__ · win.scene · MLWindow.play · MLWindow.close |
-| [04 Recording Video](04-Recording-Video.md) | record_scene · fast_record_scene |
-| [05 Frame Preview](05-Frame-Preview.md) | Frame Preview (frame skipping) |
+| [01-Installation](01-Installation.md) | Python 3.11+ · pip install real-time-manim · Vulkan / MoltenVK · ffmpeg · typst · LaTeX |
+| [02-Quickstart](02-Quickstart.md) | First scene · MLWindow · win.scene · win.play · fast_record_scene · Transform |
+| [03-Recording-Methods](03-Recording-Methods.md) | fast_record_scene · record_scene · FramePreview · FrameServer.save_frame |
+| [04-ManimCE-Users-Guide](04-ManimCE-Users-Guide.md) | ManimCE jargon → RTM · no CLI · win.play · fast_record_scene · error mapping |
+| [05-ManimGL-Users-Guide](05-ManimGL-Users-Guide.md) | ManimGL jargon → RTM · no embed · FramePreview · fast_record_scene · error mapping |

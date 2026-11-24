@@ -224,4 +224,4 @@ Returns the validated `float` (one shorter than a frame is warned about and clam
 
 ---
 
-See also: [Scene basics](01-Scene-Basics.md) · [Subcaptions and sound](04-Subcaptions-and-Sound.md) · [play and wait parameters](../../03-Animations/Common/02-play-and-wait-Parameters.md) · [Updaters](../../02-Mobjects/08-Updaters.md) · [Recording video](../../00-Getting-Started/04-Recording-Video.md)
+See also: [Scene basics](01-Scene-Basics.md) · [Subcaptions and sound](04-Subcaptions-and-Sound.md) · [play and wait parameters](../../03-Animations/Common/02-play-and-wait-Parameters.md) · [Updaters](../../02-Mobjects/08-Updaters.md) · [Recording methods](../../00-Getting-Started/03-Recording-Methods.md)
