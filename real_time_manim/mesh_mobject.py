@@ -25,11 +25,14 @@ quads keep their per-corner colours and the depth buffer resolves them.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 from manim.mobject.mobject import Mobject
 
-from real_time_manim.mesh import MeshBatch
+from real_time_manim.camera_state import get_viewport
+from real_time_manim.mesh import MeshBatch, bake_surface
 
 
 class MeshMobject(Mobject):
@@ -50,7 +53,8 @@ class MeshMobject(Mobject):
     #: Recognised by ``window/paint.py::_send_impl`` -- never painted as a path.
     _rtm_mesh_skip = True
 
-    def __init__(self, vertices, quads, colors=None, **kwargs):
+    def __init__(self, vertices, quads, colors=None, *, shade_data=None,
+                 **kwargs):
         super().__init__(**kwargs)
         batch = MeshBatch().append_indexed(vertices, quads, colors)
         self.points = np.array(batch._vertices, dtype=np.float64, copy=True)
@@ -59,18 +63,93 @@ class MeshMobject(Mobject):
                                 copy=True)
         self._batch = None
         self._points_sig = None
+        self._shade_data = shade_data
+        self._shaded_light = None
 
     @classmethod
-    def from_surface(cls, surface, *, ignore_strokes=False, **kwargs):
-        """Bake a flat ``Surface`` (``shade_in_3d=False``, no visible strokes)."""
-        batch = MeshBatch.from_surface(surface, ignore_strokes=ignore_strokes)
-        return cls(batch._vertices, batch._indices, batch._index_colors,
-                   **kwargs)
+    def from_surface(cls, surface, *, ignore_strokes=False, shade=False,
+                     **kwargs):
+        """Bake a ``Surface``; ``shade=True`` bakes its 3D face lighting too.
+
+        Without ``shade`` the Surface must be flat (``set_shade_in_3d(False)``,
+        ``set_stroke(width=0)``), exactly like :meth:`MeshBatch.from_surface`.
+        With ``shade=True`` a shaded Surface is accepted: manim's two-stop
+        per-face lighting is baked from the world light on the first frame that
+        has a 3D camera, and the four mesh corners interpolate between those
+        stops.  The lighting is then frozen with the geometry, like every other
+        baked colour.
+        """
+        if not shade:
+            batch = MeshBatch.from_surface(surface,
+                                           ignore_strokes=ignore_strokes)
+            return cls(batch._vertices, batch._indices, batch._index_colors,
+                       **kwargs)
+        corners, colors, shade_data, dropped = bake_surface(
+            surface, ignore_strokes=ignore_strokes, allow_shaded=True,
+            shading=True)
+        if dropped:
+            warnings.warn(
+                "MeshMobject.from_surface: visible Surface strokes were "
+                "ignored; the depth mesh draws fills only.", RuntimeWarning,
+                stacklevel=2)
+        vertices, inverse = np.unique(corners.reshape(-1, 3), axis=0,
+                                      return_inverse=True)
+        return cls(vertices, inverse.reshape(-1, 4), colors,
+                   shade_data=shade_data, **kwargs)
 
     @property
     def quad_count(self):
         """Number of quads (``Mobject.__len__`` is the submobject count)."""
         return len(self._indices)
+
+    def _apply_baked_shading(self, light_source):
+        """Compute the lit colours for ``shade=True`` surfaces."""
+        data = self.__dict__["_shade_data"]
+        light = np.asarray(light_source, dtype=np.float64)
+        axis = data["points"][:, 1] - data["points"][:, 0]
+        p0 = self.points[self._indices[:, 0]]
+        points = np.stack([p0, p0 + axis], axis=1)
+        to_light = light[None, None, :] - points
+        norm = np.linalg.norm(to_light, axis=2)
+        good = norm > 1e-12
+        unit = np.zeros_like(to_light)
+        unit[good] = to_light[good] / norm[good, None]
+        dot = (data["normals"] * unit).sum(axis=2)
+        term = 0.5 * dot ** 3
+        term = np.where(term < 0.0, term * 0.5, term)
+        lit = np.clip(data["base"][..., :3] + term[..., None], 0.0, 1.0)
+        t = data["t"][..., None]
+        cols = lit[:, 0][:, None, :] * (1.0 - t) + lit[:, 1][:, None, :] * t
+        alpha = np.repeat(data["base"][:, 0, 3][:, None], 4, axis=1)
+        colors = np.concatenate([cols, alpha[..., None]], axis=2)
+        mask = data["mask"]
+        self._colors[mask] = colors[mask].astype(np.float32)
+        self.__dict__["_batch"] = None
+
+    def _shade_once(self):
+        """Apply the baked lighting on the first frame that has a 3D light.
+
+        The light source is published with the frame's viewport, so a
+        ``from_surface(shade=True)`` called in ``construct()`` cannot see it
+        yet.  Once applied the result stays frozen: it belongs to the baked
+        geometry, and later camera moves (which do not change the shading) must
+        not redo it.
+        """
+        if self.__dict__.get("_shade_data") is None:
+            return
+        if self.__dict__.get("_shaded_light") is not None:
+            return
+        try:
+            viewport = get_viewport()
+        except Exception:
+            return
+        if viewport is None or getattr(viewport, "rotation", None) is None:
+            return
+        light = getattr(viewport, "light_source", None)
+        if light is None:
+            return
+        self._apply_baked_shading(light)
+        self._shaded_light = np.asarray(light, dtype=np.float64).tobytes()
 
     def to_mesh_batch(self):
         """This frame's :class:`MeshBatch`, refreshed after a transform.
@@ -79,6 +158,7 @@ class MeshMobject(Mobject):
         (``scale`` / ``rotate``), so the batch is pointed at the current array
         and its projection invalidated whenever the vertex bytes changed.
         """
+        self._shade_once()
         points = self.points
         sig = points.tobytes()
         batch = self.__dict__.get('_batch')
@@ -123,8 +203,10 @@ class MeshMobject(Mobject):
 
     def __deepcopy__(self, memo):
         # A Transform copies its target; the batch is a per-frame cache and its
-        # projected buffers would only be copied to be thrown away.
+        # projected buffers would only be copied to be thrown away.  The baked
+        # shading inputs are read-only, so the copy shares them.
         batch = self.__dict__.pop('_batch', None)
+        shade = self.__dict__.get('_shade_data')
         try:
             clone = super().__deepcopy__(memo)
         finally:
@@ -132,4 +214,5 @@ class MeshMobject(Mobject):
                 self.__dict__['_batch'] = batch
         clone.__dict__['_batch'] = None
         clone.__dict__['_points_sig'] = None
+        clone.__dict__['_shade_data'] = shade
         return clone

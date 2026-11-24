@@ -260,7 +260,7 @@ win.set_mesh(mesh)
 
 `from_surface` accepts opaque faces with a flat fill and 3–4 corners. A shaded face (`shade_in_3d=True`), a translucent fill, or a visible stroke raises `ValueError` with the offending face index; pass `ignore_strokes=True` to drop strokes deliberately (one warning). The bake is a snapshot: it does not follow later `Surface` transforms or colour changes — rebuild it, or edit the arrays and call `mark_geometry_dirty()`.
 
-The mesh replaces the painter for that surface, so do not `self.add(surf)` as well. To move or animate the geometry, use `MeshMobject` below: it is a scene mobject, so `shift`/`rotate`/`.animate` edit the mesh.
+The mesh replaces the painter for that surface, so do not `self.add(surf)` as well. To move or animate the geometry, use `MeshMobject` below: it is a scene mobject, so `shift`/`rotate`/`.animate` edit the mesh. A default shaded `Surface` uses `MeshMobject.from_surface(surf, shade=True)`.
 
 ### Animating the mesh: `MeshMobject`
 
@@ -279,6 +279,7 @@ self.play(mesh.animate.shift(RIGHT * 2))
 | Member | Meaning |
 | --- | --- |
 | `MeshMobject.from_surface(surface)` | bake a flat `Surface` into a scene mobject |
+| `MeshMobject.from_surface(surface, shade=True)` | also bake the `shade_in_3d` face lighting |
 | `MeshMobject(vertices, quads, colors=None)` | explicit unique vertices + `(Q, 4)` indices + per-corner RGBA |
 | `mesh.quad_count` | number of quads |
 | `mesh.to_mesh_batch()` | the frame's `MeshBatch`, refreshed after a transform |
@@ -287,6 +288,7 @@ self.play(mesh.animate.shift(RIGHT * 2))
 - Every `MeshMobject` in the scene (also nested inside a `Group`) and an explicit `win.set_mesh(...)` batch are merged into the frame's single native mesh. The merged total is still bounded by `MeshBatch.MAX_QUADS`.
 - The mesh is recorded before the painter primitives, so 2D overlays stay on top; other 3D mobjects are painted after the mesh regardless of depth (see Limits).
 - A `Transform` between two `MeshMobject`s which changes the per-corner colours ramps them; a geometry-only transform keeps the projection cache.
+- `shade=True` accepts the default `shade_in_3d=True` faces and bakes manim's two-stop face lighting: the world light is read on the first frame with a 3D camera, the two shaded stops are spread across the quad's four corners, and the grid then interpolates them like the painter's per-face gradient. The lighting is frozen with the geometry — camera moves follow (shading does not depend on the camera), later light or colour changes do not re-light. Without a 3D camera the face keeps its flat fill colour.
 
 Attach it to the window:
 

@@ -356,9 +356,11 @@ class MeshMobject(Mobject):
   one batch.
 - `from_surface`: bake a flat `Surface` (`set_shade_in_3d(False)`,
   `set_stroke(width=0)`) into one indexed batch.  Faces must be opaque, flat and
-  3–4-cornered; shading, transparency or a visible stroke raise `ValueError`
-  with the face index (`ignore_strokes=True` drops strokes with one warning).
-  The bake is a snapshot — later `Surface` transforms do not move the mesh.
+  3–4-cornered; transparency or a visible stroke raises `ValueError` with the
+  face index (`ignore_strokes=True` drops strokes with one warning).  A shaded
+  face is rejected here; `MeshMobject.from_surface(surface, shade=True)` is the
+  lighting-aware variant.  The bake is a snapshot — later `Surface` transforms
+  do not move the mesh.
 - `colors`: `(Q, 4, 4)` float, RGBA per corner in 0–1.
 - Attach with `win.set_mesh(mesh)`; detach with `win.clear_mesh()` or
   `win.set_mesh(None)`. `sync()` builds once per frame and hands four corner
@@ -382,6 +384,17 @@ class MeshMobject(Mobject):
   so a `Transform` target does not copy the projected buffers.
   `win.set_mesh(mesh_mobject)` also works through its
   `build_indexed_vertices`.
+- `MeshMobject.from_surface(surface, shade=True)` bakes manim's two-stop face
+  lighting: `real_time_manim.mesh._surface_shading` stores the two shading
+  points, their unit normals, the raw first/last fill colours and each corner's
+  position along that axis; `_shade_once` evaluates the world light on the
+  first frame with a 3D viewport, spreads the two lit stops across the four
+  corners (`t` interpolation), writes `_colors`, freezes the result and
+  invalidates the batch.  Without a 3D camera/light the flat fill is used.
+  Measured (9,800 faces, 2026-11, 1080p): bake + shading ~0.4 s once, then
+  ~40 ms/frame static or orbiting vs 0.9 s / 3.4-4.2 s on the painter; on
+  cell-interior pixels the colours match the painter (mean diff < 0.2, p99 ≤ 2),
+  with the expected hard mesh edges between cells.
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
   mesh is recorded **before** the painter primitives, so 2D overlays stay on
   top regardless of 3D depth.
