@@ -31,6 +31,14 @@ uint32_t g_mesh_vertex_count = 0;
 unsigned int g_mesh_indices[MAX_MESH_INDICES];
 uint32_t g_mesh_index_count = 0;
 
+/* Lit mesh (x,y,z,nx,ny,nz,r,g,b,a); only one of the two batches is drawn. */
+float g_mesh_lit_vertices[MAX_MESH_VERTS * MESH_LIT_FLOATS];
+uint32_t g_mesh_lit_count = 0;
+
+/* Camera-space light direction + ambient, then diffuse/specular/shininess. */
+float g_mesh_light[4] = { 0.3f, -0.5f, 0.8f, 0.35f };
+float g_mesh_material[4] = { 0.75f, 0.0f, 32.0f, 0.0f };
+
 void BuildVerticesFromRects(const Rect *rects, int count);
 void BuildVerticesFromCircles(const Circle *circles, int count);
 void BuildVerticesFromLines(const LineObj *lines, int count);
@@ -104,6 +112,11 @@ void Render_DrawScene(const Rect* rects, int rect_count,
         update_mesh_vertex_buffer(g_mesh_vertices,
                                   g_mesh_vertex_count * 7 * sizeof(float));
     }
+    if (g_mesh_lit_count > 0) {
+        update_mesh_lit_vertex_buffer(
+            g_mesh_lit_vertices,
+            g_mesh_lit_count * MESH_LIT_FLOATS * sizeof(float));
+    }
     if (g_mesh_index_count > 0) {
         update_mesh_index_buffer(g_mesh_indices,
                                  g_mesh_index_count * sizeof(unsigned int));
@@ -141,7 +154,28 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
 
     /* Depth-tested mesh first; legacy painter primitives then draw on top with
        depth test disabled, preserving their exact submission order. */
-    if (g_mesh_vertex_count > 0 && g_mesh_pipeline != VK_NULL_HANDLE) {
+    if (g_mesh_lit_count > 0 && g_mesh_lit_pipeline != VK_NULL_HANDLE) {
+        vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          g_mesh_lit_pipeline);
+        float params[8] = {
+            g_mesh_light[0], g_mesh_light[1], g_mesh_light[2], g_mesh_light[3],
+            g_mesh_material[0], g_mesh_material[1], g_mesh_material[2],
+            g_mesh_material[3],
+        };
+        vkCmdPushConstants(cmd_buf, g_mesh_lit_layout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           sizeof(params), params);
+        VkBuffer mesh_buffers[] = { g_mesh_vert_buf };
+        VkDeviceSize mesh_offsets[] = { 0 };
+        vkCmdBindVertexBuffers(cmd_buf, 0, 1, mesh_buffers, mesh_offsets);
+        if (g_mesh_index_count > 0 && g_mesh_index_buf != VK_NULL_HANDLE) {
+            vkCmdBindIndexBuffer(cmd_buf, g_mesh_index_buf, 0,
+                                 VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd_buf, g_mesh_index_count, 1, 0, 0, 0);
+        } else {
+            vkCmdDraw(cmd_buf, g_mesh_lit_count, 1, 0, 0);
+        }
+    } else if (g_mesh_vertex_count > 0 && g_mesh_pipeline != VK_NULL_HANDLE) {
         vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline);
         VkBuffer mesh_buffers[] = { g_mesh_vert_buf };
         VkDeviceSize mesh_offsets[] = { 0 };

@@ -280,6 +280,7 @@ self.play(mesh.animate.shift(RIGHT * 2))
 | --- | --- |
 | `MeshMobject.from_surface(surface)` | bake a flat `Surface` into a scene mobject |
 | `MeshMobject.from_surface(surface, shade=True)` | also bake the `shade_in_3d` face lighting |
+| `MeshMobject.from_surface(surface, lit=True)` | keep base colours and carry normals for `win.set_mesh_light` |
 | `MeshMobject(vertices, quads, colors=None)` | explicit unique vertices + `(Q, 4)` indices + per-corner RGBA |
 | `mesh.quad_count` | number of quads |
 | `mesh.to_mesh_batch()` | the frame's `MeshBatch`, refreshed after a transform |
@@ -306,6 +307,26 @@ win.set_mesh(MeshGroup(terrain, markers))       # or win.set_mesh([terrain, mark
 ```
 
 List order is draw order, which matters for translucent quads; opaque quads are resolved per pixel by the depth buffer.
+
+### Lit meshes (`lit=True`)
+
+The `shade=True` path above bakes manim's lighting into the vertex colours on the CPU. The native path keeps the base colours and sends face normals to the GPU, so a material can add a highlight that follows the camera:
+
+```python
+mesh = MeshBatch.from_surface(surf, lit=True)
+win.set_mesh(mesh)
+win.set_mesh_light(ambient=0.30, diffuse=0.80, specular=0.25, shininess=24)
+```
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `direction` | `None` | camera-space direction towards the light; `None` follows the camera's `light_source` |
+| `ambient` | 0.35 | flat light everywhere |
+| `diffuse` | 0.75 | Lambert term |
+| `specular` | 0.0 | Blinn-Phong highlight |
+| `shininess` | 32 | highlight exponent |
+
+For hand-built geometry, `MeshBatch(lit=True)` computes one flat normal per quad; `append(quads, colors, normals=...)` and `append_indexed(vertices, quads, colors, normals=...)` take explicit normals (`(N, 3)` per unique vertex for smooth shading, or `(Q, 4, 3)` per corner for flat faces). Normals are world-space and rotated into camera space at submission. The shader flips a normal towards the viewer, so open two-sided surfaces are lit on both sides. `ambient=1, diffuse=0, specular=0` is pixel-identical to the unlit path; `shade=True` and `lit=True` cannot be combined on one mesh.
 
 ### Limits
 
