@@ -386,15 +386,17 @@ class MeshMobject(Mobject):
   `build_indexed_vertices`.
 - `MeshMobject.from_surface(surface, shade=True)` bakes manim's two-stop face
   lighting: `real_time_manim.mesh._surface_shading` stores the two shading
-  tangent pairs and the raw first/last fill colours.  `_shade_once` recovers
-  the affine map from the baked corners to the current ones (so a
-  `shift`/`rotate`/`scale` applied before the first frame shades exactly like
-  baking the already-transformed surface), evaluates the world light on the
-  first frame with a 3D viewport, projects the four corners onto the
-  start->end axis (`t` interpolation), writes `_colors`, freezes the result and
-  invalidates the batch.  Without a 3D camera/light the flat fill is used.
-  Measured (9,800 faces, 2026-11, 1080p): bake 0.14 s + 23 ms first shade once,
-  then ~40 ms/frame static or orbiting vs 0.9 s / 3.4-4.2 s on the painter; on
+  tangent pairs and the raw first/last fill colours.  `_refresh_lighting`
+  recovers the affine map from the baked corners to the current ones (so a
+  `shift`/`rotate`/`scale` before or after the first frame shades exactly like
+  baking the transformed surface), evaluates the world light, projects the
+  four corners onto the start->end axis (`t` interpolation), writes `_colors`
+  and invalidates the batch.  Its key is the vertex bytes plus the light, so a
+  camera move or colour-only transform does no work; a light or geometry
+  change re-lights.  Without a 3D camera/light the flat fill is used.
+  Measured (9,800 faces, 2026-11, 1080p): bake 0.14 s, first shade 23 ms, then
+  ~40 ms/frame static, ~66 ms/frame with the mesh itself rotating (re-light
+  every frame) vs 0.9 s / 3.4-4.2 s on the painter; on
   cell-interior pixels the colours match the painter (mean diff < 0.2, p99 ≤ 2),
   with the expected hard mesh edges between cells.
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
