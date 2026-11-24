@@ -93,7 +93,7 @@ def _surface_face_colors(face, n_corners):
     return np.tile(rows.mean(axis=0), (4, 1))
 
 
-def _check_surface_faces(faces, ignore_strokes):
+def _check_surface_faces(faces, ignore_strokes, allow_shaded=False):
     """Validate the supported ``Surface`` face subset.
 
     Returns ``True`` when visible strokes were dropped (only possible with
@@ -111,7 +111,7 @@ def _check_surface_faces(faces, ignore_strokes):
     shaded = np.array([bool(getattr(face, "shade_in_3d", False))
                        for face in faces])
     bad = index[shaded]
-    if len(bad):
+    if len(bad) and not allow_shaded:
         i = int(bad[0])
         raise ValueError(
             "MeshBatch.from_surface: face %d has shade_in_3d=True; call "
@@ -172,6 +172,25 @@ def _uniform_surface_arrays(faces):
     return corners, colors
 
 
+def _normalize_normals(normals, what="normals"):
+    """Unit-length normals, with a +Z fallback for degenerate faces."""
+    n = np.asarray(normals, dtype=np.float64)
+    if not np.isfinite(n).all():
+        raise ValueError("%s must be finite" % what)
+    lengths = np.linalg.norm(n, axis=-1, keepdims=True)
+    out = np.where(lengths > 1e-12, n / np.maximum(lengths, 1e-12), 0.0)
+    fallback = np.zeros_like(n)
+    fallback[..., 2] = 1.0
+    return np.where(lengths > 1e-12, out, fallback)
+
+
+def _face_normals(corners):
+    """One face normal per quad, shape ``(Q, 3)``."""
+    return _normalize_normals(
+        np.cross(corners[:, 1] - corners[:, 0], corners[:, 3] - corners[:, 0]),
+        "quad normals")
+
+
 class MeshBatch:
     """A batch of coloured quads rendered with a GPU depth buffer.
 
@@ -194,14 +213,19 @@ class MeshBatch:
     MAX_QUADS_INDEXED = MAX_QUADS_INDEXED
     MAX_QUADS_LEGACY = MAX_QUADS_LEGACY
 
-    def __init__(self):
+    def __init__(self, shade=False):
         self.quads = np.empty((0, 4, 3), dtype=np.float64)
         self.colors = np.empty((0, 4, 4), dtype=np.float32)
+        self.normals = np.empty((0, 4, 3), dtype=np.float64)
+        # shade=True computes a flat normal per quad; passing normals to
+        # append()/append_indexed() enables the same path explicitly.
+        self.shade = bool(shade)
         self._capacity_warned = False
         # Indexed form.  Mutually exclusive with ``quads``.
         self._vertices = np.empty((0, 3), dtype=np.float64)
         self._indices = np.empty((0, 4), dtype=np.int64)
         self._index_colors = np.empty((0, 4, 4), dtype=np.float32)
+        self._index_normals = np.empty((0, 4, 3), dtype=np.float64)
         self._indexed = False
         # Output/projection reuse.  ``_built_key`` covers the whole static
         # indexed batch; append-mode batches are rebuilt every call because
@@ -219,6 +243,11 @@ class MeshBatch:
         self._idx_n = 0
         self._idx_indices = None
         self._idx_indices_q = 0
+        # Lit submission cache (indexed batches only).
+        self._lit_out = None
+        self._lit_key = None
+        self._lit_view = None
+        self._lit_n = 0
 
     @property
     def quad_count(self):
@@ -227,7 +256,7 @@ class MeshBatch:
     def __len__(self):
         return self.quad_count
 
-    def append(self, quads, colors):
+    def append(self, quads, colors, normals=None):
         quads = np.asarray(quads, dtype=np.float64)
         colors = np.asarray(colors, dtype=np.float32)
         if self._indexed:
@@ -239,6 +268,20 @@ class MeshBatch:
             raise ValueError("quads must have shape (Q, 4, 3)")
         if colors.shape != (quads.shape[0], 4, 4):
             raise ValueError("colors must have shape (Q, 4, 4)")
+        if normals is None:
+            if self.shade:
+                normals = np.repeat(_face_normals(quads)[:, None, :], 4, axis=1)
+        else:
+            normals = np.asarray(normals, dtype=np.float64)
+            if normals.shape == (len(quads), 3):
+                normals = np.repeat(normals[:, None, :], 4, axis=1)
+            elif normals.shape != (len(quads), 4, 3):
+                raise ValueError("normals must have shape (Q, 3) or (Q, 4, 3)")
+            normals = _normalize_normals(normals)
+            if len(self.quads) and not self.shade:
+                raise ValueError(
+                    "MeshBatch cannot mix shaded and unshaded quads in one batch")
+            self.shade = True
         total = len(self.quads) + len(quads)
         if total > self.MAX_QUADS:
             raise ValueError(
@@ -250,17 +293,22 @@ class MeshBatch:
             )
         self.quads = np.concatenate([self.quads, quads], axis=0)
         self.colors = np.concatenate([self.colors, colors], axis=0)
+        if normals is not None:
+            self.normals = np.concatenate([self.normals, normals], axis=0)
         self._geometry_rev += 1
         self._built_key = None
         return self
 
-    def append_indexed(self, vertices, quads, colors=None):
+    def append_indexed(self, vertices, quads, colors=None, normals=None):
         """Append unique ``vertices`` plus ``(Q, 4)`` index quads.
 
         ``vertices`` is ``(N, 3)``; ``quads`` indexes it, one quad per row.
-        ``colors`` is ``(Q, 4, 4)`` per-corner RGBA (white when omitted).  The
-        same vertex may be referenced by many quads, so projection happens
-        once per unique vertex instead of once per triangle corner.
+        ``colors`` is ``(Q, 4, 4)`` per-corner RGBA (white when omitted).
+        ``normals`` is ``(N, 3)`` per unique vertex (smooth shading) or
+        ``(Q, 4, 3)`` per corner (flat faces); omitted with ``shade=True``
+        computes one normal per quad.  The same vertex may be referenced by
+        many quads, so projection happens once per unique vertex instead of
+        once per triangle corner.
         """
         vertices = np.asarray(vertices, dtype=np.float64)
         quads = np.asarray(quads)
@@ -299,6 +347,28 @@ class MeshBatch:
                 % (len(self._indices), len(quads), total, total * 4,
                    self.MAX_QUADS, self.MAX_QUADS * 4)
             )
+        corners = vertices[quads]
+        if normals is None:
+            if self.shade:
+                corner_normals = np.repeat(
+                    _face_normals(corners)[:, None, :], 4, axis=1)
+            else:
+                corner_normals = np.empty((0, 4, 3), dtype=np.float64)
+        else:
+            normals = np.asarray(normals, dtype=np.float64)
+            if normals.shape == (len(vertices), 3):
+                corner_normals = normals[quads]
+            elif normals.shape == (len(quads), 4, 3):
+                corner_normals = normals
+            else:
+                raise ValueError(
+                    "normals must have shape (N, 3) or (Q, 4, 3)")
+            corner_normals = _normalize_normals(corner_normals)
+            if len(self._indices) and not self.shade:
+                raise ValueError(
+                    "MeshBatch cannot mix shaded and unshaded quads in one "
+                    "batch")
+            self.shade = True
         offset = len(self._vertices)
         if self._indexed:
             self._vertices = np.concatenate([self._vertices, vertices], axis=0)
@@ -306,25 +376,31 @@ class MeshBatch:
                                            axis=0)
             self._index_colors = np.concatenate(
                 [self._index_colors, colors], axis=0)
+            if self.shade:
+                self._index_normals = np.concatenate(
+                    [self._index_normals, corner_normals], axis=0)
         else:
             self._vertices = vertices
             self._indices = quads
             self._index_colors = colors
+            if self.shade:
+                self._index_normals = corner_normals
             self._indexed = True
         self._geometry_rev += 1
         self._built_key = None
         return self
 
     @classmethod
-    def from_surface(cls, surface, *, ignore_strokes=False):
+    def from_surface(cls, surface, *, ignore_strokes=False, shade=False):
         """Bake a flat-shaded ``Surface`` into an indexed depth mesh.
 
         One step instead of hand-writing quads and a custom animation.  The
         supported subset is deliberately explicit:
 
-        * every face must be opaque (``fill_opacity >= 0.999``) and
-          ``shade_in_3d=False`` -- a MeshBatch carries flat per-corner colours,
-          not the painter's per-face lighting;
+        * every face must be opaque (``fill_opacity >= 0.999``).  By default
+          ``shade_in_3d`` faces are rejected because a flat bake carries only
+          per-corner colours; pass ``shade=True`` to accept them and let the
+          native light/material shade the mesh from face normals;
         * faces must have a visible fill and 3-4 corners (a centre wedge is
           duplicated into a quad);
         * visible strokes are rejected unless ``ignore_strokes=True`` (a
@@ -332,7 +408,9 @@ class MeshBatch:
           stroke face outlines.
 
         Call ``surface.set_shade_in_3d(False)`` and ``surface.set_stroke(width=0)``
-        for the normal case.  The result is a snapshot; rebuild it or edit the
+        for the flat case, or pass ``shade=True`` to light the mesh natively
+        (the painter's baked shading is not used; base fill colours are).  The
+        result is a snapshot; rebuild it or edit the
         private arrays plus ``mark_geometry_dirty()`` when the geometry/colours
         change.  Attach it with ``win.set_mesh(mesh)``; do not also add the
         surface to the scene, or the painter draws it a second time.  For a mesh
@@ -340,15 +418,18 @@ class MeshBatch:
         <real_time_manim.mesh_mobject.MeshMobject>` instead: it lives in the
         scene and is submitted automatically.
         """
-        return cls().append_surface(surface, ignore_strokes=ignore_strokes)
+        return cls(shade=shade).append_surface(surface,
+                                               ignore_strokes=ignore_strokes,
+                                               shade=shade)
 
-    def append_surface(self, surface, *, ignore_strokes=False):
+    def append_surface(self, surface, *, ignore_strokes=False, shade=False):
         """Append one flat-shaded ``Surface`` to this batch."""
         faces = list(getattr(surface, "list_of_faces", ()) or ())
         if not faces:
             raise ValueError(
                 "MeshBatch.from_surface: object has no Surface.list_of_faces")
-        strokes_dropped = _check_surface_faces(faces, ignore_strokes)
+        strokes_dropped = _check_surface_faces(faces, ignore_strokes,
+                                               allow_shaded=shade)
         arrays = _uniform_surface_arrays(faces)
         if arrays is not None:
             corners, colors = arrays
@@ -385,8 +466,14 @@ class MeshBatch:
                 stacklevel=2)
         vertices, inverse = np.unique(corners.reshape(-1, 3), axis=0,
                                       return_inverse=True)
+        normals = None
+        if shade:
+            face_corners = corners.reshape(-1, 4, 3)
+            normals = np.repeat(_face_normals(face_corners)[:, None, :],
+                                4, axis=1)
         self.append_indexed(vertices, inverse.reshape(-1, 4),
-                            np.asarray(colors, dtype=np.float32))
+                            np.asarray(colors, dtype=np.float32),
+                            normals=normals)
         return self
 
     def mark_geometry_dirty(self):
@@ -399,6 +486,7 @@ class MeshBatch:
         """
         self._geometry_rev += 1
         self._built_key = None
+        self._lit_key = None
         return self
 
     def _ensure_out(self, n):
@@ -632,6 +720,89 @@ class MeshBatch:
         idx = self._sequential_indices(q)
         return n, out, len(idx), idx
 
+    def _ensure_lit_out(self, n):
+        if self._lit_out is None or self._lit_out.shape[0] < n:
+            self._lit_out = np.empty((n, 10), dtype=np.float32)
+        return self._lit_out[:n]
+
+    @staticmethod
+    def _camera_normals(normals, viewport):
+        n = np.asarray(normals, dtype=np.float64)
+        rot = getattr(viewport, "rotation", None) if viewport is not None else None
+        if rot is not None:
+            n = n @ np.asarray(rot, dtype=np.float64).T
+        return _normalize_normals(n)
+
+    def build_indexed_lit_vertices(self, viewport, width, height):
+        """Lit indexed path: x,y,z,nx,ny,nz,r,g,b,a per corner vertex.
+
+        Normals are world-space in the batch and rotated into camera space
+        here, because the shader uses a fixed camera-space viewer.  Returns
+        ``(vertex_count, vertices, index_count, indices)`` or ``None`` when the
+        batch is unlit/empty.
+        """
+        if not self.shade:
+            return None
+        q = self.quad_count
+        if q == 0:
+            return None
+        cap = self.MAX_QUADS_INDEXED
+        if q > cap:
+            if not self._capacity_warned:
+                warnings.warn(
+                    "MeshBatch has %d quads (%d vertices), over "
+                    "MAX_QUADS_INDEXED=%d (%d vertices); dropping the last "
+                    "%d quads so the native mesh stays whole."
+                    % (q, q * 4, cap, cap * 4, q - cap),
+                    RuntimeWarning, stacklevel=2)
+                self._capacity_warned = True
+            q = cap
+
+        if self._indexed:
+            view = self._view_key(viewport, width, height)
+            key = (self._geometry_rev, view, q)
+            if self._lit_key == key:
+                idx = self._sequential_indices(q)
+                return self._lit_n, self._lit_view, len(idx), idx
+            if self._project_key != (self._geometry_rev, view):
+                x, y, depth = self._project(self._vertices, viewport,
+                                            width, height)
+                self._projected = (
+                    (x / width) * 2.0 - 1.0,
+                    (y / height) * 2.0 - 1.0,
+                    depth,
+                )
+                self._project_key = (self._geometry_rev, view)
+            ndc_x, ndc_y, depth = self._projected
+            flat = self._indices[:q].reshape(-1)
+            n = len(flat)
+            out = self._ensure_lit_out(n)
+            out[:, 0] = ndc_x[flat]
+            out[:, 1] = ndc_y[flat]
+            out[:, 2] = depth[flat]
+            out[:, 3:6] = self._camera_normals(
+                self._index_normals[:q].reshape(-1, 3), viewport)
+            out[:, 6:10] = self._index_colors[:q].reshape(-1, 4)
+            self._lit_key = key
+            self._lit_view = out
+            self._lit_n = n
+        else:
+            quads = self.quads[:q]
+            colors = self.colors[:q]
+            x, y, depth = self._project(quads.reshape(-1, 3), viewport,
+                                        width, height)
+            n = len(quads) * 4
+            out = self._ensure_lit_out(n)
+            out[:, 0] = (x / width) * 2.0 - 1.0
+            out[:, 1] = (y / height) * 2.0 - 1.0
+            out[:, 2] = depth
+            out[:, 3:6] = self._camera_normals(
+                self.normals[:q].reshape(-1, 3), viewport)
+            out[:, 6:10] = colors.reshape(-1, 4)
+
+        idx = self._sequential_indices(q)
+        return n, out, len(idx), idx
+
 
 class MeshGroup:
     """Several :class:`MeshBatch` objects drawn as one indexed mesh.
@@ -755,6 +926,64 @@ class MeshGroup:
         out[:, 1] = (y / height) * 2.0 - 1.0
         out[:, 2] = depth
         out[:, 3:7] = colors.reshape(-1, 4)
+        base = (np.arange(len(quads), dtype=np.uint32) * 4)[:, None]
+        idx = (base + np.array([[0, 1, 2, 0, 2, 3]], dtype=np.uint32)
+               ).reshape(-1)
+        return n, out, len(idx), idx
+
+    def build_indexed_lit_vertices(self, viewport, width, height):
+        """Lit indexed path, or ``None`` when any batch is unshaded."""
+        parts = []
+        for batch in self.batches:
+            if batch is None:
+                continue
+            if not getattr(batch, "shade", False):
+                return None
+            if getattr(batch, "_indexed", False):
+                count = len(batch._indices)
+                if count:
+                    parts.append((batch._vertices[batch._indices],
+                                  batch._index_colors,
+                                  batch._index_normals, count))
+            else:
+                count = len(batch.quads)
+                if count:
+                    parts.append((batch.quads, batch.colors,
+                                  batch.normals, count))
+        if not parts:
+            return None
+
+        cap = self.MAX_QUADS
+        total = sum(part[3] for part in parts)
+        quads, colors, normals, used = [], [], [], 0
+        for part_quads, part_colors, part_normals, count in parts:
+            take = min(count, cap - used)
+            if take <= 0:
+                break
+            quads.append(np.asarray(part_quads[:take], dtype=np.float64))
+            colors.append(np.asarray(part_colors[:take], dtype=np.float32))
+            normals.append(np.asarray(part_normals[:take], dtype=np.float64))
+            used += take
+            if used >= cap:
+                break
+        if not quads:
+            return None
+        if total > used:
+            self._warn_capacity(total, cap, "MAX_QUADS_INDEXED")
+        quads = np.concatenate(quads, axis=0)
+        colors = np.concatenate(colors, axis=0)
+        normals = np.concatenate(normals, axis=0)
+
+        x, y, depth = MeshBatch._project(quads.reshape(-1, 3), viewport,
+                                         width, height)
+        n = len(quads) * 4
+        out = np.empty((n, 10), dtype=np.float32)
+        out[:, 0] = (x / width) * 2.0 - 1.0
+        out[:, 1] = (y / height) * 2.0 - 1.0
+        out[:, 2] = depth
+        out[:, 3:6] = MeshBatch._camera_normals(
+            normals.reshape(-1, 3), viewport)
+        out[:, 6:10] = colors.reshape(-1, 4)
         base = (np.arange(len(quads), dtype=np.uint32) * 4)[:, None]
         idx = (base + np.array([[0, 1, 2, 0, 2, 3]], dtype=np.uint32)
                ).reshape(-1)

@@ -50,22 +50,30 @@ class MeshMobject(Mobject):
     #: Recognised by ``window/paint.py::_send_impl`` -- never painted as a path.
     _rtm_mesh_skip = True
 
-    def __init__(self, vertices, quads, colors=None, **kwargs):
+    def __init__(self, vertices, quads, colors=None, normals=None, shade=False,
+                 **kwargs):
         super().__init__(**kwargs)
-        batch = MeshBatch().append_indexed(vertices, quads, colors)
+        batch = MeshBatch(shade=shade).append_indexed(
+            vertices, quads, colors, normals=normals)
         self.points = np.array(batch._vertices, dtype=np.float64, copy=True)
         self._indices = np.array(batch._indices, dtype=np.int64, copy=True)
         self._colors = np.array(batch._index_colors, dtype=np.float32,
                                 copy=True)
+        self._shade = bool(batch.shade)
+        self._normals = (np.array(batch._index_normals, dtype=np.float64,
+                                  copy=True) if self._shade else None)
         self._batch = None
         self._points_sig = None
 
     @classmethod
-    def from_surface(cls, surface, *, ignore_strokes=False, **kwargs):
-        """Bake a flat ``Surface`` (``shade_in_3d=False``, no visible strokes)."""
-        batch = MeshBatch.from_surface(surface, ignore_strokes=ignore_strokes)
+    def from_surface(cls, surface, *, ignore_strokes=False, shade=False,
+                     **kwargs):
+        """Bake a ``Surface``; ``shade=True`` carries face normals."""
+        batch = MeshBatch.from_surface(surface, ignore_strokes=ignore_strokes,
+                                       shade=shade)
         return cls(batch._vertices, batch._indices, batch._index_colors,
-                   **kwargs)
+                   normals=batch._index_normals if shade else None,
+                   shade=shade, **kwargs)
 
     @property
     def quad_count(self):
@@ -83,14 +91,26 @@ class MeshMobject(Mobject):
         sig = points.tobytes()
         batch = self.__dict__.get('_batch')
         if batch is None:
-            batch = MeshBatch()
+            batch = MeshBatch(shade=self._shade)
             batch.append_indexed(points, self._indices, self._colors)
             self._batch = batch
         elif sig != self._points_sig:
             batch._vertices = points
+            if self._shade:
+                from real_time_manim.mesh import _face_normals
+                batch._index_normals = np.repeat(
+                    _face_normals(points[self._indices])[:, None, :], 4,
+                    axis=1)
             batch.mark_geometry_dirty()
         self._points_sig = sig
         return batch
+
+    def build_indexed_lit_vertices(self, viewport, width, height):
+        """Lit submission path; ``None`` for an unshaded mesh."""
+        if not self._shade:
+            return None
+        return self.to_mesh_batch().build_indexed_lit_vertices(
+            viewport, width, height)
 
     def build_indexed_vertices(self, viewport, width, height):
         """Let ``win.set_mesh(mesh_mobject)`` submit it like a batch."""
