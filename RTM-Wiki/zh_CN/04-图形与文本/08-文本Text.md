@@ -222,7 +222,7 @@ def register_font(font_file: str | Path) -> Iterator[None]:
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `font_file` | `str \| Path` | 必填 | 字体文件路径；样例 `C:\Windows\Fonts\arial.ttf` |
+| `font_file` | `str \| Path` | 必填 | 字体文件路径；样例 Windows 用 `C:\Windows\Fonts\arial.ttf`，macOS 用系统自带 Arial |
 
 **上下文管理器**：`with register_font(路径):` 块内注册，块内构造的 `Text` 就能按字体族名使用它。
 
@@ -249,7 +249,8 @@ class RegisterFontDemo(Scene):
         win.play(Write(title), run_time=0.4)   #写出标题
 
         # —— 用法：with 块内注册字体文件，块内构造的 Text 就能用这个族名 ——
-        font_file = r"C:\Windows\Fonts\arial.ttf"   #参数 “font_file”：字体文件路径
+        font_file = (r"C:\Windows\Fonts\arial.ttf" if os.name == "nt"   #参数 “font_file”：字体文件路径
+                     else "/System/Library/Fonts/Supplemental/Arial.ttf")   #macOS 自带 Arial；换成任何可用的 Arial 路径即可
         with register_font(font_file):   #参数 “font_file”
             t1 = Text("Registered: Arial", font="Arial", font_size=44).move_to([0, 0.9, 0])
             win.play(Write(t1), FadeIn(cap("with register_font(arial.ttf): Text(..., font=\"Arial\")", t1)), run_time=0.8)
@@ -266,7 +267,7 @@ class RegisterFontDemo(Scene):
         win.close()   #关闭 RTM 窗口
 ```
 
-这段代码在做什么：`with register_font(r"C:\Windows\Fonts\arial.ttf"):` 里用 `font="Arial"` 排一行字；退出 `with` 后再用同一族名仍能排（字体缓存已登记）；最后一行不给 `font`，用默认字体做对照——说明注册的是"族名到文件"的映射。
+这段代码在做什么：`with register_font(font_file):` 里用 `font="Arial"` 排一行字（`font_file` 按平台取 Arial）；退出 `with` 后再用同一族名仍能排（字体缓存已登记）；最后一行不给 `font`，用默认字体做对照——说明注册的是"族名到文件"的映射。
 
 <video src="assets/RTM output/08-文本Text-registerfont.mp4" controls width="560"></video>
 

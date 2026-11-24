@@ -120,7 +120,8 @@ class RegisterFontDemo(Scene):
         win.play(Write(title), run_time=0.4)   #写出标题
 
         # —— 用法：with 块内注册字体文件，块内构造的 Text 就能用这个族名 ——
-        font_file = r"C:\Windows\Fonts\arial.ttf"   #参数 “font_file”：字体文件路径
+        font_file = (r"C:\Windows\Fonts\arial.ttf" if os.name == "nt"   #参数 “font_file”：字体文件路径
+                     else "/System/Library/Fonts/Supplemental/Arial.ttf")   #macOS 自带 Arial；换成任何可用的 Arial 路径即可
         with register_font(font_file):   #参数 “font_file”
             t1 = Text("Registered: Arial", font="Arial", font_size=44).move_to([0, 0.9, 0])
             win.play(Write(t1), FadeIn(cap("with register_font(arial.ttf): Text(..., font=\"Arial\")", t1)), run_time=0.8)

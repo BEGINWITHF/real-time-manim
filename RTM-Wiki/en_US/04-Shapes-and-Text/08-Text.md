@@ -222,7 +222,7 @@ def register_font(font_file: str | Path) -> Iterator[None]:
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `font_file` | `str \| Path` | required | path to the font file; the sample uses `C:\Windows\Fonts\arial.ttf` |
+| `font_file` | `str \| Path` | required | path to the font file; the sample uses `C:\Windows\Fonts\arial.ttf` on Windows and the system Arial on macOS |
 
 **Context manager**: registering inside a `with register_font(path):` block means a `Text` built inside the block can use the font by its family name.
 
@@ -249,7 +249,8 @@ class RegisterFontDemo(Scene):
         win.play(Write(title), run_time=0.4)   # write the title
 
         # —— usage: register a font file inside a with block; a Text built in the block can use that family name ——
-        font_file = r"C:\Windows\Fonts\arial.ttf"   # the "font_file" parameter: path to the font file
+        font_file = (r"C:\Windows\Fonts\arial.ttf" if os.name == "nt"   # the "font_file" parameter: path to the font file
+                     else "/System/Library/Fonts/Supplemental/Arial.ttf")   # macOS ships Arial here; use any Arial-capable path
         with register_font(font_file):   # the "font_file" parameter
             t1 = Text("Registered: Arial", font="Arial", font_size=44).move_to([0, 0.9, 0])
             win.play(Write(t1), FadeIn(cap("with register_font(arial.ttf): Text(..., font=\"Arial\")", t1)), run_time=0.8)
@@ -266,7 +267,7 @@ class RegisterFontDemo(Scene):
         win.close()   # close the RTM window
 ```
 
-What this code does: inside `with register_font(r"C:\Windows\Fonts\arial.ttf"):` a line is laid out with `font="Arial"`; after leaving the `with` block the same family name still lays out (the font cache already knows it); the last line omits `font`, using the default font as a control—which shows that what gets registered is the mapping from family name to file.
+What this code does: inside `with register_font(font_file):` a line is laid out with `font="Arial"` (`font_file` picks the platform's Arial); after leaving the `with` block the same family name still lays out (the font cache already knows it); the last line omits `font`, using the default font as a control—which shows that what gets registered is the mapping from family name to file.
 
 <video src="assets/RTM output/08-Text-registerfont.mp4" controls width="560"></video>
 

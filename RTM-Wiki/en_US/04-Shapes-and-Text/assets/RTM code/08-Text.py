@@ -120,7 +120,8 @@ class RegisterFontDemo(Scene):
         win.play(Write(title), run_time=0.4)   # write the title
 
         # —— usage: register a font file inside a with block; a Text built in the block can use that family name ——
-        font_file = r"C:\Windows\Fonts\arial.ttf"   # the "font_file" parameter: path to the font file
+        font_file = (r"C:\Windows\Fonts\arial.ttf" if os.name == "nt"   # the "font_file" parameter: path to the font file
+                     else "/System/Library/Fonts/Supplemental/Arial.ttf")   # macOS ships Arial here; use any Arial-capable path
         with register_font(font_file):   # the "font_file" parameter
             t1 = Text("Registered: Arial", font="Arial", font_size=44).move_to([0, 0.9, 0])
             win.play(Write(t1), FadeIn(cap("with register_font(arial.ttf): Text(..., font=\"Arial\")", t1)), run_time=0.8)
