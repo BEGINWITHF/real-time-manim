@@ -181,6 +181,13 @@ scene of at least 240 frames; move expensive pure setup into `prepare()` so ever
 
 ---
 
+## Contact
+
+Bug reports and feature requests: [open an issue](https://github.com/Team-Axioviva/real-time-manim/issues).
+Email: **axioviva@gmail.com**.
+
+---
+
 ## License
 
 [MIT](LICENSE). ManimCE, Vulkan and Typst belong to their respective projects.

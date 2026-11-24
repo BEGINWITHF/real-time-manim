@@ -175,6 +175,13 @@ FramePreview(MyScene).run()
 
 ---
 
+## 联系
+
+Bug 与功能请求：[提交 issue](https://github.com/Team-Axioviva/real-time-manim/issues)。
+邮箱：**axioviva@gmail.com**。
+
+---
+
 ## 许可证
 
 [MIT](LICENSE)。ManimCE、Vulkan 和 Typst 归各自项目所有。

@@ -69,9 +69,11 @@ test = ["manim>=0.20.0", "pytest>=8.0"]
 
 [project.urls]
 Homepage = "https://team-axioviva.github.io/real-time-manim_website/"
-Documentation = "https://github.com/Team-Axioviva/real-time-manim/wiki"
-Source = "https://github.com/Team-Axioviva/real-time-manim"
+Documentation = "https://team-axioviva.github.io/real-time-manim_website/pages/en_US/wiki.html"
+Source = "https://github.com/Team-Axioviva/real-time-manim.git"
 Issues = "https://github.com/Team-Axioviva/real-time-manim/issues"
+Wiki = "https://github.com/Team-Axioviva/real-time-manim/wiki"
+Contact = "https://github.com/Team-Axioviva/real-time-manim#contact"
 Changelog = "https://github.com/Team-Axioviva/real-time-manim/releases"
 
 # Package discovery lives in setup.py: the wheel also carries the PEP 561
