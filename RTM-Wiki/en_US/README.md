@@ -10,7 +10,7 @@ Every API gets its own section, each with a sample video; the parameter tables s
 RTM-Wiki/
 ├─ README.md              ← this file (overview)
 └─ en_US/
-   ├─ 00-Getting-Started/           5 pages   installation, first scene, live window, recording, frame preview
+   ├─ 00-Getting-Started/           6 pages   installation, quickstart, recording methods, ManimCE/ManimGL user guides, LLMs and agents
    ├─ 01-Scenes-and-Cameras/       17 pages   scene lifecycle, play, special scenes, cameras, config
    ├─ 02-Mobjects/                 16 pages   construction and containers, positioning, measurement, transforms, style, copying, updaters
    ├─ 03-Animations/               32 pages   creation/removal, fades, transforms, emphasis, growth, movement/rotation, composition, text and numbers

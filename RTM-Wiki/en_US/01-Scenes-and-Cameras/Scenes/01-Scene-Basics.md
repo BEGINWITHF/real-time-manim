@@ -135,7 +135,7 @@ def render(self, preview: bool = False) -> bool:
 
 Returns `bool` (`True` means the scene needs to be re-run).
 
-**RTM does not go through `Scene.render`**: the record module (`fast_record_scene` / `record_scene`) drives the scene directly as `setup` → `construct` and takes over recording, so the wrap-up in `render` (the file writer's `finish`, "open file viewer") never happens — `tear_down` is now called by the record lifecycle at wrap-up instead (see the previous section). No video is produced; to get output use `fast_record_scene(...)` from [Recording video](../../00-Getting-Started/04-Recording-Video.md).
+**RTM does not go through `Scene.render`**: the record module (`fast_record_scene` / `record_scene`) drives the scene directly as `setup` → `construct` and takes over recording, so the wrap-up in `render` (the file writer's `finish`, "open file viewer") never happens — `tear_down` is now called by the record lifecycle at wrap-up instead (see the previous section). No video is produced; to get output use `fast_record_scene(...)` from [Recording methods](../../00-Getting-Started/03-Recording-Methods.md).
 
 ### `Scene.camera` / `Scene.time`
 
@@ -187,4 +187,4 @@ What this code does: it attaches a mobject-level updater to the label that refre
 > `self.camera` is fully usable: it is an ordinary camera object, and operations like changing `frame` or `set(width=...)` are all recognized by RTM.
 ---
 
-See also: [Displaying content](02-Displaying-Content.md) · [Play and wait](03-Play-and-Wait.md) · [First scene](../../00-Getting-Started/02-First-Scene.md) · [Recording video](../../00-Getting-Started/04-Recording-Video.md)
+See also: [Displaying content](02-Displaying-Content.md) · [Play and wait](03-Play-and-Wait.md) · [Quickstart](../../00-Getting-Started/02-Quickstart.md) · [Recording methods](../../00-Getting-Started/03-Recording-Methods.md)

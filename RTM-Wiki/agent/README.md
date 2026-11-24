@@ -98,7 +98,7 @@ fast_record_scene(MyScene, "out.mp4")
 
 | File | Covers | zh_CN source |
 | --- | --- | --- |
-| `runtime.md` | Install, run, `MLWindow`, recording, arbitrary frames, Timeline | `00-快速开始/` |
+| `runtime.md` | Install, run, `MLWindow`, recording, arbitrary frames, Timeline | `00-新手入门/` |
 | `scene-camera.md` | Scene lifecycle, play/wait, add-to-screen, sections/audio, dedicated scenes, cameras, config | `01-场景与相机/` |
 | `mobject.md` | Construct/containers, placement, measure, transform, style, copy, updaters, animate syntax, ValueTracker | `02-Mobject通用/` |
 | `animation-transform.md` | Create/erase, transforms, matching transforms, emphasis, grow, fade | `03-动画/` (first half) |

@@ -4,7 +4,7 @@ RTM has a built-in **Typst** rendering path: typeset formulas and text without i
 
 > **RTM-only**: `Typst` / `TypstMath` are RTM typesetting classes; ManimCE 0.21 does **not** have `TypstMath`, so all three samples in this section are **RTM renders only** (there is no ManimCE counterpart).
 >
-> **The first render waits for the compiler**: with a cold cache a Typst (or fallback LaTeX) compile takes a few hundred milliseconds to a second or two; with a visible window RTM pops up a small "compiling formula" notice (see [Live window MLWindow](../00-Getting-Started/03-Live-Window-MLWindow.md)); it is not a hang.
+> **The first render waits for the compiler**: with a cold cache a Typst (or fallback LaTeX) compile takes a few hundred milliseconds to a second or two; with a visible window RTM pops up a small "compiling formula" notice (see [Quickstart](../00-Getting-Started/02-Quickstart.md)); it is not a hang.
 
 ## Parameters
 

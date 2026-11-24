@@ -135,7 +135,7 @@ def render(self, preview: bool = False) -> bool:
 
 返回 `bool`（`True` 表示场景需要重跑）。
 
-**RTM 不走 `Scene.render`**：record 模块（`fast_record_scene` / `record_scene`）直接按 `setup` → `construct` 驱动场景并接管录制，`render` 里的收尾（文件写入器 `finish`、"打开文件查看器"）都不会发生——`tear_down` 现在改由 record 生命周期在收尾时调用（见上一节）。不出视频；要出片请用 [录制视频](../../00-快速开始/04-录制视频.md) 里的 `fast_record_scene(...)`。
+**RTM 不走 `Scene.render`**：record 模块（`fast_record_scene` / `record_scene`）直接按 `setup` → `construct` 驱动场景并接管录制，`render` 里的收尾（文件写入器 `finish`、"打开文件查看器"）都不会发生——`tear_down` 现在改由 record 生命周期在收尾时调用（见上一节）。不出视频；要出片请用 [三种录制方法](../../00-新手入门/03-三种录制方法.md) 里的 `fast_record_scene(...)`。
 
 ### `Scene.camera` / `Scene.time`
 
@@ -187,4 +187,4 @@ class TimeDemo(Scene):
 > `self.camera` 则完全可用：它就是普通的相机对象，改 `frame`、`set(width=...)` 这些操作 RTM 都认。
 ---
 
-相关：[内容上屏](02-内容上屏.md) · [播放与等待](03-播放与等待.md) · [第一个场景](../../00-快速开始/02-第一个场景.md) · [录制视频](../../00-快速开始/04-录制视频.md)
+相关：[内容上屏](02-内容上屏.md) · [播放与等待](03-播放与等待.md) · [快速开始](../../00-新手入门/02-快速开始.md) · [三种录制方法](../../00-新手入门/03-三种录制方法.md)

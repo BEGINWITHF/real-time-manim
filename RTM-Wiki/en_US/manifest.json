@@ -1,10 +1,11 @@
 {
   "files": [
     "00-Getting-Started/01-Installation.md",
-    "00-Getting-Started/02-First-Scene.md",
-    "00-Getting-Started/03-Live-Window-MLWindow.md",
-    "00-Getting-Started/04-Recording-Video.md",
-    "00-Getting-Started/05-Frame-Preview.md",
+    "00-Getting-Started/02-Quickstart.md",
+    "00-Getting-Started/03-Recording-Methods.md",
+    "00-Getting-Started/04-ManimCE-Users-Guide.md",
+    "00-Getting-Started/05-ManimGL-Users-Guide.md",
+    "00-Getting-Started/06-Agents.md",
     "00-Getting-Started/README.md",
     "01-Scenes-and-Cameras/Cameras/01-Camera.md",
     "01-Scenes-and-Cameras/Cameras/02-MovingCamera.md",

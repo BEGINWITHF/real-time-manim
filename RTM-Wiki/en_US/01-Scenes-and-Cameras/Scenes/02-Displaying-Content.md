@@ -242,4 +242,4 @@ What this code does: it puts a green triangle on the left and a red dot on the r
 
 ---
 
-See also: [Scene basics](01-Scene-Basics.md) · [Play and wait](03-Play-and-Wait.md) · [Live window MLWindow](../../00-Getting-Started/03-Live-Window-MLWindow.md) · [animate syntax](../../02-Mobjects/07-animate-Syntax.md)
+See also: [Scene basics](01-Scene-Basics.md) · [Play and wait](03-Play-and-Wait.md) · [Quickstart](../../00-Getting-Started/02-Quickstart.md) · [animate syntax](../../02-Mobjects/07-animate-Syntax.md)
