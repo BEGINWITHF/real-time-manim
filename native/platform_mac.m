@@ -84,7 +84,7 @@ static int g_draw_cmd_count = 0;
 
 void DrawCmd_Push(int type, int index) {
     if (g_draw_cmd_count < MAX_DRAW_CMDS) {
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ type, index };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ type, index, g_paint_z };
     }
 }
 
@@ -1187,7 +1187,7 @@ void Vulkan_Shutdown(void) {
     void name params {                                                 \
         if (count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {  \
             pool[count] = (type){ UNPAREN init };                      \
-            g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ cmd, count }; \
+            g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ cmd, count, g_paint_z }; \
             count++;                                                   \
         }                                                              \
     }
@@ -1240,6 +1240,10 @@ void SetMeshLight(float dx, float dy, float dz, float ambient, float diffuse,
     g_mesh_material[2] = shininess < 1.0f ? 1.0f : shininess;
 }
 
+void SetPaintDepth(float z) {
+    g_paint_z = z < 0.0f ? 0.0f : (z > 1.0f ? 1.0f : z);
+}
+
 void AddMeshIndexed(int vertex_count, const float *verts,
                     int index_count, const unsigned int *indices) {
     if (verts == NULL || vertex_count <= 0
@@ -1271,7 +1275,7 @@ void AddPolygon(float x, float y, int r, int g, int b, int border_r, int border_
         p->alpha = alpha;
         p->close_path = close_path;
         memcpy(p->verts, verts, sizeof(float) * vert_count * 2);
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POLYGON, g_polygon_count };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POLYGON, g_polygon_count, g_paint_z };
         g_polygon_count++;
     }
 }
@@ -1286,7 +1290,7 @@ void AddImageQuad(unsigned long long token, unsigned long long digest, const uns
     q->token = token;
     q->opacity = opacity;
     for (int i = 0; i < 8; i++) q->xy[i] = xy8[i];
-    g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_IMAGE, g_image_quad_count };
+    g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_IMAGE, g_image_quad_count, g_paint_z };
     g_image_quad_count++;
 }
 
@@ -1300,6 +1304,7 @@ void ClearShapes(void) {
     g_mesh_vertex_count = 0;
     g_mesh_lit_count = 0;
     g_mesh_index_count = 0;
+    g_paint_z = 0.0f;
 }
 
 #undef RESET_POOL

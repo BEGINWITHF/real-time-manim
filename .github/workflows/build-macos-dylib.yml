@@ -32,6 +32,7 @@ jobs:
           nm -gU dist/release/vulkan_core.dylib | grep -q " _AddMeshLit$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _AddMeshIndexedLit$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _SetMeshLight$"
+          nm -gU dist/release/vulkan_core.dylib | grep -q " _SetPaintDepth$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _SetPost$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _AddImageQuad$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _AddLineStripF$"

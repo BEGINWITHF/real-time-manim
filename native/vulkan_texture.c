@@ -11,7 +11,7 @@
 // solid geometry at the position it was submitted.
 
 #define MAX_TEXTURES 64
-#define TEX_FLOATS_PER_VERTEX 5   // ndc x, ndc y, u, v, alpha
+#define TEX_FLOATS_PER_VERTEX 6   // ndc x, ndc y, z, u, v, alpha
 
 typedef struct {
     unsigned long long token;    // stable per mobject (assigned by the caller)
@@ -298,25 +298,29 @@ static void CreateTexPipeline(void) {
     bind_desc.stride = sizeof(float) * TEX_FLOATS_PER_VERTEX;
     bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    VkVertexInputAttributeDescription attrs[3] = {{0}};
+    VkVertexInputAttributeDescription attrs[4] = {{0}};
     attrs[0].location = 0;
     attrs[0].binding = 0;
     attrs[0].format = VK_FORMAT_R32G32_SFLOAT;
     attrs[0].offset = 0;
     attrs[1].location = 1;
     attrs[1].binding = 0;
-    attrs[1].format = VK_FORMAT_R32G32_SFLOAT;
+    attrs[1].format = VK_FORMAT_R32_SFLOAT;
     attrs[1].offset = sizeof(float) * 2;
     attrs[2].location = 2;
     attrs[2].binding = 0;
-    attrs[2].format = VK_FORMAT_R32_SFLOAT;
-    attrs[2].offset = sizeof(float) * 4;
+    attrs[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attrs[2].offset = sizeof(float) * 3;
+    attrs[3].location = 3;
+    attrs[3].binding = 0;
+    attrs[3].format = VK_FORMAT_R32_SFLOAT;
+    attrs[3].offset = sizeof(float) * 5;
 
     VkPipelineVertexInputStateCreateInfo vi = {0};
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vi.vertexBindingDescriptionCount = 1;
     vi.pVertexBindingDescriptions = &bind_desc;
-    vi.vertexAttributeDescriptionCount = 3;
+    vi.vertexAttributeDescriptionCount = 4;
     vi.pVertexAttributeDescriptions = attrs;
 
     VkPipelineInputAssemblyStateCreateInfo ia = {0};
@@ -358,9 +362,9 @@ static void CreateTexPipeline(void) {
 
     VkPipelineDepthStencilStateCreateInfo depth_state = {0};
     depth_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth_state.depthTestEnable = VK_FALSE;
+    depth_state.depthTestEnable = VK_TRUE;
     depth_state.depthWriteEnable = VK_FALSE;
-    depth_state.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    depth_state.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     depth_state.depthBoundsTestEnable = VK_FALSE;
     depth_state.stencilTestEnable = VK_FALSE;
 
@@ -463,9 +467,10 @@ void BuildVerticesFromImageQuad(int idx) {
         float *out = &g_tex_vertices[g_tex_vertex_count * TEX_FLOATS_PER_VERTEX];
         out[0] = nx[c];
         out[1] = ny[c];
-        out[2] = uvs[c][0];
-        out[3] = uvs[c][1];
-        out[4] = q->opacity;
+        out[2] = g_paint_z;
+        out[3] = uvs[c][0];
+        out[4] = uvs[c][1];
+        out[5] = q->opacity;
         g_tex_vertex_count++;
     }
 

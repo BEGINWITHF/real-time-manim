@@ -59,6 +59,11 @@ __declspec(dllexport) void SetMeshLight(float dx, float dy, float dz,
                                         float ambient, float diffuse,
                                         float specular, float shininess);
 
+// Depth of the paint unit currently being submitted (0 nearest, 1 farthest).
+// It is recorded with each queued primitive and used by the depth test against
+// the mesh; 0 keeps 2D overlays on top.
+__declspec(dllexport) void SetPaintDepth(float z);
+
 // Offscreen bloom + tonemap.  `enabled` 0 restores the untouched scene path.
 // tonemap: 0 none, 1 aces, 2 reinhard.
 __declspec(dllexport) void SetPost(int enabled, float threshold, float knee,

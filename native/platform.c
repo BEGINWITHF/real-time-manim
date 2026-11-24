@@ -41,7 +41,7 @@ static int g_draw_cmd_count = 0;
 
 void DrawCmd_Push(int type, int index) {
     if (g_draw_cmd_count < MAX_DRAW_CMDS) {
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ type, index };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ type, index, g_paint_z };
     }
 }
 
@@ -233,7 +233,7 @@ __declspec(dllexport) int Vulkan_InitEx(int w, int h, int hidden) {
 __declspec(dllexport) void AddRect(float x, float y, float hw, float hh, float rot, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, float stroke_progress, float alpha) {
     if (g_rect_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_rects[g_rect_count] = (Rect){ x, y, hw, hh, rot, r, g, b, border_r, border_g, border_b, border_width, stroke_progress, alpha };
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_RECT, g_rect_count };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_RECT, g_rect_count, g_paint_z };
         g_rect_count++;
     }
 }
@@ -241,7 +241,7 @@ __declspec(dllexport) void AddRect(float x, float y, float hw, float hh, float r
 __declspec(dllexport) void AddCircle(float x, float y, float radius, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, float stroke_progress, float alpha) {
     if (g_circle_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_circles[g_circle_count] = (Circle){ x, y, radius, r, g, b, border_r, border_g, border_b, border_width, stroke_progress, alpha };
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_CIRCLE, g_circle_count };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_CIRCLE, g_circle_count, g_paint_z };
         g_circle_count++;
     }
 }
@@ -249,7 +249,7 @@ __declspec(dllexport) void AddCircle(float x, float y, float radius, int r, int 
 __declspec(dllexport) void AddLine(float x1, float y1, float x2, float y2, int width, int r, int g, int b, float alpha) {
     if (g_line_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_lines[g_line_count] = (LineObj){ x1, y1, x2, y2, width, r, g, b, alpha };
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_LINE, g_line_count };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_LINE, g_line_count, g_paint_z };
         g_line_count++;
     }
 }
@@ -257,7 +257,7 @@ __declspec(dllexport) void AddLine(float x1, float y1, float x2, float y2, int w
 __declspec(dllexport) void AddEllipse(float x, float y, float rx, float ry, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, float stroke_progress, float alpha) {
     if (g_ellipse_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_ellipses[g_ellipse_count] = (EllipseObj){ x, y, rx, ry, r, g, b, border_r, border_g, border_b, border_width, stroke_progress, alpha };
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_ELLIPSE, g_ellipse_count };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_ELLIPSE, g_ellipse_count, g_paint_z };
         g_ellipse_count++;
     }
 }
@@ -281,7 +281,7 @@ __declspec(dllexport) void AddPolygon(float x, float y, int r, int g, int b, int
         p->alpha = alpha;
         p->close_path = close_path;
         memcpy(p->verts, verts, sizeof(float) * vert_count * 2);
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POLYGON, g_polygon_count };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POLYGON, g_polygon_count, g_paint_z };
         g_polygon_count++;
     }
 }
@@ -336,6 +336,10 @@ __declspec(dllexport) void SetMeshLight(float dx, float dy, float dz,
     g_mesh_material[2] = shininess < 1.0f ? 1.0f : shininess;
 }
 
+__declspec(dllexport) void SetPaintDepth(float z) {
+    g_paint_z = z < 0.0f ? 0.0f : (z > 1.0f ? 1.0f : z);
+}
+
 __declspec(dllexport) void AddMeshIndexed(int vertex_count, const float *verts,
                                           int index_count,
                                           const unsigned int *indices) {
@@ -359,7 +363,7 @@ __declspec(dllexport) void AddDashedLine(float x1, float y1, float x2, float y2,
     if (!(dash_length > 0.0f) || !(gap_length > 0.0f)) return;
     if (g_dashed_line_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_dashed_lines[g_dashed_line_count] = (DashedLineObj){ x1, y1, x2, y2, width, r, g, b, dash_length, gap_length, alpha };
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_DASHED_LINE, g_dashed_line_count };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_DASHED_LINE, g_dashed_line_count, g_paint_z };
         g_dashed_line_count++;
     }
 }
@@ -367,7 +371,7 @@ __declspec(dllexport) void AddDashedLine(float x1, float y1, float x2, float y2,
 __declspec(dllexport) void AddPoint(float x, float y, int r, int g, int b, float alpha, float radius) {
     if (g_point_count < MAX_SHAPES && g_draw_cmd_count < MAX_DRAW_CMDS) {
         g_points[g_point_count] = (PointObj){ x, y, r, g, b, alpha, radius };
-        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POINT, g_point_count };
+        g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_POINT, g_point_count, g_paint_z };
         g_point_count++;
     }
 }
@@ -380,7 +384,7 @@ __declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long 
     q->token = token;
     q->opacity = opacity;
     for (int i = 0; i < 8; i++) q->xy[i] = xy8[i];
-    g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_IMAGE, g_image_quad_count };
+    g_draw_cmds[g_draw_cmd_count++] = (DrawCmd){ CMD_IMAGE, g_image_quad_count, g_paint_z };
     g_image_quad_count++;
 }
 
@@ -407,6 +411,7 @@ __declspec(dllexport) void ClearShapes(void) {
     g_mesh_vertex_count = 0;
     g_mesh_lit_count = 0;
     g_mesh_index_count = 0;
+    g_paint_z = 0.0f;
 }
 
 __declspec(dllexport) int Vulkan_Tick(void) {
