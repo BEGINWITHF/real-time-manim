@@ -48,6 +48,17 @@ __declspec(dllexport) void AddMeshIndexed(int vertex_count, const float *verts,
                                           int index_count,
                                           const unsigned int *indices);
 
+// Lit mesh: x,y,z,nx,ny,nz,r,g,b,a per vertex, normals in camera space.
+__declspec(dllexport) void AddMeshLit(int vertex_count, const float *verts);
+__declspec(dllexport) void AddMeshIndexedLit(int vertex_count,
+                                             const float *verts,
+                                             int index_count,
+                                             const unsigned int *indices);
+// Camera-space light + material for the lit mesh pipeline.
+__declspec(dllexport) void SetMeshLight(float dx, float dy, float dz,
+                                        float ambient, float diffuse,
+                                        float specular, float shininess);
+
 // Offscreen bloom + tonemap.  `enabled` 0 restores the untouched scene path.
 // tonemap: 0 none, 1 aces, 2 reinhard.
 __declspec(dllexport) void SetPost(int enabled, float threshold, float knee,

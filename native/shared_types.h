@@ -26,6 +26,13 @@
 #define MAX_MESH_INDICES ((MAX_MESH_VERTS / 4) * 6)
 #endif
 
+/* Lit meshes carry x,y,z,nx,ny,nz,r,g,b,a per vertex (10 floats).  The GPU
+   buffer is sized for this stride; the unlit pipeline simply uses the first
+   seven floats of each vertex. */
+#ifndef MESH_LIT_FLOATS
+#define MESH_LIT_FLOATS 10
+#endif
+
 /* Multisample anti-aliasing.  manim's Cairo renderer antialiases every edge;
    this renderer rasterised hard-edged, which is the whole reason shapes came
    out with ~0.91 px of ink where CE spreads the same line over two rows (the

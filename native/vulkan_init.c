@@ -3,6 +3,7 @@
 #include "vulkan_post.h"
 #include "draw_common.h"
 #include "mesh_shaders.h"
+#include "mesh_lit_shaders.h"
 
 #define VK_CHECK(call) do { \
     VkResult _result = (call); \
@@ -85,6 +86,10 @@ VkBuffer g_mesh_index_buf = VK_NULL_HANDLE;
 VkDeviceMemory g_mesh_index_buf_mem = VK_NULL_HANDLE;
 
 VkPipeline g_mesh_pipeline = VK_NULL_HANDLE;
+
+VkPipeline g_mesh_lit_pipeline = VK_NULL_HANDLE;
+
+VkPipelineLayout g_mesh_lit_layout = VK_NULL_HANDLE;
 
 VkImage g_depth_img = VK_NULL_HANDLE;
 
@@ -976,8 +981,134 @@ static void CreateMeshPipeline(void) {
     vkDestroyShaderModule(g_dev, fs, NULL);
 }
 
-static void CreateMSAATarget(void) {
+static void CreateMeshLitPipeline(void) {
+    VkPushConstantRange range = {0};
+    range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    range.offset = 0;
+    range.size = sizeof(float) * 8;
 
+    VkPipelineLayoutCreateInfo plci = {0};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &range;
+    VK_CHECK(vkCreatePipelineLayout(g_dev, &plci, NULL, &g_mesh_lit_layout));
+
+    VkShaderModule vs = CreateShaderModule(mesh_lit_vert_spv,
+                                           sizeof(mesh_lit_vert_spv));
+    VkShaderModule fs = CreateShaderModule(mesh_lit_frag_spv,
+                                           sizeof(mesh_lit_frag_spv));
+
+    VkPipelineShaderStageCreateInfo stages[2] = {{0}};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vs;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fs;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bind_desc = {0};
+    bind_desc.binding = 0;
+    bind_desc.stride = sizeof(float) * MESH_LIT_FLOATS;
+    bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attrs[3] = {{0}};
+    attrs[0].location = 0;
+    attrs[0].binding = 0;
+    attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attrs[0].offset = sizeof(float) * 0;
+    attrs[1].location = 1;
+    attrs[1].binding = 0;
+    attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attrs[1].offset = sizeof(float) * 3;
+    attrs[2].location = 2;
+    attrs[2].binding = 0;
+    attrs[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attrs[2].offset = sizeof(float) * 6;
+
+    VkPipelineVertexInputStateCreateInfo vi = {0};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vi.vertexBindingDescriptionCount = 1;
+    vi.pVertexBindingDescriptions = &bind_desc;
+    vi.vertexAttributeDescriptionCount = 3;
+    vi.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo ia = {0};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vps = {0};
+    vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vps.viewportCount = 1;
+    vps.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rs = {0};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms = {0};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = g_msaa_samples;
+
+    VkPipelineDepthStencilStateCreateInfo ds = {0};
+    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    ds.depthTestEnable = VK_TRUE;
+    ds.depthWriteEnable = VK_TRUE;
+    ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    ds.depthBoundsTestEnable = VK_FALSE;
+    ds.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState cba = {0};
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    cba.blendEnable = VK_TRUE;
+    cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.colorBlendOp = VK_BLEND_OP_ADD;
+    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    cba.alphaBlendOp = VK_BLEND_OP_ADD;
+
+    VkPipelineColorBlendStateCreateInfo cb = {0};
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1;
+    cb.pAttachments = &cba;
+
+    VkDynamicState dynamic_states[] = {
+        VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR
+    };
+    VkPipelineDynamicStateCreateInfo dyn = {0};
+    dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dyn.dynamicStateCount = 2;
+    dyn.pDynamicStates = dynamic_states;
+
+    VkGraphicsPipelineCreateInfo pci = {0};
+    pci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pci.stageCount = 2;
+    pci.pStages = stages;
+    pci.pVertexInputState = &vi;
+    pci.pInputAssemblyState = &ia;
+    pci.pViewportState = &vps;
+    pci.pRasterizationState = &rs;
+    pci.pMultisampleState = &ms;
+    pci.pDepthStencilState = &ds;
+    pci.pColorBlendState = &cb;
+    pci.pDynamicState = &dyn;
+    pci.layout = g_mesh_lit_layout;
+    pci.renderPass = g_render_pass;
+
+    VK_CHECK(vkCreateGraphicsPipelines(g_dev, VK_NULL_HANDLE, 1, &pci, NULL,
+                                       &g_mesh_lit_pipeline));
+
+    vkDestroyShaderModule(g_dev, vs, NULL);
+    vkDestroyShaderModule(g_dev, fs, NULL);
+}
+
+static void CreateMSAATarget(void) {
     VkImageCreateInfo ici = {0};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
@@ -1212,7 +1343,7 @@ static void CreateVertexBuffer(void) {
 
                  &g_vert_buf, &g_vert_buf_mem);
 
-    VkDeviceSize mesh_size = sizeof(float) * 7 * MAX_MESH_VERTS;
+    VkDeviceSize mesh_size = sizeof(float) * MESH_LIT_FLOATS * MAX_MESH_VERTS;
     CreateBuffer(mesh_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                  &g_mesh_vert_buf, &g_mesh_vert_buf_mem);
@@ -1225,6 +1356,15 @@ static void CreateVertexBuffer(void) {
 }
 
 void update_mesh_vertex_buffer(const void *data, VkDeviceSize size) {
+    if (g_mesh_vert_buf == VK_NULL_HANDLE || size == 0) return;
+    Render_WaitAllInFlight();
+    void *mapped_data;
+    vkMapMemory(g_dev, g_mesh_vert_buf_mem, 0, size, 0, &mapped_data);
+    memcpy(mapped_data, data, size);
+    vkUnmapMemory(g_dev, g_mesh_vert_buf_mem);
+}
+
+void update_mesh_lit_vertex_buffer(const void *data, VkDeviceSize size) {
     if (g_mesh_vert_buf == VK_NULL_HANDLE || size == 0) return;
     Render_WaitAllInFlight();
     void *mapped_data;
@@ -1324,6 +1464,8 @@ void Render_Init(void *metal_layer, int width, int height) {
     CreateGraphicsPipeline();
 
     CreateMeshPipeline();
+
+    CreateMeshLitPipeline();
 
     CreateFramebuffers();
 
@@ -1498,9 +1640,17 @@ void Render_Cleanup(void) {
     Tex_DestroyResources();
 
     vkDestroyPipeline(g_dev, g_pipeline, NULL);
+    if (g_mesh_lit_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(g_dev, g_mesh_lit_pipeline, NULL);
+        g_mesh_lit_pipeline = VK_NULL_HANDLE;
+    }
     if (g_mesh_pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(g_dev, g_mesh_pipeline, NULL);
         g_mesh_pipeline = VK_NULL_HANDLE;
+    }
+    if (g_mesh_lit_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(g_dev, g_mesh_lit_layout, NULL);
+        g_mesh_lit_layout = VK_NULL_HANDLE;
     }
     vkDestroyPipelineLayout(g_dev, g_pipeline_layout, NULL);
     vkDestroyRenderPass(g_dev, g_render_pass, NULL);
