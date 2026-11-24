@@ -68,11 +68,11 @@ typst = ["typst>=0.14"]
 test = ["manim>=0.20.0", "pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/Team-Axioviva/real-time-manim"
-Documentation = "https://github.com/Team-Axioviva/real-time-manim#readme"
+Homepage = "https://team-axioviva.github.io/real-time-manim_website/"
+Documentation = "https://github.com/Team-Axioviva/real-time-manim/wiki"
 Source = "https://github.com/Team-Axioviva/real-time-manim"
-Wiki = "https://github.com/Team-Axioviva/real-time-manim/wiki"
 Issues = "https://github.com/Team-Axioviva/real-time-manim/issues"
+Changelog = "https://github.com/Team-Axioviva/real-time-manim/releases"
 
 # Package discovery lives in setup.py: the wheel also carries the PEP 561
 # ``manim-stubs`` tree, whose directory name is not a valid Python identifier
