@@ -132,7 +132,8 @@ def close(self)
 
 - `ret`: none. Calls `_unregister()` + `Vulkan_Shutdown()`.
 - `notes`:
-  - **Required** at the end of `construct()`; without it nothing is flushed and the run may not exit.
+  - **Required** at the end of `construct()`; explicit `close()` finishes a manual record and flushes the window.  Forgetting it no longer means "no output": an `atexit` hook closes windows still alive at interpreter exit, but that best-effort path cannot report encoder errors.
+  - Use it as a context manager: `with MLWindow(1920, 1080) as win:` closes on leaving the block (also on exception).
   - Does **not** finish a record by itself. `fast_record_scene` / `record_scene` install `record._AutoRecord`, which runs `_finish_fast_record()` / `stop_record()` *before* the real `close()`. If you call `enable_fast_record(...)` manually you must call the internal `win._finish_fast_record()` yourself.
   - If `_defer_close` is True (schedule mode) `close()` returns without shutting down.
 
@@ -554,6 +555,14 @@ def export_srt(path, entries=None, windows=None, verbose=False)
 | `RTM_WAIT_POPUP_DELAY` | `0.35` | seconds before it appears |
 | `RTM_LANG` | auto | force `zh` / `en` / `ja` / `ko` |
 | `RTM_WAIT_ICON` | bundled `wait.ico` | override the popup icon (`.ico` path) |
+| `RTM_DIAGNOSTICS` | unset | `1` prints one line per play: frame count, wall time, whether the static layer was used, the largest mesh batch (vertices), and texture uploads |
+
+`RTM_DIAGNOSTICS=1` sample:
+
+```text
+[rtm] play 3: 60f 0.42s | static=on mesh=0v tex_uploads=0
+[rtm] play 4: 120f 1.10s | static=off mesh=228000v tex_uploads=12
+```
 
 - `see`: ../zh_CN/00-快速开始/03-实时窗口-MLWindow.md
 

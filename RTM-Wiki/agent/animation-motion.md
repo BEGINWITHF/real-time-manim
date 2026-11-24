@@ -277,6 +277,7 @@ Animation(mobject, lag_ratio=0.0, run_time=1.0, rate_func=smooth, reverse_rate_f
           name=None, remover=False, suspend_mobject_updating=True, introducer=False, use_override=True)
 ```
 - `ret`: `Animation`. A bare `Animation` changes nothing but occupies `run_time` (placeholder in `Succession`/`LaggedStartMap`); it is also the base for custom animations (override `interpolate_mobject()`).
+- **Custom animations must be a pure function of `alpha`.** A staggered schedule (`FrameServer`, `jobs=N`) prepares the whole timeline before frame 0 and calls `interpolate(0)` while capturing start states. RTM snapshots/restores the scene's mobjects after that, but **external state** (a module-level dict, a counter, `Story.state(t)` used to generate geometry) is not restored: its `t=0` side effect leaks into the first frames. Keep state in mobjects/copies, or make the hook side-effect free.
 - `args`:
 
 | name | type | default | meaning / constraint |

@@ -130,6 +130,7 @@ def send_image(window, mob, alpha=1.0):
     tex_rev = int(getattr(mob, "_rtm_tex_rev", 0) or 0)
     alpha_rev = int(getattr(mob, "_rtm_alpha_rev", 0) or 0)
     state = getattr(mob, "_rtm_tex_cache", None)
+    prev_key = state.get("key") if isinstance(state, dict) else None
     same_array = bool(
         state is not None
         and state.get("tex_rev") == tex_rev
@@ -198,6 +199,10 @@ def send_image(window, mob, alpha=1.0):
             rgba = np.ascontiguousarray(arr[:, :, :4], dtype=np.uint8)
             key = _digest(str(rgba.shape).encode(), rgba.tobytes())
             buf = (ctypes.c_ubyte * rgba.nbytes).from_buffer_copy(rgba)
+
+    if key != prev_key:
+        window._diag_tex_uploads = getattr(
+            window, "_diag_tex_uploads", 0) + 1
 
     try:
         mob._rtm_tex_cache = {
