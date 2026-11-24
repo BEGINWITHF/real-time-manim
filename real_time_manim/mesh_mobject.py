@@ -64,7 +64,7 @@ class MeshMobject(Mobject):
         self._batch = None
         self._points_sig = None
         self._shade_data = shade_data
-        self._shaded_light = None
+        self._shade_sig = None
 
     @classmethod
     def from_surface(cls, surface, *, ignore_strokes=False, shade=False,
@@ -76,8 +76,9 @@ class MeshMobject(Mobject):
         With ``shade=True`` a shaded Surface is accepted: manim's two-stop
         per-face lighting is baked from the world light on the first frame that
         has a 3D camera, and the four mesh corners interpolate between those
-        stops.  The lighting is then frozen with the geometry, like every other
-        baked colour.
+        stops.  The lighting is refreshed when the mesh vertices or the world
+        light change (so transforms and light moves follow the painter);
+        a colour-only transform keeps its interpolated colours.
         """
         if not shade:
             batch = MeshBatch.from_surface(surface,
@@ -148,18 +149,20 @@ class MeshMobject(Mobject):
         self._colors[mask] = colors[mask].astype(np.float32)
         self.__dict__["_batch"] = None
 
-    def _shade_once(self):
-        """Apply the baked lighting on the first frame that has a 3D light.
+    def _refresh_lighting(self, points_sig):
+        """Re-light ``shade=True`` surfaces when the light or geometry moves.
 
         The light source is published with the frame's viewport, so a
-        ``from_surface(shade=True)`` called in ``construct()`` cannot see it
-        yet.  Once applied the result stays frozen: it belongs to the baked
-        geometry, and later camera moves (which do not change the shading) must
-        not redo it.
+        ``from_surface(shade=True)`` called in ``construct()`` cannot light
+        anything yet; this runs on every frame and applies the lighting as soon
+        as a 3D viewport exists.  The key is the vertex bytes plus the light, so
+        a rotating/scaling mesh is re-lit like the painter would (the affine
+        reconstruction in :meth:`_apply_baked_shading` follows the transform),
+        while a camera move or a colour-only transform does no work and keeps
+        the interpolated colours.
         """
-        if self.__dict__.get("_shade_data") is None:
-            return
-        if self.__dict__.get("_shaded_light") is not None:
+        data = self.__dict__.get("_shade_data")
+        if data is None:
             return
         try:
             viewport = get_viewport()
@@ -170,8 +173,11 @@ class MeshMobject(Mobject):
         light = getattr(viewport, "light_source", None)
         if light is None:
             return
+        key = (points_sig, np.asarray(light, dtype=np.float64).tobytes())
+        if self.__dict__.get("_shade_sig") == key:
+            return
         self._apply_baked_shading(light)
-        self._shaded_light = np.asarray(light, dtype=np.float64).tobytes()
+        self.__dict__["_shade_sig"] = key
 
     def to_mesh_batch(self):
         """This frame's :class:`MeshBatch`, refreshed after a transform.
@@ -180,9 +186,9 @@ class MeshMobject(Mobject):
         (``scale`` / ``rotate``), so the batch is pointed at the current array
         and its projection invalidated whenever the vertex bytes changed.
         """
-        self._shade_once()
         points = self.points
         sig = points.tobytes()
+        self._refresh_lighting(sig)
         batch = self.__dict__.get('_batch')
         if batch is None:
             batch = MeshBatch()
