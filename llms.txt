@@ -1,0 +1,36 @@
+# Real-Time Manim (RTM)
+
+> Vulkan-accelerated, real-time rendering backend for ManimCE: drives ManimCE's own Mobject/Animation model through a native Vulkan pipeline — live 1920x1080@60 window, 1.9–2.8x faster MP4 recording, O(1) frame seeking, MathTex via an in-process Typst backend. A Python library (no manim CLI); import `real_time_manim`, never `import manim` first. Python >= 3.11, Windows 10+/macOS, ffmpeg on PATH for recording.
+
+Start with the agent-facing condensed reference (`RTM-Wiki/agent/README.md`) — it has the facts, hard constraints, entry points, execution modes, a file map, and a suggested read order. The human manual lives in `RTM-Wiki/zh_CN/` (source of truth) and `RTM-Wiki/en_US/`; the source tree is `real_time_manim/`. On any doc conflict, the source tree wins. Report bugs as issues with a minimal runnable Scene; wiki errors are fixed by PR, not issues.
+
+## Documentation
+
+- [Agent wiki (start here)](RTM-Wiki/agent/README.md): condensed agent-facing reference: facts, constraints, entry points, file map, read order
+- [Runtime: install, MLWindow, recording, Timeline](RTM-Wiki/agent/runtime.md)
+- [Scenes & cameras](RTM-Wiki/agent/scene-camera.md): scene lifecycle, play/wait, cameras, config
+- [Recipes & patterns](RTM-Wiki/agent/patterns.md): runnable construct() recipes for common tasks
+- [Gotchas & error catalogue](RTM-Wiki/agent/gotchas.md): pitfalls and error → cause → fix
+- [Full human manual (zh_CN, 144 pages)](RTM-Wiki/zh_CN/README.md)
+- [Full human manual (en_US)](RTM-Wiki/en_US/README.md)
+- [Source-level walkthrough (GitHub wiki, 8 chapters)](https://github.com/BEGINWITHF/real-time-manim/wiki)
+
+## Getting Started
+
+- [Installation](RTM-Wiki/en_US/00-Getting-Started/01-Installation.md): pip install, macOS MoltenVK, ffmpeg, Typst extra
+- [Quickstart](RTM-Wiki/en_US/00-Getting-Started/02-Quickstart.md): first scene, live window, first MP4
+- [Recording methods](RTM-Wiki/en_US/00-Getting-Started/03-Recording-Methods.md): fast_record_scene vs record_scene, FrameServer, FramePreview
+- [ManimCE users' guide](RTM-Wiki/en_US/00-Getting-Started/04-ManimCE-Users-Guide.md): porting existing manim code
+- [ManimGL users' guide](RTM-Wiki/en_US/00-Getting-Started/05-ManimGL-Users-Guide.md)
+
+## Building Videos
+
+- [Quickstart](RTM-Wiki/en_US/00-Getting-Started/02-Quickstart.md): the canonical scene shape — MLWindow, win.scene = self, win.close(), fast_record_scene
+- [Recipes & patterns](RTM-Wiki/agent/patterns.md): copy-pasteable scene skeletons: motion, updaters, camera moves, 3D, graphs, tables
+- [Scenes & cameras](RTM-Wiki/agent/scene-camera.md): play/wait grammar, sections, subcaptions, dedicated scenes
+- [Record to MP4](RTM-Wiki/agent/runtime.md): execution modes and recorder APIs
+
+## Reporting Issues
+
+- [Issue templates](.github/ISSUE_TEMPLATE/): bug_report.yml, feature_request.yml, documentation.yml, suggestion.yml, help.yml — pick the right one and fill it fully
+- [Agent guidance for issues](AGENTS.md): minimal reproduction requirements, environment info, gh command
