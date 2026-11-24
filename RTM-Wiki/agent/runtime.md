@@ -157,6 +157,26 @@ def clear_mesh(self)
   - `RTM_AUTO_DEPTH=1` is the automatic alternative for eligible `Surface` roots; it does not remove per-face `set_fill` cost.
 - `see`: ../zh_CN/06-三维/02-三维表面.md
 
+### `MLWindow.set_mesh_light`
+
+```python
+def set_mesh_light(self, direction=None, *, ambient=None, diffuse=None,
+                   specular=None, shininess=None)
+```
+
+- `ret`: `self`.
+- `args`: all optional; omitted values keep the current setting.  `direction`
+  is a camera-space vector towards the light (normalized by the shader); `None`
+  derives it each frame from `camera.light_source` relative to the frame
+  centre.  Defaults: `ambient=0.35`, `diffuse=0.75`, `specular=0.0`,
+  `shininess=32`.
+- `notes`: only affects native-lit geometry (`MeshBatch(lit=True)` /
+  `normals=` / `MeshMobject(..., lit=True)`).  CPU-baked
+  `MeshMobject.from_surface(shade=True)` colours are untouched.  The shader
+  flips normals towards the viewer, so open two-sided surfaces are lit on both
+  sides.  `ambient=1, diffuse=0, specular=0` is pixel-identical to the unlit
+  path.
+
 ### `MLWindow.set_post` (bloom / tonemap)
 
 ```python
