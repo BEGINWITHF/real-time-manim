@@ -288,7 +288,7 @@ List order is draw order, which matters for translucent quads; opaque quads are 
 - `append` appends; `win.set_mesh` submits the current batch each frame and does not stack calls.
 - The mesh is drawn first and 2D afterwards, so text, formulas and images always sit on top.
 - Overlapping translucent quads remain an approximation; there is no per-pixel sort.
-- An indexed batch projects each unique vertex once and reuses the gathered triangles and the projection until the view or geometry changes (18k quads: ~4.5 ms per rebuild, ~0.04 ms cached). An `append` batch is still re-projected every frame.
+- An indexed batch projects each unique vertex once, then gathers four corner vertices per quad (six indices) for the native path; the projection and index buffer are reused until the view or geometry changes (18k quads: ~4.5 ms per rebuild, ~0.04 ms cached). An `append` batch is still re-projected every frame. On a native build without `AddMeshIndexed`, the expanded six-vertex fallback is used instead.
 - A `Surface` with thousands of faces that stays on the painter emits one `RuntimeWarning` pointing at `MeshBatch.from_surface` (`RTM_AUTO_DEPTH=1` is the automatic alternative).
 
 ### Automatic depth (experimental)
