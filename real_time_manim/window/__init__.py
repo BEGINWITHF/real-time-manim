@@ -33,7 +33,27 @@ class MLWindow(ShapeMixin, TextMixin, CoreMixin, PaintMixin, PlayMixin, Recordin
     The mixins above hold the implementation; this class only fixes their
     order -- ``ShapeMixin``/``TextMixin`` first, exactly as before the split,
     so any method they both define keeps winning.
+
+    Use it as a context manager (``with MLWindow(...) as win:``) or call
+    ``close()`` explicitly.  A process that exits with a live window is closed
+    by the ``atexit`` hook below, so a forgotten ``close()`` no longer means
+    "no output" -- but explicit is still better: ``close()`` finishes a manual
+    fast record and reports encoder errors.
     """
+
+
+def _close_remaining_windows():
+    """Best-effort close of windows still alive at interpreter exit."""
+    for win in list(MLWindow._registry):
+        try:
+            win.close()
+        except Exception:                 # shutdown must not raise
+            pass
+
+
+import atexit  # noqa: E402  (kept local to the registration below)
+
+atexit.register(_close_remaining_windows)
 
 
 __all__ = ["MLWindow"]
