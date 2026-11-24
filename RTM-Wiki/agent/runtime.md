@@ -157,6 +157,38 @@ def clear_mesh(self)
   - `RTM_AUTO_DEPTH=1` is the automatic alternative for eligible `Surface` roots; it does not remove per-face `set_fill` cost.
 - `see`: ../zh_CN/06-三维/02-三维表面.md
 
+### `MLWindow.set_post` (bloom / tonemap)
+
+```python
+def set_post(self, enabled=True, *, bloom=None, threshold=None, knee=None,
+             exposure=None, radius=None, tonemap=None)
+```
+
+- `ret`: `self`.
+- `args`: all keyword values are optional; omitted ones keep their previous
+  value (defaults: `bloom=0.6`, `threshold=0.82`, `knee=0.12`, `exposure=1.0`,
+  `radius=1.6`, `tonemap="none"`).  `tonemap` is `"none"`, `"aces"` or
+  `"reinhard"`; anything else raises `ValueError`.
+- `notes`:
+  - Native offscreen pass: after the scene is resolved, one copy feeds a
+    half-resolution soft-knee bright pass and a separable Gaussian blur, then
+    `scene + bloom * strength` is written back with exposure and the tone
+    curve.  It runs before screenshot readback and present, so PNG frames and
+    recorded video include it.
+  - `enabled=False` skips the copy and all post passes; the scene path is then
+    bit-identical to a build without the feature.
+  - `bloom=0, tonemap="none", exposure=1` is pixel-identical to post off
+    (verified: max channel diff 0).
+  - Cost is one full-resolution copy plus ~1/4-resolution passes (~0.4 ms of
+    GPU work at 1080p; measured 6.17 → 5.73 ms/frame end-to-end, i.e. inside
+    noise).
+  - `tonemap="aces"` is a real grade: 255 → 204, midtones lift.  Compensate
+    with `exposure > 1` when combining it with a bright scene.
+  - Env opt-in: `RTM_POST=1` (or `RTM_POST=aces`) enables it in every window;
+    `RTM_POST_BLOOM`, `RTM_POST_THRESHOLD`, `RTM_POST_KNEE`,
+    `RTM_POST_EXPOSURE`, `RTM_POST_RADIUS`, `RTM_POST_TONEMAP` override values.
+  - On a native library without `SetPost` the call is a silent no-op.
+
 ### `MLWindow.screenshot`
 
 ```python
@@ -558,7 +590,9 @@ def export_srt(path, entries=None, windows=None, verbose=False)
 | `RTM_WAIT_POPUP_DELAY` | `0.35` | seconds before it appears |
 | `RTM_LANG` | auto | force `zh` / `en` / `ja` / `ko` |
 | `RTM_WAIT_ICON` | bundled `wait.ico` | override the popup icon (`.ico` path) |
-| `RTM_DIAGNOSTICS` | unset | `1` prints one line per play: frame count, wall time, whether the static layer was used, the largest mesh batch (vertices), and texture uploads |
+| `RTM_POST` | unset | `1` (or `aces`/`reinhard`) enables the native bloom + tonemap pass in every window |
+| `RTM_POST_BLOOM` / `_THRESHOLD` / `_KNEE` / `_EXPOSURE` / `_RADIUS` / `_TONEMAP` | `0.6` / `0.82` / `0.12` / `1.0` / `1.6` / `none` | per-value overrides for `RTM_POST` |
+| `RTM_DIAGNOSTICS` | unset | `1` prints one line per play: frame count, wall time, static layer, largest mesh batch, texture uploads, post state |
 
 `RTM_DIAGNOSTICS=1` sample:
 
