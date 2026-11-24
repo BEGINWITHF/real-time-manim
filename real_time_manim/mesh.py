@@ -28,12 +28,13 @@ import numpy as np
 
 from real_time_manim.camera_state import screen_scale
 
-#: Native depth-tested mesh capacity (``native/shared_types.h``).  Each quad
-#: becomes two triangles, i.e. six vertices, so the last usable quad index is
-#: ``MAX_QUADS - 1``.  Kept as a module constant as well as class attributes so
-#: callers can size a batch without importing the native limit.
-MAX_MESH_VERTS = 262_144
-MAX_QUADS = MAX_MESH_VERTS // 6          # 43,690 quads = 262,140 vertices
+#: Native depth-tested mesh capacity (``native/shared_types.h``).  The legacy
+#: path expands every quad to six vertices; the indexed native path uses four
+#: vertices plus six indices, so it fits 1.5x as many quads.
+MAX_MESH_VERTS = 524_288
+MAX_QUADS_LEGACY = MAX_MESH_VERTS // 6    # 87,381 quads, six vertices each
+MAX_QUADS_INDEXED = MAX_MESH_VERTS // 4   # 131,072 quads, four vertices each
+MAX_QUADS = MAX_QUADS_INDEXED
 
 
 def _surface_corners(face):
@@ -179,15 +180,19 @@ class MeshBatch:
     ``(Q, 4)`` indices and per-corner colours instead.  The two forms cannot be
     mixed in one batch.
 
-    The native mesh pipeline holds :data:`MAX_MESH_VERTS` triangulated
-    vertices (:attr:`MAX_QUADS` quads).  ``append``/``append_indexed`` raise
-    before a batch can cross that limit; ``build_vertices`` additionally
-    truncates to whole quads (one warning) if the public arrays were grown
-    directly, so a partial triangle/quad can never reach native.
+    The native mesh pipeline holds :data:`MAX_MESH_VERTS` vertices
+    (:attr:`MAX_QUADS_INDEXED` quads through the indexed submission path,
+    :attr:`MAX_QUADS_LEGACY` through the expanded six-vertex fallback).
+    ``append``/``append_indexed`` raise before a batch can cross that limit;
+    ``build_vertices`` additionally truncates to whole quads (one warning) if
+    the public arrays were grown directly, so a partial triangle/quad can
+    never reach native.
     """
 
     MAX_MESH_VERTS = MAX_MESH_VERTS
     MAX_QUADS = MAX_QUADS
+    MAX_QUADS_INDEXED = MAX_QUADS_INDEXED
+    MAX_QUADS_LEGACY = MAX_QUADS_LEGACY
 
     def __init__(self):
         self.quads = np.empty((0, 4, 3), dtype=np.float64)
@@ -207,6 +212,13 @@ class MeshBatch:
         self._geometry_rev = 0
         self._project_key = None
         self._projected = None
+        # Native indexed submission: four corner vertices per quad + indices.
+        self._idx_out = None
+        self._idx_key = None
+        self._idx_view = None
+        self._idx_n = 0
+        self._idx_indices = None
+        self._idx_indices_q = 0
 
     @property
     def quad_count(self):
@@ -231,10 +243,10 @@ class MeshBatch:
         if total > self.MAX_QUADS:
             raise ValueError(
                 "MeshBatch capacity exceeded: %d + %d = %d quads "
-                "(%d vertices), but MAX_QUADS is %d (%d vertices). "
+                "(%d indexed vertices), but MAX_QUADS is %d (%d vertices). "
                 "Reduce the quad count, or drop whole quads before appending."
-                % (len(self.quads), len(quads), total, total * 6,
-                   self.MAX_QUADS, self.MAX_QUADS * 6)
+                % (len(self.quads), len(quads), total, total * 4,
+                   self.MAX_QUADS, self.MAX_QUADS * 4)
             )
         self.quads = np.concatenate([self.quads, quads], axis=0)
         self.colors = np.concatenate([self.colors, colors], axis=0)
@@ -282,10 +294,10 @@ class MeshBatch:
         if total > self.MAX_QUADS:
             raise ValueError(
                 "MeshBatch capacity exceeded: %d + %d = %d quads "
-                "(%d vertices), but MAX_QUADS is %d (%d vertices). "
+                "(%d indexed vertices), but MAX_QUADS is %d (%d vertices). "
                 "Reduce the quad count, or drop whole quads before appending."
-                % (len(self._indices), len(quads), total, total * 6,
-                   self.MAX_QUADS, self.MAX_QUADS * 6)
+                % (len(self._indices), len(quads), total, total * 4,
+                   self.MAX_QUADS, self.MAX_QUADS * 4)
             )
         offset = len(self._vertices)
         if self._indexed:
@@ -447,22 +459,23 @@ class MeshBatch:
         )
 
     def _build_indexed(self, viewport, width, height):
+        """Expanded six-vertex fallback for native builds without indices."""
         q = len(self._indices)
         if q == 0:
             return None
         indices = self._indices
         index_colors = self._index_colors
-        if q > self.MAX_QUADS:
+        cap = self.MAX_QUADS_LEGACY
+        if q > cap:
             if not self._capacity_warned:
                 warnings.warn(
-                    "MeshBatch has %d quads (%d vertices), over MAX_QUADS=%d "
-                    "(%d vertices); dropping the last %d quads so the native "
-                    "mesh stays whole."
-                    % (q, q * 6, self.MAX_QUADS, self.MAX_QUADS * 6,
-                       q - self.MAX_QUADS),
+                    "MeshBatch has %d quads (%d vertices), over the legacy "
+                    "MAX_QUADS_LEGACY=%d (%d vertices); dropping the last %d "
+                    "quads so the native mesh stays whole."
+                    % (q, q * 6, cap, cap * 6, q - cap),
                     RuntimeWarning, stacklevel=2)
                 self._capacity_warned = True
-            q = self.MAX_QUADS
+            q = cap
             indices = indices[:q]
             index_colors = index_colors[:q]
         view = self._view_key(viewport, width, height)
@@ -508,18 +521,19 @@ class MeshBatch:
 
         quads = self.quads
         colors = self.colors
-        if len(quads) > self.MAX_QUADS:
+        cap = self.MAX_QUADS_LEGACY
+        if len(quads) > cap:
             if not self._capacity_warned:
                 warnings.warn(
-                    "MeshBatch has %d quads (%d vertices), over MAX_QUADS=%d "
-                    "(%d vertices); dropping the last %d quads so the native "
-                    "mesh stays whole."
-                    % (len(quads), len(quads) * 6, self.MAX_QUADS,
-                       self.MAX_QUADS * 6, len(quads) - self.MAX_QUADS),
+                    "MeshBatch has %d quads (%d vertices), over the legacy "
+                    "MAX_QUADS_LEGACY=%d (%d vertices); dropping the last %d "
+                    "quads so the native mesh stays whole."
+                    % (len(quads), len(quads) * 6, cap, cap * 6,
+                       len(quads) - cap),
                     RuntimeWarning, stacklevel=2)
                 self._capacity_warned = True
-            quads = quads[:self.MAX_QUADS]
-            colors = colors[:self.MAX_QUADS]
+            quads = quads[:cap]
+            colors = colors[:cap]
 
         # Two triangles per quad, preserving the quad's vertex colours.
         tri = np.concatenate(
@@ -536,3 +550,210 @@ class MeshBatch:
         out[:, 2] = depth
         out[:, 3:7] = cols.reshape(-1, 4)
         return n, out.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
+    def _ensure_idx_out(self, n):
+        if self._idx_out is None or self._idx_out.shape[0] < n:
+            self._idx_out = np.empty((n, 7), dtype=np.float32)
+        return self._idx_out[:n]
+
+    def _sequential_indices(self, q):
+        if self._idx_indices is None or self._idx_indices_q < q:
+            base = (np.arange(q, dtype=np.uint32) * 4)[:, None]
+            self._idx_indices = (
+                base + np.array([[0, 1, 2, 0, 2, 3]], dtype=np.uint32)
+            ).reshape(-1)
+            self._idx_indices_q = q
+        return self._idx_indices[:q * 6]
+
+    def build_indexed_vertices(self, viewport, width, height):
+        """Native indexed path: four corner vertices + six uint32 indices.
+
+        Returns ``(vertex_count, vertices, index_count, indices)`` with numpy
+        arrays, or ``None`` for an empty batch.  The four vertices per quad
+        carry that quad's own corner colours, so sharing projected positions
+        through ``_indices`` never merges colours between faces.
+        """
+        q = self.quad_count
+        if q == 0:
+            return None
+        cap = self.MAX_QUADS_INDEXED
+        if q > cap:
+            if not self._capacity_warned:
+                warnings.warn(
+                    "MeshBatch has %d quads (%d vertices), over "
+                    "MAX_QUADS_INDEXED=%d (%d vertices); dropping the last "
+                    "%d quads so the native mesh stays whole."
+                    % (q, q * 4, cap, cap * 4, q - cap),
+                    RuntimeWarning, stacklevel=2)
+                self._capacity_warned = True
+            q = cap
+
+        if self._indexed:
+            view = self._view_key(viewport, width, height)
+            key = (self._geometry_rev, view, q)
+            if self._idx_key == key:
+                idx = self._sequential_indices(q)
+                return (self._idx_n, self._idx_view,
+                        len(idx), idx)
+            if self._project_key != (self._geometry_rev, view):
+                x, y, depth = self._project(self._vertices, viewport,
+                                            width, height)
+                self._projected = (
+                    (x / width) * 2.0 - 1.0,
+                    (y / height) * 2.0 - 1.0,
+                    depth,
+                )
+                self._project_key = (self._geometry_rev, view)
+            ndc_x, ndc_y, depth = self._projected
+            flat = self._indices[:q].reshape(-1)
+            n = len(flat)
+            out = self._ensure_idx_out(n)
+            out[:, 0] = ndc_x[flat]
+            out[:, 1] = ndc_y[flat]
+            out[:, 2] = depth[flat]
+            out[:, 3:7] = self._index_colors[:q].reshape(-1, 4)
+            self._idx_key = key
+            self._idx_view = out
+            self._idx_n = n
+        else:
+            quads = self.quads[:q]
+            colors = self.colors[:q]
+            x, y, depth = self._project(quads.reshape(-1, 3), viewport,
+                                        width, height)
+            n = len(quads) * 4
+            out = self._ensure_idx_out(n)
+            out[:, 0] = (x / width) * 2.0 - 1.0
+            out[:, 1] = (y / height) * 2.0 - 1.0
+            out[:, 2] = depth
+            out[:, 3:7] = colors.reshape(-1, 4)
+
+        idx = self._sequential_indices(q)
+        return n, out, len(idx), idx
+
+
+class MeshGroup:
+    """Several :class:`MeshBatch` objects drawn as one indexed mesh.
+
+    Use it when independent parts of the scene each own their geometry: the
+    group concatenates them into the frame's single native batch in list
+    order, so no part has to append into another part's arrays.  List order is
+    also draw order, which is what transparency sorts against; opaque quads
+    are resolved per pixel by the depth buffer either way.
+
+    ``win.set_mesh([a, b])`` is shorthand for ``MeshGroup(a, b)``.
+    """
+
+    MAX_MESH_VERTS = MAX_MESH_VERTS
+    MAX_QUADS = MAX_QUADS_INDEXED
+    MAX_QUADS_LEGACY = MAX_QUADS_LEGACY
+
+    def __init__(self, *batches):
+        if len(batches) == 1 and isinstance(batches[0], (list, tuple)):
+            batches = tuple(batches[0])
+        self.batches = list(batches)
+        self._capacity_warned = False
+
+    def append(self, batch):
+        self.batches.append(batch)
+        return self
+
+    def __len__(self):
+        return len(self.batches)
+
+    def __iter__(self):
+        return iter(self.batches)
+
+    def __repr__(self):
+        return "MeshGroup(%d batches)" % len(self.batches)
+
+    def _parts(self):
+        """``(quads, colors, count)`` for every batch, in list order."""
+        parts = []
+        for batch in self.batches:
+            if batch is None:
+                continue
+            if getattr(batch, "_indexed", False):
+                count = len(batch._indices)
+                if count:
+                    parts.append((batch._vertices[batch._indices],
+                                  batch._index_colors, count))
+            else:
+                count = len(batch.quads)
+                if count:
+                    parts.append((batch.quads, batch.colors, count))
+        return parts
+
+    def _gather(self, cap):
+        """Concatenate quads/colours up to ``cap`` whole quads."""
+        parts = self._parts()
+        total = sum(part[2] for part in parts)
+        quads, colors, used = [], [], 0
+        for part_quads, part_colors, count in parts:
+            take = min(count, cap - used)
+            if take <= 0:
+                break
+            quads.append(np.asarray(part_quads[:take], dtype=np.float64))
+            colors.append(np.asarray(part_colors[:take], dtype=np.float32))
+            used += take
+            if used >= cap:
+                break
+        if not quads:
+            return None
+        return (np.concatenate(quads, axis=0),
+                np.concatenate(colors, axis=0),
+                total - used)
+
+    def _warn_capacity(self, total, cap, where):
+        if not self._capacity_warned:
+            warnings.warn(
+                "MeshGroup has %d quads over %s=%d; dropping the last %d "
+                "quads so the native mesh stays whole."
+                % (total, where, cap, total - cap),
+                RuntimeWarning, stacklevel=3)
+            self._capacity_warned = True
+
+    def build_vertices(self, viewport, width, height):
+        """Legacy non-indexed path: six vertices per quad."""
+        cap = self.MAX_QUADS_LEGACY
+        gathered = self._gather(cap)
+        if gathered is None:
+            return None
+        quads, colors, dropped = gathered
+        if dropped:
+            self._warn_capacity(len(quads) + dropped, cap, "MAX_QUADS_LEGACY")
+        tri = np.concatenate(
+            [quads[:, [0, 1, 2], :], quads[:, [0, 2, 3], :]], axis=0)
+        cols = np.concatenate(
+            [colors[:, [0, 1, 2], :], colors[:, [0, 2, 3], :]], axis=0)
+        x, y, depth = MeshBatch._project(tri.reshape(-1, 3), viewport,
+                                         width, height)
+        n = len(tri)
+        out = np.empty((n, 7), dtype=np.float32)
+        out[:, 0] = (x / width) * 2.0 - 1.0
+        out[:, 1] = (y / height) * 2.0 - 1.0
+        out[:, 2] = depth
+        out[:, 3:7] = cols.reshape(-1, 4)
+        return n, out.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
+    def build_indexed_vertices(self, viewport, width, height):
+        """Indexed path: four vertices per quad + six uint32 indices."""
+        cap = self.MAX_QUADS
+        gathered = self._gather(cap)
+        if gathered is None:
+            return None
+        quads, colors, dropped = gathered
+        if dropped:
+            self._warn_capacity(len(quads) + dropped, cap,
+                                "MAX_QUADS_INDEXED")
+        x, y, depth = MeshBatch._project(quads.reshape(-1, 3), viewport,
+                                         width, height)
+        n = len(quads) * 4
+        out = np.empty((n, 7), dtype=np.float32)
+        out[:, 0] = (x / width) * 2.0 - 1.0
+        out[:, 1] = (y / height) * 2.0 - 1.0
+        out[:, 2] = depth
+        out[:, 3:7] = colors.reshape(-1, 4)
+        base = (np.arange(len(quads), dtype=np.uint32) * 4)[:, None]
+        idx = (base + np.array([[0, 1, 2, 0, 2, 3]], dtype=np.uint32)
+               ).reshape(-1)
+        return n, out, len(idx), idx
