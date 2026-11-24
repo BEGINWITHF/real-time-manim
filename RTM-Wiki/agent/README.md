@@ -67,6 +67,7 @@ fast_record_scene(MyScene, "out.mp4")
 | `FrameServer` | `from real_time_manim.frames import FrameServer` | Arbitrary-frame export |
 | `FramePreview` | `from real_time_manim.preview import FramePreview` | Frame-scrub preview |
 | `MeshBatch` | `from real_time_manim import MeshBatch` | Depth-tested quads; attach with `win.set_mesh(mesh)` |
+| `MeshGroup` | `from real_time_manim import MeshGroup` | Several batches as one mesh; list order = draw order |
 | `Timeline` | `from real_time_manim.timeline import Timeline` | Schedule mode (record first, render later) |
 | `Typst` / `TypstMath` / `MathTypst` | `from real_time_manim import Typst, TypstMath` | Typst typesetting |
 | RTM rate functions | `from real_time_manim import rate_functions` (module) | Shadows the ManimCE export of the same name |

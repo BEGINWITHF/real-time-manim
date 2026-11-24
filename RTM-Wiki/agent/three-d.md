@@ -12,6 +12,7 @@
 - Pin titles/labels with `self.add_fixed_in_frame_mobjects(title)` (pins position + orientation, and adds to the scene) or `self.add_fixed_orientation_mobjects(label)` (orientation only, stays in 3D). See `scene-camera.md`.
 - **Surface-subclass color caveat (shared with CE)**: `Cone`/`Cylinder`/`Sphere`/`Torus`/`Surface` swallow a `color=` constructor kwarg — `Mobject.__init__` applies it, then the checkerboard faces overwrite it. Color them after construction: `obj.set_color(GREEN)`, or pass `checkerboard_colors=False, fill_color=...`.
 - Shading model (RTM): a face is lit only when the active camera is a 3D camera (a camera rotation is set), `shade_in_3d` is `True` on the mobject, and the camera has a `light_source`. RTM reproduces CE's per-face shading natively; with no 3D camera or `shade_in_3d=False` every face is a flat color.
+- Shading cost: the lit corner colours depend on the face's own points, fill and the **world** light — never on the camera. `render/util.py::_lit_corner_colors` caches the pair on the mobject (keyed on the points/fill/light bytes) so a camera orbit reuses it, and `_shade_one`/`_unit_normal` use scalar arithmetic instead of `np.cross`/`np.linalg.norm` on 3-element vectors (the generic ufuncs cost ~55 µs per cross). Measured on a 9,800-face shaded `Surface` with the camera orbiting: 3.4–4.2 s → 1.5–1.6 s per 1080p frame, with shading values and rendered frames bit-identical to the previous code.
 - Paint order (RTM): under `ThreeDCamera`, mobjects are re-sorted by camera-space depth (not document order); `z_index` still participates first. Explicit `MeshBatch` geometry bypasses this sort and uses the native depth buffer instead (see below).
 
 ## Primitives
@@ -329,8 +330,21 @@ class MeshBatch:
     def __init__(self)
     def append(self, quads, colors) -> Self
     def append_indexed(self, vertices, quads, colors=None) -> Self
+    @classmethod
+    def from_surface(cls, surface, *, ignore_strokes=False) -> MeshBatch
     def mark_geometry_dirty(self) -> Self
     def build_vertices(self, viewport, width, height) -> tuple[int, ctypes pointer] | None
+    def build_indexed_vertices(self, viewport, width, height) -> tuple[int, ndarray, int, ndarray] | None
+
+class MeshGroup:
+    def __init__(self, *batches)
+    def append(self, batch) -> Self
+
+class MeshMobject(Mobject):
+    def __init__(self, vertices, quads, colors=None)
+    @classmethod
+    def from_surface(cls, surface, *, ignore_strokes=False) -> MeshMobject
+    def to_mesh_batch(self) -> MeshBatch
 ```
 
 - `quads`: `(Q, 4, 3)` float, four corners in world coordinates.
@@ -340,22 +354,56 @@ class MeshBatch:
   are unchanged, the projection) is reused.  Call `mark_geometry_dirty()` after
   editing `vertices` in place.  `append` and `append_indexed` cannot be mixed in
   one batch.
+- `from_surface`: bake a flat `Surface` (`set_shade_in_3d(False)`,
+  `set_stroke(width=0)`) into one indexed batch.  Faces must be opaque, flat and
+  3–4-cornered; shading, transparency or a visible stroke raise `ValueError`
+  with the face index (`ignore_strokes=True` drops strokes with one warning).
+  The bake is a snapshot — later `Surface` transforms do not move the mesh.
 - `colors`: `(Q, 4, 4)` float, RGBA per corner in 0–1.
 - Attach with `win.set_mesh(mesh)`; detach with `win.clear_mesh()` or
-  `win.set_mesh(None)`. `sync()` calls `build_vertices` once per frame and
-  hands the result to native `AddMesh(vertex_count, x,y,z,rgba)`.
+  `win.set_mesh(None)`. `sync()` builds once per frame and hands four corner
+  vertices + six uint32 indices per quad to native
+  `AddMeshIndexed(vertex_count, x,y,z,rgba, index_count, indices)`, falling
+  back to the expanded six-vertex `AddMesh` on native builds without it.
+- `MeshGroup(terrain, markers)` (or `win.set_mesh([a, b])`) concatenates
+  independently owned batches into the frame's single native mesh, in list
+  order.  Draw order is explicit (translucent quads need it) without appending
+  into another part's arrays; it does not add capacity.
+- `MeshMobject` (``real_time_manim.mesh_mobject``) is the scene-side wrapper:
+  `points` are the unique `(N, 3)` vertices, so `shift`/`rotate`/`scale` and
+  `.animate` edit the mesh.  `to_mesh_batch()` points the batch at the current
+  array and calls `mark_geometry_dirty()` when the vertex bytes changed (a
+  `shift` mutates in place, `scale`/`rotate` rebind).  `window/core.py`
+  collects every `MeshMobject` in the scene (nested ones too) and merges them
+  with `win.set_mesh`, identity-deduplicated, into the frame's single batch;
+  `paint.py::_send_impl` skips the class via `_rtm_mesh_skip` so its vertices
+  are never drawn as a path.  `interpolate_color` ramps `_colors` (base
+  `Mobject` raises `NotImplementedError`); `__deepcopy__` drops the frame batch
+  so a `Transform` target does not copy the projected buffers.
+  `win.set_mesh(mesh_mobject)` also works through its
+  `build_indexed_vertices`.
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
   mesh is recorded **before** the painter primitives, so 2D overlays stay on
   top regardless of 3D depth.
-- Limits: quads only, `MAX_MESH_VERTS = 262144` vertices
-  (`MeshBatch.MAX_QUADS = 43690`), one batch per frame (`AddMesh`
-  overwrites, it does not append); `append`/`append_indexed` raise when the
-  limit is crossed, no per-pixel transparency sort.
+- Limits: quads only, `MAX_MESH_VERTS = 524288` vertices
+  (`MeshBatch.MAX_QUADS = 131072` through the indexed path; the expanded
+  fallback holds 87381), one native batch per frame; `append`/`append_indexed`
+  raise when the limit is crossed, no per-pixel transparency sort.
 - Performance (18,432 quads / 18,705 unique vertices / 110,592 expanded):
   `build_vertices` ~13.4 ms with `append`, ~4.45 ms with `append_indexed`
   (unique projection + gather), ~0.04 ms when the indexed batch/view is
-  unchanged.  Native still receives expanded vertices; an index buffer is a
-  future native step.
+  unchanged.  The native indexed submission projects four corners per quad
+  (~2/3 of the old vertex buffer) instead of the expanded six; the expanded
+  path remains only as the old-dylib fallback.
+- `from_surface` bake cost scales with faces, once: 400 faces ~1.6 ms
+  (fast vectorized path), 3,600 ~14 ms, 9,800 ~73 ms.  The old per-face
+  `get_start_anchors`/`np.allclose` loop cost ~460 ms for 9,800 faces, so the
+  uniform-grid path stacks `points[::4]` and falls back per face only for
+  irregular cells (degenerate pole cells, 3-corner rings).
+- Dense painter warning: when a 3D scene keeps a `Surface` with
+  `DENSE_SURFACE_FACES = 2000` or more faces on the painter (and
+  `RTM_AUTO_DEPTH` is off), `window/core.py` emits one `RuntimeWarning` per
+  scene pointing at `MeshBatch.from_surface`; it never changes rendering.
 
 ### Automatic depth (`RTM_AUTO_DEPTH=1`)
 

@@ -314,6 +314,45 @@ The console prints one forced-correction hint each; in the video the two clips a
 > - Stop trying to tune the resolution — RTM has only the single 1920×1080@60 output (hard-coded in the source as `SUPPORTED_WIDTH/HEIGHT/FPS`, the reason being that small windows hide resolution-related bugs). If you want low resolution, downscale with ffmpeg after rendering.
 > - With `hidden=False` the window steals focus, and it closes automatically after recording.
 
+### `MLWindow.set_post(...)` (bloom / tonemap)
+
+```python
+def set_post(self, enabled=True, *, bloom=None, threshold=None, knee=None,
+             exposure=None, radius=None, tonemap=None)
+```
+
+Turns on the native post pass for this window. Everything is optional; a
+parameter you leave out keeps its current value.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | `bool` | `True` | `False` skips the copy and every post pass; the picture is then exactly the no-post path |
+| `bloom` | `float` | `0.6` | how much blurred highlight is added (`0` disables the glow) |
+| `threshold` | `float` | `0.82` | luma above which a pixel feeds the bright pass |
+| `knee` | `float` | `0.12` | soft-knee width around `threshold` |
+| `exposure` | `float` | `1.0` | multiplier before the tone curve |
+| `radius` | `float` | `1.6` | blur radius in half-resolution texels |
+| `tonemap` | `str` | `"none"` | `"none"`, `"aces"` or `"reinhard"` |
+
+```python
+class BloomDemo(Scene):
+    def construct(self):
+        win = MLWindow()
+        win.scene = self
+        win.set_post(bloom=0.9, threshold=0.65, tonemap="aces")
+        self.add(Circle(radius=1.2, color=WHITE, fill_opacity=1, stroke_width=0))
+        win.play(Wait(1.0))
+        win.close()
+```
+
+Notes:
+
+- The pass runs after the scene is resolved and before readback/present, so `win.screenshot(...)`, `fast_record_scene` and `record_scene` all include it.
+- `set_post(bloom=0, tonemap="none")` is pixel-identical to leaving post off.
+- `tonemap="aces"` is a real grade (white 255 becomes ~204 and midtones lift). Compensate with `exposure` when you use it on an already-bright scene; `"none"` keeps the base image untouched and only adds the glow.
+- Cost is one full-resolution copy plus quarter-resolution passes; measured at 1080p it stays inside frame-time noise.
+- Without code: `RTM_POST=1` (or `RTM_POST=aces`) enables it for every window; `RTM_POST_BLOOM`, `RTM_POST_THRESHOLD`, `RTM_POST_KNEE`, `RTM_POST_EXPOSURE`, `RTM_POST_RADIUS` and `RTM_POST_TONEMAP` override the values.
+
 ### `MLWindow.enable_fast_record(...)` (the low-level recording entry point)
 
 ```python

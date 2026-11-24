@@ -13,9 +13,17 @@
 #define MAX_POLYGON_VERTS 64
 #endif
 
-/* Depth-tested mesh batch: x,y,z,r,g,b,a per vertex. */
+/* Depth-tested mesh batch: x,y,z,r,g,b,a per vertex.  The indexed path needs
+   four vertices per quad, so 524288 vertices hold 131072 quads; the legacy
+   six-vertex path holds 87381. */
 #ifndef MAX_MESH_VERTS
-#define MAX_MESH_VERTS 262144
+#define MAX_MESH_VERTS 524288
+#endif
+
+/* Indexed meshes use 4 vertices + 6 indices per quad instead of 6 vertices,
+   so MAX_MESH_VERTS vertices cover MAX_MESH_VERTS / 4 quads. */
+#ifndef MAX_MESH_INDICES
+#define MAX_MESH_INDICES ((MAX_MESH_VERTS / 4) * 6)
 #endif
 
 /* Multisample anti-aliasing.  manim's Cairo renderer antialiases every edge;

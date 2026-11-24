@@ -30,6 +30,44 @@ if TYPE_CHECKING:
 # 0xCA11E4A5, so this cannot collide.
 _STATIC_TOKEN = 0x5A71C1A7
 
+# Bloom/tonemap (native post pass).  Off unless asked for; the env route lets a
+# fast record opt in without touching scene code.
+_POST_TONEMAPS = {"none": 0, "aces": 1, "reinhard": 2}
+_POST_DEFAULTS = {
+    "bloom": 0.60,
+    "threshold": 0.82,
+    "knee": 0.12,
+    "exposure": 1.0,
+    "radius": 1.6,
+    "tonemap": "none",
+}
+
+
+def _post_from_env():
+    """Post kwargs from ``RTM_POST*``, or ``None`` when disabled."""
+    raw = os.environ.get("RTM_POST", "").strip().lower()
+    if raw in ("", "0", "false", "no", "off"):
+        return None
+    params = dict(_POST_DEFAULTS)
+    if raw in _POST_TONEMAPS:
+        params["tonemap"] = raw
+    tonemap = os.environ.get("RTM_POST_TONEMAP", "").strip().lower()
+    if tonemap:
+        params["tonemap"] = tonemap
+    for key, env in (("bloom", "RTM_POST_BLOOM"),
+                     ("threshold", "RTM_POST_THRESHOLD"),
+                     ("knee", "RTM_POST_KNEE"),
+                     ("exposure", "RTM_POST_EXPOSURE"),
+                     ("radius", "RTM_POST_RADIUS")):
+        value = os.environ.get(env)
+        if value is None or not value.strip():
+            continue
+        try:
+            params[key] = float(value)
+        except ValueError:
+            raise ValueError("%s must be a number, got %r" % (env, value))
+    return params
+
 
 class CoreMixin:
     # This renderer supports exactly ONE output format: 1920x1080 at 60 fps.
@@ -96,6 +134,9 @@ class CoreMixin:
         self._diag_play_static = False
         self._diag_play_mesh = 0
         self._diag_tex_uploads = 0
+        # Native bloom/tonemap (off by default; RTM_POST=1 opts in).
+        self._post_enabled = False
+        self._post_params = dict(_POST_DEFAULTS)
         # Schedule mode (2.0.0): when the class flag _schedule_mode is True,
         # play() records animations on a global timeline instead of rendering,
         # so any frame can later be produced on demand via build_timeline().
@@ -317,6 +358,12 @@ class CoreMixin:
             raise
         type(self)._registry.append(self)
 
+        # Opt-in via environment so a fast record can enable it without scene
+        # code; set_post() remains the explicit API.
+        _post = _post_from_env()
+        if _post is not None:
+            self.set_post(**_post)
+
     @property
     def hwnd(self):
         """This window's Win32 handle (``None`` off Windows / before init).
@@ -494,17 +541,82 @@ class CoreMixin:
         return True
 
     def set_mesh(self, mesh):
-        """Attach a ``MeshBatch`` for depth-tested 3D geometry.
+        """Attach depth-tested 3D geometry to the window.
 
-        The batch is submitted before the painter primitives, so a mesh can
-        occlude itself per pixel while 2D overlays still paint on top.  Pass
+        ``mesh`` is a ``MeshBatch``, a ``MeshMobject``, a ``MeshGroup``, or a
+        list/tuple of batches (shorthand for ``MeshGroup(*mesh)``); pass
         ``None`` (or call :meth:`clear_mesh`) to detach it.
+
+        The geometry is submitted before the painter primitives, so a mesh can
+        occlude itself per pixel while 2D overlays still paint on top.  Several
+        batches share one native batch and one depth buffer: list order is draw
+        order (and therefore transparency order), while opaque quads are
+        resolved per pixel.
         """
+        if isinstance(mesh, (list, tuple)):
+            from real_time_manim.mesh import MeshGroup
+            mesh = MeshGroup(*mesh)
         self._mesh = mesh
 
     def clear_mesh(self):
         """Detach the ``MeshBatch`` attached with :meth:`set_mesh`."""
         self._mesh = None
+
+    def set_post(self, enabled=True, *, bloom=None, threshold=None, knee=None,
+                 exposure=None, radius=None, tonemap=None):
+        """Enable or disable native bloom + tonemap for this window.
+
+        Args:
+            enabled: ``False`` restores the untouched scene path (no copy, no
+                post pass).  Values are kept, so a later ``set_post()``
+                re-enables the same look.
+            bloom: bloom strength added to the scene (default 0.6).
+            threshold: bright-pass luma threshold in 0..1 (default 0.82).
+            knee: soft-knee width around ``threshold`` (default 0.12).
+            exposure: multiplier before the tone curve (default 1.0).
+            radius: blur radius in half-resolution texels (default 1.6).
+            tonemap: ``"none"``, ``"aces"`` or ``"reinhard"``.
+
+        The pass runs after the scene is resolved and before readback/present,
+        so screenshots and recorded video include it.  On a native library
+        without ``SetPost`` this is a silent no-op.
+        """
+        params = dict(self._post_params)
+        for key, value in (("bloom", bloom), ("threshold", threshold),
+                           ("knee", knee), ("exposure", exposure),
+                           ("radius", radius)):
+            if value is not None:
+                params[key] = float(value)
+        if tonemap is not None:
+            key = str(tonemap).strip().lower()
+            if key not in _POST_TONEMAPS:
+                raise ValueError(
+                    "unknown tonemap %r (choose from %s)"
+                    % (tonemap, ", ".join(sorted(_POST_TONEMAPS))))
+            params["tonemap"] = key
+        for key in ("bloom", "threshold", "knee", "exposure", "radius"):
+            if not np.isfinite(params[key]):
+                raise ValueError("post %s must be finite" % key)
+
+        self._post_enabled = bool(enabled)
+        self._post_params = params
+
+        setter = getattr(self.dll, "SetPost", None)
+        if setter is not None:
+            setter.argtypes = [
+                ctypes.c_int,
+                ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                ctypes.c_float, ctypes.c_float,
+                ctypes.c_int,
+            ]
+            setter.restype = None
+            setter(
+                int(self._post_enabled),
+                params["threshold"], params["knee"], params["bloom"],
+                params["exposure"], params["radius"],
+                _POST_TONEMAPS[params["tonemap"]],
+            )
+        return self
 
     # ------------------------------------------------------------------
     # Static layer (#85)
@@ -644,6 +756,26 @@ class CoreMixin:
                               int(height), quad, 1.0)
         self._diag_play_static = True
 
+    @staticmethod
+    def _scene_mesh_mobjects(scene):
+        """Every :class:`MeshMobject` in the scene, in document order."""
+        from real_time_manim.mesh_mobject import MeshMobject
+        found = []
+        seen = set()
+        stack = (list(scene.mobjects)
+                 + list(foreground_mobjects_of(scene)))[::-1]
+        while stack:
+            mob = stack.pop()
+            mid = id(mob)
+            if mid in seen:
+                continue
+            seen.add(mid)
+            if isinstance(mob, MeshMobject):
+                found.append(mob)
+                continue
+            stack.extend(reversed(getattr(mob, 'submobjects', ()) or ()))
+        return found
+
     def sync(self, scene, angle=0.0, only_ids=None):
         # Phase 5: publish this frame's camera viewport (None for a plain Camera,
         # so non-camera scenes keep the fixed default frame).
@@ -658,21 +790,81 @@ class CoreMixin:
 
         # Optional depth-tested mesh batch.  It is submitted before the legacy
         # painter primitives (native draws mesh first), so a mesh can occlude
-        # itself per pixel while 2D overlays still paint on top.
+        # itself per pixel while 2D overlays still paint on top.  The static
+        # bake pass (``only_ids``) must not include any mesh: the layer is kept
+        # as pixels while the mesh is submitted live every frame, so baking it
+        # would draw it twice and freeze a moving one in the image.
         mesh = getattr(self, "_mesh", None)
-        if mesh is not None:
+        if only_ids is None:
+            scene_meshes = self._scene_mesh_mobjects(scene)
+        else:
+            scene_meshes = []
+        if scene_meshes:
+            # MeshMobject lives in the scene so normal transforms move it; the
+            # frame still has one native mesh, so merge it with any explicit
+            # win.set_mesh batch (identity-deduplicated).
+            from real_time_manim.mesh import MeshGroup
+            from real_time_manim.mesh_mobject import MeshMobject
+            parts = []
+            seen = set()
+
+            def _add(part):
+                if part is None or id(part) in seen:
+                    return
+                seen.add(id(part))
+                parts.append(part)
+
+            if isinstance(mesh, MeshGroup):
+                for part in mesh.batches:
+                    _add(part)
+            else:
+                _add(mesh)
+            for mob in scene_meshes:
+                _add(mob)
+            resolved = [part.to_mesh_batch()
+                        if isinstance(part, MeshMobject) else part
+                        for part in parts]
+            mesh = (resolved[0] if len(resolved) == 1
+                    else MeshGroup(*resolved))
+        if only_ids is None and mesh is not None:
             from real_time_manim.camera_state import get_viewport
-            built = mesh.build_vertices(get_viewport(), self.win_w, self.win_h)
-            if built is not None:
-                count, vertices = built
-                add_mesh = self.dll.AddMesh
-                add_mesh.argtypes = [
+            add_indexed = getattr(self.dll, "AddMeshIndexed", None)
+            build_indexed = getattr(mesh, "build_indexed_vertices", None)
+            built_idx = None
+            if add_indexed is not None and build_indexed is not None:
+                built_idx = build_indexed(
+                    get_viewport(), self.win_w, self.win_h)
+            if built_idx is not None:
+                vcount, verts, icount, indices = built_idx
+                add_indexed.argtypes = [
                     ctypes.c_int,
                     ctypes.POINTER(ctypes.c_float),
+                    ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_uint),
                 ]
-                add_mesh.restype = None
-                add_mesh(int(count), vertices)
-                self._diag_play_mesh = max(self._diag_play_mesh, int(count))
+                add_indexed.restype = None
+                add_indexed(
+                    int(vcount),
+                    verts.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                    int(icount),
+                    indices.ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+                )
+                self._diag_play_mesh = max(
+                    self._diag_play_mesh, int(vcount))
+            else:
+                built = mesh.build_vertices(get_viewport(), self.win_w,
+                                            self.win_h)
+                if built is not None:
+                    count, vertices = built
+                    add_mesh = self.dll.AddMesh
+                    add_mesh.argtypes = [
+                        ctypes.c_int,
+                        ctypes.POINTER(ctypes.c_float),
+                    ]
+                    add_mesh.restype = None
+                    add_mesh(int(count), vertices)
+                    self._diag_play_mesh = max(
+                        self._diag_play_mesh, int(count))
         # Phase 5.4: a custom camera's frame comes back as pixels, not geometry.
         if self._rasterise_custom_camera(scene):
             return
@@ -764,8 +956,9 @@ class CoreMixin:
         # untouched.  Opt-in only (RTM_AUTO_DEPTH=1) and only when the whole
         # frame is eligible -- see window/depth_mesh.py.
         auto_ids = set()
-        if is_3d and mesh is None:
+        if only_ids is None and is_3d and mesh is None:
             from real_time_manim.window import depth_mesh
+            depth_mesh.warn_dense_surface(roots, scene)
             if depth_mesh.enabled():
                 eligible = depth_mesh.collect_roots(roots, fixed_ids)
                 if eligible:

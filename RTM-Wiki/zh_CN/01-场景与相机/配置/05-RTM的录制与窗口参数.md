@@ -314,6 +314,44 @@ if __name__ == "__main__" and ("mlwindow" in sys.argv[1:] or not sys.argv[1:]):
 > - 别再琢磨调分辨率了——RTM 只有 1920×1080@60 这一种输出（源码里写死 `SUPPORTED_WIDTH/HEIGHT/FPS`，理由是小窗口会把分辨率相关 bug 藏起来）。想要低清就渲完用 ffmpeg 缩。
 > - `hidden=False` 时窗口会抢焦点，录完自动关。
 
+### `MLWindow.set_post(...)`（辉光 / 色调映射）
+
+```python
+def set_post(self, enabled=True, *, bloom=None, threshold=None, knee=None,
+             exposure=None, radius=None, tonemap=None)
+```
+
+打开这个窗口的原生后处理。参数都是可选的，没传的沿用当前值。
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `bool` | `True` | `False` 跳过拷贝和所有后处理 pass，画面与不开后处理完全一致 |
+| `bloom` | `float` | `0.6` | 叠加的模糊高光强度（`0` 关闭辉光） |
+| `threshold` | `float` | `0.82` | 亮度阈值，高于它才进入亮部提取 |
+| `knee` | `float` | `0.12` | 阈值附近的软过渡宽度 |
+| `exposure` | `float` | `1.0` | 色调曲线前的曝光倍数 |
+| `radius` | `float` | `1.6` | 半分辨率下的模糊半径（texel） |
+| `tonemap` | `str` | `"none"` | `"none"`、`"aces"` 或 `"reinhard"` |
+
+```python
+class BloomDemo(Scene):
+    def construct(self):
+        win = MLWindow()
+        win.scene = self
+        win.set_post(bloom=0.9, threshold=0.65, tonemap="aces")
+        self.add(Circle(radius=1.2, color=WHITE, fill_opacity=1, stroke_width=0))
+        win.play(Wait(1.0))
+        win.close()
+```
+
+说明：
+
+- 后处理在场景 resolve 之后、截屏/呈现之前执行，所以 `win.screenshot(...)`、`fast_record_scene` 和 `record_scene` 都会带上效果。
+- `set_post(bloom=0, tonemap="none")` 与不开后处理逐像素一致。
+- `tonemap="aces"` 是真正的调色（白色 255 变成约 204，中间调被提亮）。本身已经很亮的画面建议配合 `exposure` 调整；`"none"` 只加辉光、不动原图。
+- 成本是一次全分辨率拷贝加几个 1/4 分辨率 pass；1080p 实测落在帧时间噪声内。
+- 不想改代码：`RTM_POST=1`（或 `RTM_POST=aces`）对所有窗口启用；`RTM_POST_BLOOM`、`RTM_POST_THRESHOLD`、`RTM_POST_KNEE`、`RTM_POST_EXPOSURE`、`RTM_POST_RADIUS`、`RTM_POST_TONEMAP` 可覆盖各项数值。
+
 ### `MLWindow.enable_fast_record(...)`（录制的底层入口）
 
 ```python

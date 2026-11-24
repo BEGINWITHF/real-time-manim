@@ -1,5 +1,6 @@
 #include "vulkan_core.h"
 #include "vulkan_texture.h"
+#include "vulkan_post.h"
 #include "draw_common.h"
 #include "mesh_shaders.h"
 
@@ -78,6 +79,10 @@ VkDeviceMemory g_vert_buf_mem = VK_NULL_HANDLE;
 VkBuffer g_mesh_vert_buf = VK_NULL_HANDLE;
 
 VkDeviceMemory g_mesh_vert_buf_mem = VK_NULL_HANDLE;
+
+VkBuffer g_mesh_index_buf = VK_NULL_HANDLE;
+
+VkDeviceMemory g_mesh_index_buf_mem = VK_NULL_HANDLE;
 
 VkPipeline g_mesh_pipeline = VK_NULL_HANDLE;
 
@@ -1212,6 +1217,11 @@ static void CreateVertexBuffer(void) {
                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                  &g_mesh_vert_buf, &g_mesh_vert_buf_mem);
 
+    VkDeviceSize mesh_index_size = sizeof(unsigned int) * MAX_MESH_INDICES;
+    CreateBuffer(mesh_index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 &g_mesh_index_buf, &g_mesh_index_buf_mem);
+
 }
 
 void update_mesh_vertex_buffer(const void *data, VkDeviceSize size) {
@@ -1221,6 +1231,15 @@ void update_mesh_vertex_buffer(const void *data, VkDeviceSize size) {
     vkMapMemory(g_dev, g_mesh_vert_buf_mem, 0, size, 0, &mapped_data);
     memcpy(mapped_data, data, size);
     vkUnmapMemory(g_dev, g_mesh_vert_buf_mem);
+}
+
+void update_mesh_index_buffer(const void *data, VkDeviceSize size) {
+    if (g_mesh_index_buf == VK_NULL_HANDLE || size == 0) return;
+    Render_WaitAllInFlight();
+    void *mapped_data;
+    vkMapMemory(g_dev, g_mesh_index_buf_mem, 0, size, 0, &mapped_data);
+    memcpy(mapped_data, data, size);
+    vkUnmapMemory(g_dev, g_mesh_index_buf_mem);
 }
 
 /* Clamp the requested MSAA count to what this device can actually render.
@@ -1308,6 +1327,8 @@ void Render_Init(void *metal_layer, int width, int height) {
 
     CreateFramebuffers();
 
+    Post_Init();
+
     CreateCommandPool();
 
     CreateCommandBuffers();
@@ -1362,6 +1383,10 @@ void update_vertex_buffer(const void *data, VkDeviceSize size) {
 }
 
 void CleanupSwapchain(void) {
+    /* Post framebuffers reference the swapchain image views, so they have to
+       go first.  Post_Cleanup is a no-op when post never initialised. */
+    Post_Cleanup();
+
     for (uint32_t i = 0; i < g_swapchain_img_count; i++) {
         vkDestroyFramebuffer(g_dev, g_framebuffers[i], NULL);
     }
@@ -1438,6 +1463,7 @@ void RecreateSwapchain(void) {
     CreateSwapchain();
     CreateImageViews();
     CreateFramebuffers();
+    Post_Init();
     /* The new swapchain is allowed to report a different image count than the
        one these were sized from, so realign the per-frame arrays (no-op when
        the count is unchanged, which is the usual case). */
@@ -1483,6 +1509,8 @@ void Render_Cleanup(void) {
     vkFreeMemory(g_dev, g_vert_buf_mem, NULL);
     vkDestroyBuffer(g_dev, g_mesh_vert_buf, NULL);
     vkFreeMemory(g_dev, g_mesh_vert_buf_mem, NULL);
+    vkDestroyBuffer(g_dev, g_mesh_index_buf, NULL);
+    vkFreeMemory(g_dev, g_mesh_index_buf_mem, NULL);
 
     vkDestroySurfaceKHR(g_inst, g_surface, NULL);
     vkDestroyDevice(g_dev, NULL);

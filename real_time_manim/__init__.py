@@ -234,6 +234,8 @@ _LAZY_EXPORTS = {
     "FrameServer": ("real_time_manim.frames", "FrameServer"),
     "FramePreview": ("real_time_manim.preview", "FramePreview"),
     "MeshBatch": ("real_time_manim.mesh", "MeshBatch"),
+    "MeshGroup": ("real_time_manim.mesh", "MeshGroup"),
+    "MeshMobject": ("real_time_manim.mesh_mobject", "MeshMobject"),
     "fast_record_scene": ("real_time_manim.record", "fast_record_scene"),
     "record_scene": ("real_time_manim.record", "record_scene"),
     "restore_tex_cache": ("real_time_manim.util", "restore_tex_cache"),

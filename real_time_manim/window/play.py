@@ -1119,11 +1119,12 @@ class PlayMixin:
         # captured, so never let it leak into another play's frames.
         if os.environ.get("RTM_DIAGNOSTICS"):
             print("[rtm] play %d: %df %.2fs | static=%s mesh=%dv "
-                  "tex_uploads=%d"
+                  "tex_uploads=%d post=%s"
                   % (self._diag_play_no, n_frames, time.time() - _diag_t0,
                      "on" if self._diag_play_static else "off",
                      self._diag_play_mesh,
-                     getattr(self, "_diag_tex_uploads", 0) - _diag_tex0),
+                     getattr(self, "_diag_tex_uploads", 0) - _diag_tex0,
+                     "on" if getattr(self, "_post_enabled", False) else "off"),
                   flush=True)
         _drop = getattr(self, "_drop_static_layer", None)
         if _drop is not None:
