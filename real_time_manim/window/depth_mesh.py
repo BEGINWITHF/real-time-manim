@@ -41,12 +41,44 @@ so mesh and painter agree pixel for pixel.
 from __future__ import annotations
 
 import os
+import warnings
 
 import numpy as np
 
 from real_time_manim.camera_state import screen_scale
 
 _TRUTHY = {"1", "true", "yes", "on"}
+
+#: Face count at which a painter-drawn Surface is worth a one-time warning.
+DENSE_SURFACE_FACES = 2000
+
+
+def warn_dense_surface(roots, scene) -> None:
+    """Warn once when a densely tessellated Surface stays on the painter.
+
+    A Surface with thousands of faces is the one scene where the painter's
+    per-face Python work dominates.  ``MeshBatch.from_surface`` and
+    ``RTM_AUTO_DEPTH=1`` both bypass it; the warning is only a pointer, not a
+    behaviour change, and is emitted once per scene.
+    """
+    if enabled():
+        return
+    for root in roots:
+        faces = getattr(root, "list_of_faces", None)
+        if not faces or len(faces) < DENSE_SURFACE_FACES:
+            continue
+        if getattr(scene, "_rtm_dense_surface_warned", False):
+            return
+        try:
+            scene._rtm_dense_surface_warned = True
+        except Exception:
+            pass
+        warnings.warn(
+            "Surface with %d faces is still painted face-by-face; for a big "
+            "speed-up use MeshBatch.from_surface(surface) "
+            "(shade_in_3d=False, no visible strokes) or set RTM_AUTO_DEPTH=1."
+            % len(faces), RuntimeWarning, stacklevel=3)
+        return
 
 
 def enabled() -> bool:

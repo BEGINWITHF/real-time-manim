@@ -766,6 +766,7 @@ class CoreMixin:
         auto_ids = set()
         if is_3d and mesh is None:
             from real_time_manim.window import depth_mesh
+            depth_mesh.warn_dense_surface(roots, scene)
             if depth_mesh.enabled():
                 eligible = depth_mesh.collect_roots(roots, fixed_ids)
                 if eligible:
