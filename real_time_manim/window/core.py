@@ -5,6 +5,7 @@ point that walks the scene once per frame."""
 
 import ctypes
 import hashlib
+import math
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -570,6 +571,39 @@ class CoreMixin:
     def clear_mesh(self):
         """Detach the ``MeshBatch`` attached with :meth:`set_mesh`."""
         self._mesh = None
+
+    def _set_paint_depth(self, key):
+        """Publish one paint unit's depth (camera-space z) to native.
+
+        The native painter records the value with each queued primitive; its
+        pipeline depth-tests (without writing) against the mesh.  ``inf`` is
+        the queue's 2D/text marker and maps to 0 (in front), preserving the
+        old "overlays always on top" behaviour.
+        """
+        setter = getattr(self.dll, "SetPaintDepth", None)
+        if setter is None:
+            return
+        depth = 0.0
+        try:
+            finite = math.isfinite(float(key))
+        except (TypeError, ValueError):
+            finite = False
+        if finite:
+            try:
+                from real_time_manim.camera_state import get_viewport
+                viewport = get_viewport()
+            except Exception:
+                viewport = None
+            if viewport is not None:
+                focal = getattr(viewport, "focal_distance", None)
+                scale = (abs(focal) if focal and abs(focal) > 1e-6
+                         else max(float(getattr(viewport, "height", 8.0)),
+                                  1.0))
+                depth = 0.5 - 0.5 * float(key) / scale
+                depth = min(max(depth, 0.0), 1.0)
+        setter.argtypes = [ctypes.c_float]
+        setter.restype = None
+        setter(float(depth))
 
     def set_mesh_light(self, direction=None, *, ambient=None, diffuse=None,
                        specular=None, shininess=None):

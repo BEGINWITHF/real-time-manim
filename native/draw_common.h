@@ -8,6 +8,11 @@ extern float g_vertices[];
 extern uint32_t g_vertex_count;
 extern VkExtent2D g_swapchain_ext;
 
+/* Depth of the paint unit currently being submitted (0 = in front of the
+   mesh, 0.5 = neutral, 1 = far).  Python sets it per unit; the command list
+   records it so replay builds each primitive with the right z. */
+extern float g_paint_z;
+
 /* The bezier *fill* emits vertices proportional to the filled **area**, so the
  * budget has to be a per-frame vertex count, not a shape count: at 1080p a
  * single Surface scene needs > 2 M vertices.  The old Windows value (1 048 576)
@@ -29,13 +34,14 @@ static inline int PushVertex(float px, float py, float r, float g, float b, floa
     float nx, ny;
     ToNDC(px, py, &nx, &ny);
 
-    uint32_t idx = g_vertex_count * 6;
+    uint32_t idx = g_vertex_count * 7;
     g_vertices[idx + 0] = nx;
     g_vertices[idx + 1] = ny;
-    g_vertices[idx + 2] = r;
-    g_vertices[idx + 3] = g;
-    g_vertices[idx + 4] = b;
-    g_vertices[idx + 5] = a;
+    g_vertices[idx + 2] = g_paint_z;
+    g_vertices[idx + 3] = r;
+    g_vertices[idx + 4] = g;
+    g_vertices[idx + 5] = b;
+    g_vertices[idx + 6] = a;
 
     g_vertex_count++;
     return 1;

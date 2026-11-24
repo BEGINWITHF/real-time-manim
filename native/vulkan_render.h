@@ -35,6 +35,7 @@ int Render_IsReady(void);
 typedef struct {
     int type;
     int index;
+    float z;
 } DrawCmd;
 
 void Render_DrawScene(const Rect* rects, int rect_count,

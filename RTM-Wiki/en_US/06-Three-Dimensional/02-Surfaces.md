@@ -328,6 +328,17 @@ win.set_mesh_light(ambient=0.30, diffuse=0.80, specular=0.25, shininess=24)
 
 For hand-built geometry, `MeshBatch(lit=True)` computes one flat normal per quad; `append(quads, colors, normals=...)` and `append_indexed(vertices, quads, colors, normals=...)` take explicit normals (`(N, 3)` per unique vertex for smooth shading, or `(Q, 4, 3)` per corner for flat faces). Normals are world-space and rotated into camera space at submission. The shader flips a normal towards the viewer, so open two-sided surfaces are lit on both sides. `ambient=1, diffuse=0, specular=0` is pixel-identical to the unlit path; `shade=True` and `lit=True` cannot be combined on one mesh.
 
+### Depth against the mesh
+
+The mesh writes the depth buffer; painter primitives (vectors, text, images) depth-test against it **without writing depth**. By default text and 2D overlays stay in front, exactly as before. A 3D vector or image participates when you mark it:
+
+```python
+label.set_shade_in_3d(True)     # or label.shade_in_3d = True
+img.set_shade_in_3d(True)
+```
+
+Its paint-unit depth (the same camera-space key manim uses to sort 3D content) is mapped to the mesh's `[0, 1]` range, so the part behind the mesh is hidden while the part outside its silhouette still draws. Units without the flag map to depth 0 and stay on top.
+
 ### Limits
 
 - Quads only; split triangles yourself, or use `MeshBatch.from_surface` / `MeshMobject.from_surface` / the automatic `Surface` path.

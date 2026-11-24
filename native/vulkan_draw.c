@@ -22,8 +22,11 @@ void Render_SetBackgroundColor(float r, float g, float b) {
     g_clear_rgb[2] = b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b);
 }
 
-float g_vertices[MAX_VERTICES * 6];
+float g_vertices[MAX_VERTICES * 7];
 uint32_t g_vertex_count = 0;
+
+/* Depth of the paint unit being submitted/replayed (see draw_common.h). */
+float g_paint_z = 0.0f;
 
 /* Depth-tested triangle mesh batch, filled by platform AddMesh(). */
 float g_mesh_vertices[MAX_MESH_VERTS * 7];
@@ -65,6 +68,7 @@ void Render_DrawScene(const Rect* rects, int rect_count,
 
     for (int i = 0; i < cmd_count; i++) {
         int idx = cmds[i].index;
+        g_paint_z = cmds[i].z;
         switch (cmds[i].type) {
             case CMD_RECT:
                 if (idx < rect_count) BuildVerticesFromRects(&rects[idx], 1);
@@ -106,7 +110,7 @@ void Render_DrawScene(const Rect* rects, int rect_count,
     Tex_EndFrame();
 
     if (g_vertex_count > 0) {
-        update_vertex_buffer(g_vertices, g_vertex_count * 6 * sizeof(float));
+        update_vertex_buffer(g_vertices, g_vertex_count * 7 * sizeof(float));
     }
     if (g_mesh_vertex_count > 0) {
         update_mesh_vertex_buffer(g_mesh_vertices,

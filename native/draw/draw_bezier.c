@@ -667,8 +667,13 @@ __declspec(dllexport) unsigned int RtmTest_VertexCount(void) {
 
 __declspec(dllexport) int RtmTest_ReadVertex(int index, float *out6) {
     if (index < 0 || (uint32_t)index >= g_vertex_count || out6 == NULL) return 0;
-    const float *v = &g_vertices[(uint32_t)index * 6];
-    for (int k = 0; k < 6; k++) out6[k] = v[k];
+    const float *v = &g_vertices[(uint32_t)index * 7];
+    out6[0] = v[0];
+    out6[1] = v[1];
+    out6[2] = v[3];
+    out6[3] = v[4];
+    out6[4] = v[5];
+    out6[5] = v[6];
     return 1;
 }
 
