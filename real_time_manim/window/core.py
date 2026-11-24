@@ -494,12 +494,21 @@ class CoreMixin:
         return True
 
     def set_mesh(self, mesh):
-        """Attach a ``MeshBatch`` for depth-tested 3D geometry.
+        """Attach depth-tested 3D geometry to the window.
 
-        The batch is submitted before the painter primitives, so a mesh can
-        occlude itself per pixel while 2D overlays still paint on top.  Pass
-        ``None`` (or call :meth:`clear_mesh`) to detach it.
+        ``mesh`` is a ``MeshBatch``, a ``MeshGroup``, or a list/tuple of
+        batches (shorthand for ``MeshGroup(*mesh)``); pass ``None`` (or call
+        :meth:`clear_mesh`) to detach it.
+
+        The geometry is submitted before the painter primitives, so a mesh can
+        occlude itself per pixel while 2D overlays still paint on top.  Several
+        batches share one native batch and one depth buffer: list order is draw
+        order (and therefore transparency order), while opaque quads are
+        resolved per pixel.
         """
+        if isinstance(mesh, (list, tuple)):
+            from real_time_manim.mesh import MeshGroup
+            mesh = MeshGroup(*mesh)
         self._mesh = mesh
 
     def clear_mesh(self):
@@ -662,17 +671,43 @@ class CoreMixin:
         mesh = getattr(self, "_mesh", None)
         if mesh is not None:
             from real_time_manim.camera_state import get_viewport
-            built = mesh.build_vertices(get_viewport(), self.win_w, self.win_h)
-            if built is not None:
-                count, vertices = built
-                add_mesh = self.dll.AddMesh
-                add_mesh.argtypes = [
+            add_indexed = getattr(self.dll, "AddMeshIndexed", None)
+            build_indexed = getattr(mesh, "build_indexed_vertices", None)
+            built_idx = None
+            if add_indexed is not None and build_indexed is not None:
+                built_idx = build_indexed(
+                    get_viewport(), self.win_w, self.win_h)
+            if built_idx is not None:
+                vcount, verts, icount, indices = built_idx
+                add_indexed.argtypes = [
                     ctypes.c_int,
                     ctypes.POINTER(ctypes.c_float),
+                    ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_uint),
                 ]
-                add_mesh.restype = None
-                add_mesh(int(count), vertices)
-                self._diag_play_mesh = max(self._diag_play_mesh, int(count))
+                add_indexed.restype = None
+                add_indexed(
+                    int(vcount),
+                    verts.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                    int(icount),
+                    indices.ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
+                )
+                self._diag_play_mesh = max(
+                    self._diag_play_mesh, int(vcount))
+            else:
+                built = mesh.build_vertices(get_viewport(), self.win_w,
+                                            self.win_h)
+                if built is not None:
+                    count, vertices = built
+                    add_mesh = self.dll.AddMesh
+                    add_mesh.argtypes = [
+                        ctypes.c_int,
+                        ctypes.POINTER(ctypes.c_float),
+                    ]
+                    add_mesh.restype = None
+                    add_mesh(int(count), vertices)
+                    self._diag_play_mesh = max(
+                        self._diag_play_mesh, int(count))
         # Phase 5.4: a custom camera's frame comes back as pixels, not geometry.
         if self._rasterise_custom_camera(scene):
             return
