@@ -626,6 +626,22 @@ class Timeline:
         key = id(anim)
         if key in self._finished:
             return False
+        # RTM's own FadeIn/FadeOut are not finish-safe in timeline-driven
+        # walks (FrameServer seeks, parallel recording workers): begin() is
+        # never called here, so finish() either parks the authored opacity
+        # back onto the mobject (FadeIn) or raises before releasing it
+        # (FadeOut -- its ``_orig_points`` only exist after begin()) -- and,
+        # unlike CE, the timeline has no scene-removal step for remover
+        # animations, so a finished FadeOut ends up a fully visible ghost on
+        # every later seek.  Their interpolate() is a pure function of t
+        # (it re-parks the terminal opacity on every call), so leaving them
+        # out of ``_finished`` makes every evaluation re-interpolate the
+        # correct terminal state instead of running the corrupting hook.
+        from real_time_manim.animations.fade_in import FadeIn as _RTMFadeIn
+        from real_time_manim.animations.fade_out import FadeOut as _RTMFadeOut
+
+        if isinstance(anim, (_RTMFadeIn, _RTMFadeOut)):
+            return False
         self._finished.add(key)
         finish = getattr(anim, "finish", None)
         if callable(finish):
