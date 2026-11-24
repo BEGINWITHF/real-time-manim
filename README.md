@@ -1,17 +1,36 @@
 # Real-Time-Manim (RTM)
 
 <p align="center">
-  <img src="banner.jpg" alt="real-time-manim banner" width="880"/>
+  <img src="banner.jpg" alt="Real-Time-Manim V2 banner" width="880"/>
 </p>
+
+<p align="center"><b>English</b> | <a href="README.zh-CN.md">简体中文</a></p>
 
 A **Vulkan-accelerated, real-time rendering backend for [ManimCE](https://www.manim.community/)**.
 RTM drives ManimCE's own `Mobject` / `Animation` model through a native Vulkan pipeline, so the same
-scene can be watched **live in a window**, seeked to any frame instantly, and recorded to MP4
-several times faster than the default renderer.
+scene can be watched **live**, seeked to any frame instantly, and recorded to MP4 several times
+faster than the default renderer.
+
+> **Start here:** the [project website](https://team-axioviva.github.io/real-time-manim_website/)
+> for an overview, demos and the interactive wiki graph, and the
+> [GitHub Wiki](https://github.com/BEGINWITHF/real-time-manim/wiki) for the source-level walkthrough.
+>
+> **AI agents:** read [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md) first — the whole API
+> condensed into one greppable reference, with [`gotchas.md`](RTM-Wiki/agent/gotchas.md),
+> [`patterns.md`](RTM-Wiki/agent/patterns.md) and [`llms.txt`](llms.txt).
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![PyPI](https://img.shields.io/pypi/v/real-time-manim.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS-lightgrey.svg)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)
+![PyPI downloads](https://img.shields.io/pypi/dm/real-time-manim.svg)
+![GitHub stars](https://img.shields.io/github/stars/BEGINWITHF/real-time-manim.svg)
+![Last commit](https://img.shields.io/github/last-commit/BEGINWITHF/real-time-manim.svg)
+![Backend: Vulkan](https://img.shields.io/badge/Backend-Vulkan-red.svg)
+![ManimCE](https://img.shields.io/badge/ManimCE-0.21.0-yellow.svg)
+![AI agents](https://img.shields.io/badge/AI%20agents-llms.txt-blueviolet.svg)
+![Website](https://img.shields.io/badge/Website-live-brightgreen.svg)
+![Wiki](https://img.shields.io/badge/Wiki-GitHub-blue.svg)
 
 ---
 
@@ -19,145 +38,143 @@ several times faster than the default renderer.
 
 ```bash
 pip install real-time-manim
+pip install "real-time-manim[typst]"   # optional: in-process Typst math backend
 ```
 
-The Windows wheel bundles `vulkan_core.dll`; on macOS the installed package (the CI-built wheel, or
-the sdist's platform build) bundles `vulkan_core.dylib` (Apple Silicon), so there is no native build
-step. You need a Vulkan-capable GPU/driver, and `ffmpeg` on `PATH` to record video.
-
-**macOS** needs MoltenVK at runtime — it provides the Vulkan layer on macOS:
-
-```bash
-brew install molten-vk
-```
-
-Intel Macs aren't covered by the bundled dylib: build it once and drop it next to the installed
-`real_time_manim` package:
-
-```bash
-bash native/build_mac.sh        # -> dist/release/vulkan_core.dylib
-```
+The wheel bundles `vulkan_core.dll` / `vulkan_core.dylib` (Apple Silicon); no native build step.
+You need a Vulkan GPU/driver, and `ffmpeg` on `PATH` to record. **macOS** also needs MoltenVK at
+runtime (`brew install molten-vk`); Intel Macs can build the dylib with `bash native/build_mac.sh`.
 
 ---
 
 ## Quick start
 
 ```python
-from real_time_manim import Scene, Square, BLUE
-from real_time_manim.vulkan_bind import MLWindow, Create, Wait
+from real_time_manim import Scene, Square, Create, Wait, BLUE, MLWindow
 from real_time_manim.record import fast_record_scene
 
 class Hello(Scene):
     def construct(self):
-        win = MLWindow(960, 540)      # a real-time window
+        win = MLWindow(960, 540)      # size is forced to 1920x1080
         win.scene = self              # required
-        sq = Square(side_length=1.5, color=BLUE).set_fill(BLUE, 0.6)
-        win.play(Create(sq), run_time=1.0)
+        win.play(Create(Square(side_length=1.5, color=BLUE).set_fill(BLUE, 0.6)), run_time=1.0)
         win.play(Wait(0.5))
-        win.close()                   # required
+        win.close()                   # required: flushes and finishes the encoder
 
 fast_record_scene(Hello)              # -> ~/Downloads/output.mp4
 ```
 
-`MLWindow` opens the live window; `fast_record_scene` / `record_scene` record to MP4.
+`MLWindow` is also a context manager: `with MLWindow(...) as win:` closes it on the way out.
 
-> **No separate ManimCE install, and no `import manim`.** RTM bundles ManimCE **0.21.0** and re-exports
-> its whole namespace (`Scene`, every mobject and animation, the colours, the rate functions).
-> Import `real_time_manim` — not `manim` — or class identity splits.
+> **No separate ManimCE install, and no `import manim`.** RTM bundles ManimCE **0.21.0** and
+> re-exports its whole namespace. Import `real_time_manim` — not `manim` — or class identity splits.
 
 ---
 
 ## Highlights
 
 - **Real-time window** — 1920×1080 @ 60 fps, no export step between code and picture.
-- **Fast recording** — around **1.9–2.8×** faster than ManimCE Cairo (a 15-second scene: 4.6–6.6 s
-  versus 12.8–13.9 s). A static hold (`wait`) is drawn once and encoded for
-  every frame, like ManimCE's frozen frame.
-- **Parallel frames** — `jobs="auto"` splits a long scene across worker processes.
-- **Frame-accurate seeking** — any frame of a prepared scene in O(1), via `FramePreview`.
+- **Fast recording** — around **1.9–2.8×** faster than ManimCE Cairo. Static roots are baked into
+  one texture per play, and a `Wait` is encoded without redrawing the scene.
+- **Parallel frames** — `jobs="auto"` splits a long scene across workers; `prepare()` /
+  `shared_prepare()` keep expensive setup from being repeated in each worker.
+- **Frame-accurate seeking** — any frame of a prepared scene in O(1), via `FrameServer` /
+  `FramePreview`.
+- **Depth-tested 3D** — `MeshMobject` / `MeshBatch` / `MeshGroup` use a GPU depth buffer, so
+  intersecting and self-occluding surfaces resolve per pixel. CPU-baked Manim shading or a native
+  lit material.
+- **Post-processing** — optional native bloom and ACES/Reinhard tonemapping.
 - **Full ManimCE** — existing scenes run unchanged, including `from manim import ...` code.
 - **Math without LaTeX** — `MathTex` routes to an in-process **Typst** backend (`RTM_TYPST=0` to
-  disable), with a content-hashed cache for both Typst and LaTeX.
+  disable).
+
+**New in 2.0.12:** depth meshes, per-face/native lighting, painter depth for 3D text and images,
+bloom/tonemap, and shared `prepare()` for parallel recording.
 
 ---
 
-## Recording
+## 3D and post-processing
+
+`MeshMobject` is a real Manim mobject, so `shift`, `rotate` and `.animate` move the mesh:
 
 ```python
-fast_record_scene(MyScene)                    # offline readback -> ~/Downloads/output.mp4
-fast_record_scene(MyScene, "out.mp4", jobs=4) # 4 worker processes
-record_scene(MyScene, "live.mp4")             # capture a visible window in real time
-```
-
-Both accept a `Scene` subclass / instance / no-arg callable and return
-`{out_path, windows, files, with_audio}`.
-
----
-
-## Caches
-
-RTM caches three different things. They live in different places and are cleared
-differently:
-
-| what | where | saves | clear with |
-| --- | --- | --- | --- |
-| LaTeX / Typst formulas | `media/Tex` (+ your `tex_cache/`) | recompiling unchanged math | `clear_tex_cache()` |
-| **text → SVG** (Pango) | `media/texts/<hash>.svg` | re-running Pango layout (~2 ms/string) | `clear_media()` (explicit) |
-| parsed SVG → mobjects | process memory (`SVG_HASH_TO_MOB_MAP`) | `svgelements` parsing + one `VMobjectFromSVGPath` per glyph (4–20 ms/string) | process exit; `Text(use_svg_cache=False)` opts out |
-
-```python
+import numpy as np
 from real_time_manim import (
-    restore_tex_cache, save_tex_cache, clear_tex_cache, clear_media,
+    ThreeDScene, Surface, MeshMobject, BLUE, UP, DEGREES, MLWindow,
 )
 
-restore_tex_cache("tex_cache")   # warm media/Tex from a saved formula cache
-# ... run ...
-save_tex_cache("tex_cache")      # stash newly compiled formulas
-clear_tex_cache()                # wipe media/Tex + tex_cache/ (dry_run=True to preview)
-clear_media()                    # wipe the whole media/ tree, including media/texts
+class Terrain(ThreeDScene):
+    def construct(self):
+        win = MLWindow(1920, 1080)
+        win.scene = self
+        self.set_camera_orientation(phi=60 * DEGREES, theta=-45 * DEGREES)
+
+        surf = Surface(
+            lambda u, v: np.array([u, v, 0.35 * np.sin(2 * u) * np.cos(2 * v)]),
+            u_range=(-2, 2), v_range=(-2, 2), resolution=(48, 48), fill_color=BLUE,
+        ).set_stroke(width=0)
+
+        mesh = MeshMobject.from_surface(surf, shade=True)   # Manim-style lighting
+        self.add(mesh)
+        win.play(mesh.animate.shift(0.4 * UP), run_time=1.0)
+        win.close()
 ```
 
-`fast_record_scene(..., cleanup=True)` (the default) removes only the transient
-output directories this run created (videos, images, partial movie files,
-sections, logs); `media/Tex` and `media/texts` survive, so the on-disk caches
-keep working across renders and never touch another process's `media/` tree.
-Pass `cleanup=False` to keep this run's transient output as well. Use
-`clear_media()` or `clear_tex_cache()` when you actually want to wipe the
-caches. The in-memory SVG cache is capped at 256 entries and only starts
-caching from the second build of the same string — identical labels are ~2.5×
-faster to construct, while one-off strings (each `DecimalNumber` value) pay
-nothing extra.
+- Static mesh: `win.set_mesh(MeshBatch.from_surface(surf))` after `surf.set_shade_in_3d(False)`.
+  It is a world-space snapshot; do not `add` the surface too.
+- Native material: `MeshMobject.from_surface(surf, lit=True)` plus
+  `win.set_mesh_light(ambient=0.25, diffuse=0.9, specular=0.4, shininess=48)`.
+  `shade=True` and `lit=True` are mutually exclusive.
+- Bloom/tonemap: `win.set_post(bloom=0.8, threshold=0.75, tonemap="aces")`; `set_post(False)`
+  disables it, `RTM_POST=1` enables it everywhere.
+- Only opaque quads are supported; `MeshBatch.MAX_QUADS = 131072`, one native mesh per frame.
+
+---
+
+## Three ways to output
+
+| output | API | notes |
+| --- | --- | --- |
+| **Live window** | `MLWindow` | render and watch in real time; no file |
+| **MP4** | `fast_record_scene` / `record_scene` | hidden offline (fastest) or visible real-time; `jobs=N` splits frames |
+| **PNG frames** | `FrameServer` / `FramePreview` | any frame at any `t` in O(1), or scrub the timeline |
+
+```python
+from real_time_manim import MLWindow, Square, Create, FrameServer, FramePreview
+from real_time_manim.record import fast_record_scene, record_scene
+
+# 1. Live window
+win = MLWindow(1920, 1080)
+win.scene = MyScene()
+win.play(Create(Square()), run_time=1.0)
+win.close()
+
+# 2. MP4: hidden/offline (fastest), parallel, or visible/real-time
+fast_record_scene(MyScene)
+fast_record_scene(MyScene, "out.mp4", jobs=4)
+record_scene(MyScene, "live.mp4")
+
+# 3. PNG frames: one frame, a list of times, or interactive scrubbing
+fs = FrameServer(MyScene)
+fs.save_frame(2.5, "frame.png")
+fs.export_frames("frames/", [0.0, 1.5, 3.0])
+fs.close()
+FramePreview(MyScene).run()
+```
+
+The recorders accept a `Scene` subclass / instance / no-arg callable and return
+`{out_path, windows, files, with_audio}`. `jobs="auto"` splits only for an importable single-window
+scene of at least 240 frames; move expensive pure setup into `prepare()` so every worker shares it.
 
 ---
 
 ## Constraints
 
-- Output is **fixed at 1920×1080 @ 60 fps**; any other value is corrected with a `[rtm] forcing ...` line.
-- **One window per process**, and `win.scene = self` plus `win.close()` are required.
-- There is no `manim` CLI — RTM is a library: `MLWindow`, the recorders, `FrameServer`, `FramePreview`.
-
----
-
-## How it works
-
-```mermaid
-flowchart LR
-    SC[Manim Scene] --> W[MLWindow] --> D[type dispatch] --> DLL[vulkan_core.dll] --> GPU[(GPU)]
-    W -. readback .-> FF[ffmpeg] --> MP4[(MP4)]
-```
-
----
-
-## Documentation
-
-- [`RTM-Wiki/zh_CN/`](RTM-Wiki/zh_CN/README.md) — the full Chinese manual: 144 pages, one section per
-  API, each with a rendered sample clip.
-- [`RTM-Wiki/en_US/`](RTM-Wiki/en_US/README.md) — the same manual in English, with the sample clips
-  re-rendered so the on-screen labels are English too.
-- [`RTM-Wiki/agent/`](RTM-Wiki/agent/README.md) — the same material condensed for AI agents.
-- [**English wiki**](https://github.com/BEGINWITHF/real-time-manim/wiki) — a source-level walkthrough in
-  eight chapters, from [01 Overview](https://github.com/BEGINWITHF/real-time-manim/wiki/01-Overview) to
-  [08 Native Layer](https://github.com/BEGINWITHF/real-time-manim/wiki/08-Native-Layer).
+- Output is **fixed at 1920×1080 @ 60 fps**; other values are corrected with a `[rtm] forcing ...` line.
+- **One window per process**; `win.scene = self` and `win.close()` are required (`atexit` is only a
+  best-effort fallback and cannot report encoder errors).
+- There is no `manim` CLI — RTM is a library: `MLWindow`, the recorders, `FrameServer`,
+  `FramePreview`, `Timeline`.
 
 ---
 
