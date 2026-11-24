@@ -30,6 +30,44 @@ if TYPE_CHECKING:
 # 0xCA11E4A5, so this cannot collide.
 _STATIC_TOKEN = 0x5A71C1A7
 
+# Bloom/tonemap (native post pass).  Off unless asked for; the env route lets a
+# fast record opt in without touching scene code.
+_POST_TONEMAPS = {"none": 0, "aces": 1, "reinhard": 2}
+_POST_DEFAULTS = {
+    "bloom": 0.60,
+    "threshold": 0.82,
+    "knee": 0.12,
+    "exposure": 1.0,
+    "radius": 1.6,
+    "tonemap": "none",
+}
+
+
+def _post_from_env():
+    """Post kwargs from ``RTM_POST*``, or ``None`` when disabled."""
+    raw = os.environ.get("RTM_POST", "").strip().lower()
+    if raw in ("", "0", "false", "no", "off"):
+        return None
+    params = dict(_POST_DEFAULTS)
+    if raw in _POST_TONEMAPS:
+        params["tonemap"] = raw
+    tonemap = os.environ.get("RTM_POST_TONEMAP", "").strip().lower()
+    if tonemap:
+        params["tonemap"] = tonemap
+    for key, env in (("bloom", "RTM_POST_BLOOM"),
+                     ("threshold", "RTM_POST_THRESHOLD"),
+                     ("knee", "RTM_POST_KNEE"),
+                     ("exposure", "RTM_POST_EXPOSURE"),
+                     ("radius", "RTM_POST_RADIUS")):
+        value = os.environ.get(env)
+        if value is None or not value.strip():
+            continue
+        try:
+            params[key] = float(value)
+        except ValueError:
+            raise ValueError("%s must be a number, got %r" % (env, value))
+    return params
+
 
 class CoreMixin:
     # This renderer supports exactly ONE output format: 1920x1080 at 60 fps.
@@ -96,6 +134,9 @@ class CoreMixin:
         self._diag_play_static = False
         self._diag_play_mesh = 0
         self._diag_tex_uploads = 0
+        # Native bloom/tonemap (off by default; RTM_POST=1 opts in).
+        self._post_enabled = False
+        self._post_params = dict(_POST_DEFAULTS)
         # Schedule mode (2.0.0): when the class flag _schedule_mode is True,
         # play() records animations on a global timeline instead of rendering,
         # so any frame can later be produced on demand via build_timeline().
@@ -317,6 +358,12 @@ class CoreMixin:
             raise
         type(self)._registry.append(self)
 
+        # Opt-in via environment so a fast record can enable it without scene
+        # code; set_post() remains the explicit API.
+        _post = _post_from_env()
+        if _post is not None:
+            self.set_post(**_post)
+
     @property
     def hwnd(self):
         """This window's Win32 handle (``None`` off Windows / before init).
@@ -514,6 +561,62 @@ class CoreMixin:
     def clear_mesh(self):
         """Detach the ``MeshBatch`` attached with :meth:`set_mesh`."""
         self._mesh = None
+
+    def set_post(self, enabled=True, *, bloom=None, threshold=None, knee=None,
+                 exposure=None, radius=None, tonemap=None):
+        """Enable or disable native bloom + tonemap for this window.
+
+        Args:
+            enabled: ``False`` restores the untouched scene path (no copy, no
+                post pass).  Values are kept, so a later ``set_post()``
+                re-enables the same look.
+            bloom: bloom strength added to the scene (default 0.6).
+            threshold: bright-pass luma threshold in 0..1 (default 0.82).
+            knee: soft-knee width around ``threshold`` (default 0.12).
+            exposure: multiplier before the tone curve (default 1.0).
+            radius: blur radius in half-resolution texels (default 1.6).
+            tonemap: ``"none"``, ``"aces"`` or ``"reinhard"``.
+
+        The pass runs after the scene is resolved and before readback/present,
+        so screenshots and recorded video include it.  On a native library
+        without ``SetPost`` this is a silent no-op.
+        """
+        params = dict(self._post_params)
+        for key, value in (("bloom", bloom), ("threshold", threshold),
+                           ("knee", knee), ("exposure", exposure),
+                           ("radius", radius)):
+            if value is not None:
+                params[key] = float(value)
+        if tonemap is not None:
+            key = str(tonemap).strip().lower()
+            if key not in _POST_TONEMAPS:
+                raise ValueError(
+                    "unknown tonemap %r (choose from %s)"
+                    % (tonemap, ", ".join(sorted(_POST_TONEMAPS))))
+            params["tonemap"] = key
+        for key in ("bloom", "threshold", "knee", "exposure", "radius"):
+            if not np.isfinite(params[key]):
+                raise ValueError("post %s must be finite" % key)
+
+        self._post_enabled = bool(enabled)
+        self._post_params = params
+
+        setter = getattr(self.dll, "SetPost", None)
+        if setter is not None:
+            setter.argtypes = [
+                ctypes.c_int,
+                ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                ctypes.c_float, ctypes.c_float,
+                ctypes.c_int,
+            ]
+            setter.restype = None
+            setter(
+                int(self._post_enabled),
+                params["threshold"], params["knee"], params["bloom"],
+                params["exposure"], params["radius"],
+                _POST_TONEMAPS[params["tonemap"]],
+            )
+        return self
 
     # ------------------------------------------------------------------
     # Static layer (#85)
