@@ -3,7 +3,7 @@
 > Reference for AI agents / bots. **Not optimized for human reading**: dense, structured, greppable.
 > Human-facing version: [`../zh_CN/`](../zh_CN/README.md) (Chinese). This folder is its compressed reformat.
 > Source of truth: the `real_time_manim/` source tree + `../zh_CN/`. On conflict, the source wins.
-> **This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/BEGINWITHF/real-time-manim).
+> **This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/Team-Axioviva/real-time-manim).
 
 ## 0. TL;DR — minimal runnable
 
@@ -27,7 +27,7 @@ fast_record_scene(MyScene, "out.mp4")
 
 ## 1. What RTM is (facts)
 
-- Package `real-time-manim`; import name `real_time_manim`; version `2.0.12` (`pyproject.toml`).
+- Package `real-time-manim`; import name `real_time_manim`; version `2.0.13` (`pyproject.toml`).
 - A **Vulkan real-time rendering backend** for ManimCE. Not a Manim fork: it **drives** ManimCE's `Mobject`/`VMobject`/`Animation` data model.
 - **Bundles ManimCE 0.21.0** (`real_time_manim/manim/`, `MANIM_BUNDLE_VERSION`). `import real_time_manim` re-exports the whole ManimCE namespace.
 - **No `manim` CLI**. pip library + Python API only.

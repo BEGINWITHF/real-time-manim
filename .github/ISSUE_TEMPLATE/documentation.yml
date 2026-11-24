@@ -13,7 +13,7 @@ body:
     attributes:
       label: Affected page, section, or link
       description: Provide a URL, or a precise file path and heading.
-      placeholder: "https://github.com/BEGINWITHF/real-time-manim/... or RTM-Wiki/.../page.md#section"
+      placeholder: "https://github.com/Team-Axioviva/real-time-manim/... or RTM-Wiki/.../page.md#section"
     validations:
       required: true
 

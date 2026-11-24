@@ -12,7 +12,7 @@ ManimCE 自己的 `Mobject` / `Animation` 数据模型，通过原生 Vulkan 管
 
 > **从这里开始：** 先看[项目官网](https://team-axioviva.github.io/real-time-manim_website/)
 > （概览、演示和交互式 wiki 图谱），再看
-> [GitHub Wiki](https://github.com/BEGINWITHF/real-time-manim/wiki)（源码级讲解）。
+> [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki)（源码级讲解）。
 > 中文完整手册在 [`RTM-Wiki/zh_CN/`](RTM-Wiki/zh_CN/README.md)。
 >
 > **AI agent 请从这里开始：** 先读 [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md)
@@ -24,8 +24,8 @@ ManimCE 自己的 `Mobject` / `Animation` 数据模型，通过原生 Vulkan 管
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS-lightgrey.svg)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)
 ![PyPI downloads](https://img.shields.io/pypi/dm/real-time-manim.svg)
-![GitHub stars](https://img.shields.io/github/stars/BEGINWITHF/real-time-manim.svg)
-![Last commit](https://img.shields.io/github/last-commit/BEGINWITHF/real-time-manim.svg)
+![GitHub stars](https://img.shields.io/github/stars/Team-Axioviva/real-time-manim.svg)
+![Last commit](https://img.shields.io/github/last-commit/Team-Axioviva/real-time-manim.svg)
 ![Backend: Vulkan](https://img.shields.io/badge/Backend-Vulkan-red.svg)
 ![ManimCE](https://img.shields.io/badge/ManimCE-0.21.0-yellow.svg)
 ![AI agents](https://img.shields.io/badge/AI%20agents-llms.txt-blueviolet.svg)
@@ -41,7 +41,8 @@ pip install real-time-manim
 pip install "real-time-manim[typst]"   # 可选：进程内 Typst 数学排版后端
 ```
 
-wheel 已内置 `vulkan_core.dll` / `vulkan_core.dylib`（Apple Silicon），无需本地编译。需要支持
+wheel 内置对应平台的二进制（Windows 为 `vulkan_core.dll`，Apple Silicon 为
+`vulkan_core.dylib`），无需本地编译。需要支持
 Vulkan 的 GPU/驱动，录制视频还需要 `ffmpeg` 在 `PATH` 中。**macOS** 运行时还需要 MoltenVK
 （`brew install molten-vk`）；Intel Mac 可用 `bash native/build_mac.sh` 自行构建 dylib。
 
@@ -85,8 +86,8 @@ fast_record_scene(Hello)              # -> ~/Downloads/output.mp4
 - **完整 ManimCE** —— 现有场景无需修改，包括仍写着 `from manim import ...` 的代码。
 - **无需 LaTeX 的数学** —— `MathTex` 会路由到进程内 **Typst** 后端（`RTM_TYPST=0` 可关闭）。
 
-**2.0.12 新增：** 深度网格、逐面/原生光照、3D 文本和图像的 painter depth、bloom/tonemap，
-以及并行录制共享的 `prepare()`。
+**2.0.13 新增：** 文档更新 —— 重做包页面、新增中文 README、恢复 `PR_HISTORY.md` 的 PR
+历史。引擎没有改动：`native/` 与 2.0.12 完全一致，`real_time_manim/` 只改了版本号回退值。
 
 ---
 
@@ -124,7 +125,7 @@ class Terrain(ThreeDScene):
   `shade=True` 与 `lit=True` 互斥。
 - Bloom/tonemap：`win.set_post(bloom=0.8, threshold=0.75, tonemap="aces")`；
   `set_post(False)` 关闭，`RTM_POST=1` 全局开启。
-- 仅支持不透明四边形；`MeshBatch.MAX_QUADS = 131072`，每帧一个原生网格批次。
+- `from_surface()` 只烘焙不透明四边形；mesh 没有逐像素透明排序。`MeshBatch.MAX_QUADS = 131072`，每帧一个原生网格批次。
 
 ---
 

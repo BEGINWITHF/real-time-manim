@@ -34,6 +34,7 @@ include requirements.txt
 include README.md
 include README.zh-CN.md
 include PYPI_README.md
+include PR_HISTORY.md
 include logo.jpg
 include banner.jpg
 

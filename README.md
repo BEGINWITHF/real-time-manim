@@ -13,7 +13,7 @@ faster than the default renderer.
 
 > **Start here:** the [project website](https://team-axioviva.github.io/real-time-manim_website/)
 > for an overview, demos and the interactive wiki graph, and the
-> [GitHub Wiki](https://github.com/BEGINWITHF/real-time-manim/wiki) for the source-level walkthrough.
+> [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki) for the source-level walkthrough.
 >
 > **AI agents:** read [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md) first — the whole API
 > condensed into one greppable reference, with [`gotchas.md`](RTM-Wiki/agent/gotchas.md),
@@ -24,8 +24,8 @@ faster than the default renderer.
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS-lightgrey.svg)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)
 ![PyPI downloads](https://img.shields.io/pypi/dm/real-time-manim.svg)
-![GitHub stars](https://img.shields.io/github/stars/BEGINWITHF/real-time-manim.svg)
-![Last commit](https://img.shields.io/github/last-commit/BEGINWITHF/real-time-manim.svg)
+![GitHub stars](https://img.shields.io/github/stars/Team-Axioviva/real-time-manim.svg)
+![Last commit](https://img.shields.io/github/last-commit/Team-Axioviva/real-time-manim.svg)
 ![Backend: Vulkan](https://img.shields.io/badge/Backend-Vulkan-red.svg)
 ![ManimCE](https://img.shields.io/badge/ManimCE-0.21.0-yellow.svg)
 ![AI agents](https://img.shields.io/badge/AI%20agents-llms.txt-blueviolet.svg)
@@ -41,7 +41,8 @@ pip install real-time-manim
 pip install "real-time-manim[typst]"   # optional: in-process Typst math backend
 ```
 
-The wheel bundles `vulkan_core.dll` / `vulkan_core.dylib` (Apple Silicon); no native build step.
+The wheel bundles the platform binary (`vulkan_core.dll` on Windows, `vulkan_core.dylib` on Apple
+Silicon); no native build step.
 You need a Vulkan GPU/driver, and `ffmpeg` on `PATH` to record. **macOS** also needs MoltenVK at
 runtime (`brew install molten-vk`); Intel Macs can build the dylib with `bash native/build_mac.sh`.
 
@@ -88,8 +89,9 @@ fast_record_scene(Hello)              # -> ~/Downloads/output.mp4
 - **Math without LaTeX** — `MathTex` routes to an in-process **Typst** backend (`RTM_TYPST=0` to
   disable).
 
-**New in 2.0.12:** depth meshes, per-face/native lighting, painter depth for 3D text and images,
-bloom/tonemap, and shared `prepare()` for parallel recording.
+**New in 2.0.13:** documentation refresh — a redesigned package page, a Chinese README, and the
+recovered pull-request history in `PR_HISTORY.md`. No engine changes: `native/` is identical to
+2.0.12, and `real_time_manim/` differs only in the version fallback.
 
 ---
 
@@ -127,7 +129,8 @@ class Terrain(ThreeDScene):
   `shade=True` and `lit=True` are mutually exclusive.
 - Bloom/tonemap: `win.set_post(bloom=0.8, threshold=0.75, tonemap="aces")`; `set_post(False)`
   disables it, `RTM_POST=1` enables it everywhere.
-- Only opaque quads are supported; `MeshBatch.MAX_QUADS = 131072`, one native mesh per frame.
+- `from_surface()` bakes opaque quads only; the mesh has no per-pixel transparency sort.
+  `MeshBatch.MAX_QUADS = 131072`, one native mesh per frame.
 
 ---
 

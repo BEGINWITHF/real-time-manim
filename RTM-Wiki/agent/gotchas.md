@@ -3,7 +3,7 @@
 > scope: cross-domain pitfalls, RTM-vs-ManimCE deviations, "allowed but discouraged" and "unwired/no-op" items, and an exact error→cause→fix table. Read after the domain file, before writing code.
 > src: condensed from `agent/{runtime,scene-camera,mobject,animation-transform,animation-motion,geometry,text,coords-charts,three-d,graph-vector,utils}.md`; site-wide `提醒`/`无法演示`/`不支持` under `../zh_CN/`. Every error string below is verbatim from those files — none invented.
 
-**This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/BEGINWITHF/real-time-manim).
+**This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/Team-Axioviva/real-time-manim).
 
 ---
 

@@ -30,7 +30,7 @@ Layered documentation. Work top-down and stop at the layer that answers your que
 | 6 | `RTM-Wiki/zh_CN/` | Full human manual, 144 pages, one section per API with rendered sample clips. **zh_CN is the source of truth**; every agent entry carries a `see` path back to it. |
 | 7 | `RTM-Wiki/en_US/` | English translation of the same manual (sample clips re-rendered in English). |
 | 8 | [`real_time_manim/`](real_time_manim/) | The source. Read it for ground truth: `__init__.py` (namespace re-export), `window/` (live window + play), `record.py` (recorders), `frames.py`, `preview.py`, `timeline.py`, `vulkan_*.py` (native binding). |
-| 9 | [GitHub wiki](https://github.com/BEGINWITHF/real-time-manim/wiki) | Source-level walkthrough in 8 chapters, 01 Overview → 08 Native Layer. |
+| 9 | [GitHub wiki](https://github.com/Team-Axioviva/real-time-manim/wiki) | Source-level walkthrough in 9 chapters, 01 Overview → 09 Performance by Scene Type. |
 
 Core mental model (from the agent README §5): **the data model is ManimCE** — RTM only rasterizes it. `Scene.setup()` → `construct()` → `tear_down()` are called for you; `Scene.render()` is never driven. One window per process; `win.scene = self` and `win.close()` are required.
 
@@ -94,7 +94,7 @@ Follow the template system in [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE
 - the full traceback / error text, verbatim;
 - expected vs actual behaviour.
 
-For agents using `gh`: `gh issue create --template bug_report --repo BEGINWITHF/real-time-manim`. Fill `What happened?` and `Minimal reproduction` with the above; do not paste an entire project — reduce it first.
+For agents using `gh`: `gh issue create --template bug_report --repo Team-Axioviva/real-time-manim`. Fill `What happened?` and `Minimal reproduction` with the above; do not paste an entire project — reduce it first.
 
 Wiki/content errors found in `RTM-Wiki/` (including `agent/`) are **not** issues — open a PR fixing the page, since the wiki lives in this repo. The maintainer accepts AI-drafted issue content with an AI disclosure.
 

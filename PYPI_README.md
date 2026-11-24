@@ -35,10 +35,11 @@ pip install real-time-manim
 pip install "real-time-manim[typst]"   # optional: in-process Typst math backend
 ```
 
-The wheel bundles `vulkan_core.dll` / `vulkan_core.dylib` (Apple Silicon); no
-native build step. You need a Vulkan GPU/driver, and `ffmpeg` on `PATH` to
-record. **macOS** also needs MoltenVK at runtime (`brew install molten-vk`);
-Intel Macs can build the dylib with `bash native/build_mac.sh`.
+The wheel bundles the platform binary (`vulkan_core.dll` on Windows,
+`vulkan_core.dylib` on Apple Silicon); no native build step. You need a Vulkan
+GPU/driver, and `ffmpeg` on `PATH` to record. **macOS** also needs MoltenVK at
+runtime (`brew install molten-vk`); Intel Macs can build the dylib with
+`bash native/build_mac.sh`.
 
 ---
 
@@ -126,8 +127,10 @@ into `prepare()` so every worker shares it.
 - **Math without LaTeX** — `MathTex` routes to an in-process **Typst** backend
   (`RTM_TYPST=0` disables it).
 
-**New in 2.0.12:** depth meshes, per-face/native lighting, painter depth for 3D
-text and images, bloom/tonemap, and shared `prepare()` for parallel recording.
+**New in 2.0.13:** documentation refresh — a redesigned package page, a Chinese
+README, and the recovered pull-request history in `PR_HISTORY.md`. No engine
+changes: `native/` is identical to 2.0.12, and `real_time_manim/` differs only
+in the version fallback.
 
 ---
 
@@ -165,8 +168,8 @@ class Terrain(ThreeDScene):
   `shade=True` and `lit=True` are mutually exclusive.
 - Bloom/tonemap: `win.set_post(bloom=0.8, threshold=0.75, tonemap="aces")`;
   `set_post(False)` disables it, `RTM_POST=1` enables it everywhere.
-- Only opaque quads are supported; `MeshBatch.MAX_QUADS = 131072`, one native
-  mesh per frame.
+- `from_surface()` bakes opaque quads only; the mesh has no per-pixel
+  transparency sort. `MeshBatch.MAX_QUADS = 131072`, one native mesh per frame.
 
 ---
 

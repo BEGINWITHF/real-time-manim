@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "real-time-manim"
-version = "2.0.12"
+version = "2.0.13"
 description = "RTM turns a ManimCE scene into a directly addressable timeline — any frame can be rendered on demand, which is what makes live scrubbing and parallel recording possible."
 readme = "PYPI_README.md"
 license = { text = "MIT" }
@@ -68,9 +68,11 @@ typst = ["typst>=0.14"]
 test = ["manim>=0.20.0", "pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/BEGINWITHF/real-time-manim"
-Documentation = "https://github.com/BEGINWITHF/real-time-manim#readme"
-Source = "https://github.com/BEGINWITHF/real-time-manim"
+Homepage = "https://github.com/Team-Axioviva/real-time-manim"
+Documentation = "https://github.com/Team-Axioviva/real-time-manim#readme"
+Source = "https://github.com/Team-Axioviva/real-time-manim"
+Wiki = "https://github.com/Team-Axioviva/real-time-manim/wiki"
+Issues = "https://github.com/Team-Axioviva/real-time-manim/issues"
 
 # Package discovery lives in setup.py: the wheel also carries the PEP 561
 # ``manim-stubs`` tree, whose directory name is not a valid Python identifier

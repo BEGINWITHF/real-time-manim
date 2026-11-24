@@ -13,7 +13,7 @@ Start with the agent-facing condensed reference (`RTM-Wiki/agent/README.md`) —
 - [Gotchas & error catalogue](RTM-Wiki/agent/gotchas.md): pitfalls and error → cause → fix
 - [Full human manual (zh_CN, 144 pages)](RTM-Wiki/zh_CN/README.md)
 - [Full human manual (en_US)](RTM-Wiki/en_US/README.md)
-- [Source-level walkthrough (GitHub wiki, 8 chapters)](https://github.com/BEGINWITHF/real-time-manim/wiki)
+- [Source-level walkthrough (GitHub wiki, 9 chapters)](https://github.com/Team-Axioviva/real-time-manim/wiki)
 
 ## Getting Started
 
