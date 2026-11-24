@@ -1,6 +1,7 @@
 #include "vulkan_core.h"
 #include "vulkan_render.h"
 #include "vulkan_texture.h"
+#include "vulkan_post.h"
 #include "draw_common.h"
 
 #ifdef __APPLE__
@@ -168,6 +169,10 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
 
     vkCmdEndRenderPass(cmd_buf);
 
+    /* Bloom/tonemap (opt-in): copy the resolved scene, build the bloom chain
+       and composite back into the swapchain, all before readback and present. */
+    Post_Record(cmd_buf, img_idx);
+
 #ifdef __APPLE__
     // MoltenVK cannot read a swapchain image after it has been presented
     // (the CAMetalLayer drawable is recycled).  When a readback is requested,
@@ -230,6 +235,11 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
 
 int Render_DrawFrame(uint32_t vertex_count) {
     if (!g_is_ready) return 0;
+
+    /* Post passes share one scene copy and one bloom pair across frames.  The
+       vertex upload already waits for every in-flight frame, but a mesh-only or
+       empty frame may skip that path, so serialise explicitly when post is on. */
+    if (Post_IsEnabled()) Render_WaitAllInFlight();
 
     uint32_t img_idx;
     // Both platforms, and BEFORE the fence dance below: OUT_OF_DATE happens on

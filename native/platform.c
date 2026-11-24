@@ -2,6 +2,7 @@
 #include "vulkan_render.h"
 #include "vulkan_core.h"
 #include "vulkan_texture.h"
+#include "vulkan_post.h"
 #include "shared_types.h"
 #include "draw_common.h"
 #include <stdio.h>
@@ -344,6 +345,12 @@ __declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long 
 
 __declspec(dllexport) void SetBackgroundColor(float r, float g, float b) {
     Render_SetBackgroundColor(r, g, b);
+}
+
+__declspec(dllexport) void SetPost(int enabled, float threshold, float knee,
+                                   float strength, float exposure,
+                                   float radius, int tonemap) {
+    Post_Set(enabled, threshold, knee, strength, exposure, radius, tonemap);
 }
 
 __declspec(dllexport) void ClearShapes(void) {

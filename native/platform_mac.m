@@ -25,6 +25,7 @@
 #include "shared_types.h"
 #include "draw_common.h"
 #include "vulkan_texture.h"
+#include "vulkan_post.h"
 #undef Rect
 #undef Circle
 
@@ -1213,6 +1214,11 @@ void AddMeshIndexed(int vertex_count, const float *verts,
     memcpy(g_mesh_indices, indices, sizeof(unsigned int) * index_count);
     g_mesh_vertex_count = (uint32_t)vertex_count;
     g_mesh_index_count = (uint32_t)index_count;
+}
+
+void SetPost(int enabled, float threshold, float knee, float strength,
+             float exposure, float radius, int tonemap) {
+    Post_Set(enabled, threshold, knee, strength, exposure, radius, tonemap);
 }
 
 void AddPolygon(float x, float y, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, int vert_count, const float* verts, float stroke_progress, float alpha, int close_path) {

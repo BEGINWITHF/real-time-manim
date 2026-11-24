@@ -1,5 +1,6 @@
 #include "vulkan_core.h"
 #include "vulkan_texture.h"
+#include "vulkan_post.h"
 #include "draw_common.h"
 #include "mesh_shaders.h"
 
@@ -1326,6 +1327,8 @@ void Render_Init(void *metal_layer, int width, int height) {
 
     CreateFramebuffers();
 
+    Post_Init();
+
     CreateCommandPool();
 
     CreateCommandBuffers();
@@ -1380,6 +1383,10 @@ void update_vertex_buffer(const void *data, VkDeviceSize size) {
 }
 
 void CleanupSwapchain(void) {
+    /* Post framebuffers reference the swapchain image views, so they have to
+       go first.  Post_Cleanup is a no-op when post never initialised. */
+    Post_Cleanup();
+
     for (uint32_t i = 0; i < g_swapchain_img_count; i++) {
         vkDestroyFramebuffer(g_dev, g_framebuffers[i], NULL);
     }
@@ -1456,6 +1463,7 @@ void RecreateSwapchain(void) {
     CreateSwapchain();
     CreateImageViews();
     CreateFramebuffers();
+    Post_Init();
     /* The new swapchain is allowed to report a different image count than the
        one these were sized from, so realign the per-frame arrays (no-op when
        the count is unchanged, which is the usual case). */
