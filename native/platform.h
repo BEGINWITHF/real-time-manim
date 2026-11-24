@@ -41,6 +41,13 @@ __declspec(dllexport) void AddBezierPath(const float *points, int num_points, in
 // top-left, top-right, bottom-right, bottom-left order.
 __declspec(dllexport) void AddImageQuad(unsigned long long token, unsigned long long digest, const unsigned char *rgba, int w, int h, const float *xy8, float opacity);
 
+// Depth-tested mesh: x,y,z,r,g,b,a per vertex, already in NDC.  The indexed
+// variant uses 4 vertices + 6 uint32 indices per quad instead of 6 vertices.
+__declspec(dllexport) void AddMesh(int vertex_count, const float *verts);
+__declspec(dllexport) void AddMeshIndexed(int vertex_count, const float *verts,
+                                          int index_count,
+                                          const unsigned int *indices);
+
 // Background colour used to clear the frame (linear RGB 0..1); scenes with a
 // custom `camera.background_color` publish theirs each frame.
 __declspec(dllexport) void SetBackgroundColor(float r, float g, float b);

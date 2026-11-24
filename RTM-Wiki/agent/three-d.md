@@ -333,6 +333,11 @@ class MeshBatch:
     def from_surface(cls, surface, *, ignore_strokes=False) -> MeshBatch
     def mark_geometry_dirty(self) -> Self
     def build_vertices(self, viewport, width, height) -> tuple[int, ctypes pointer] | None
+    def build_indexed_vertices(self, viewport, width, height) -> tuple[int, ndarray, int, ndarray] | None
+
+class MeshGroup:
+    def __init__(self, *batches)
+    def append(self, batch) -> Self
 ```
 
 - `quads`: `(Q, 4, 3)` float, four corners in world coordinates.
@@ -349,20 +354,27 @@ class MeshBatch:
   The bake is a snapshot — later `Surface` transforms do not move the mesh.
 - `colors`: `(Q, 4, 4)` float, RGBA per corner in 0–1.
 - Attach with `win.set_mesh(mesh)`; detach with `win.clear_mesh()` or
-  `win.set_mesh(None)`. `sync()` calls `build_vertices` once per frame and
-  hands the result to native `AddMesh(vertex_count, x,y,z,rgba)`.
+  `win.set_mesh(None)`. `sync()` builds once per frame and hands four corner
+  vertices + six uint32 indices per quad to native
+  `AddMeshIndexed(vertex_count, x,y,z,rgba, index_count, indices)`, falling
+  back to the expanded six-vertex `AddMesh` on native builds without it.
+- `MeshGroup(terrain, markers)` (or `win.set_mesh([a, b])`) concatenates
+  independently owned batches into the frame's single native mesh, in list
+  order.  Draw order is explicit (translucent quads need it) without appending
+  into another part's arrays; it does not add capacity.
 - Native side: depth-tested mesh pipeline over a `D32_SFLOAT` attachment; the
   mesh is recorded **before** the painter primitives, so 2D overlays stay on
   top regardless of 3D depth.
-- Limits: quads only, `MAX_MESH_VERTS = 262144` vertices
-  (`MeshBatch.MAX_QUADS = 43690`), one batch per frame (`AddMesh`
-  overwrites, it does not append); `append`/`append_indexed` raise when the
-  limit is crossed, no per-pixel transparency sort.
+- Limits: quads only, `MAX_MESH_VERTS = 524288` vertices
+  (`MeshBatch.MAX_QUADS = 131072` through the indexed path; the expanded
+  fallback holds 87381), one native batch per frame; `append`/`append_indexed`
+  raise when the limit is crossed, no per-pixel transparency sort.
 - Performance (18,432 quads / 18,705 unique vertices / 110,592 expanded):
   `build_vertices` ~13.4 ms with `append`, ~4.45 ms with `append_indexed`
   (unique projection + gather), ~0.04 ms when the indexed batch/view is
-  unchanged.  Native still receives expanded vertices; an index buffer is a
-  future native step.
+  unchanged.  The native indexed submission projects four corners per quad
+  (~2/3 of the old vertex buffer) instead of the expanded six; the expanded
+  path remains only as the old-dylib fallback.
 - `from_surface` bake cost scales with faces, once: 400 faces ~1.6 ms
   (fast vectorized path), 3,600 ~14 ms, 9,800 ~73 ms.  The old per-face
   `get_start_anchors`/`np.allclose` loop cost ~460 ms for 9,800 faces, so the

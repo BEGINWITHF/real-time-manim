@@ -27,6 +27,8 @@ uint32_t g_vertex_count = 0;
 /* Depth-tested triangle mesh batch, filled by platform AddMesh(). */
 float g_mesh_vertices[MAX_MESH_VERTS * 7];
 uint32_t g_mesh_vertex_count = 0;
+unsigned int g_mesh_indices[MAX_MESH_INDICES];
+uint32_t g_mesh_index_count = 0;
 
 void BuildVerticesFromRects(const Rect *rects, int count);
 void BuildVerticesFromCircles(const Circle *circles, int count);
@@ -101,6 +103,10 @@ void Render_DrawScene(const Rect* rects, int rect_count,
         update_mesh_vertex_buffer(g_mesh_vertices,
                                   g_mesh_vertex_count * 7 * sizeof(float));
     }
+    if (g_mesh_index_count > 0) {
+        update_mesh_index_buffer(g_mesh_indices,
+                                 g_mesh_index_count * sizeof(unsigned int));
+    }
 }
 
 void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
@@ -139,7 +145,13 @@ void RecordCommandBuffer(VkCommandBuffer cmd_buf, uint32_t img_idx,
         VkBuffer mesh_buffers[] = { g_mesh_vert_buf };
         VkDeviceSize mesh_offsets[] = { 0 };
         vkCmdBindVertexBuffers(cmd_buf, 0, 1, mesh_buffers, mesh_offsets);
-        vkCmdDraw(cmd_buf, g_mesh_vertex_count, 1, 0, 0);
+        if (g_mesh_index_count > 0 && g_mesh_index_buf != VK_NULL_HANDLE) {
+            vkCmdBindIndexBuffer(cmd_buf, g_mesh_index_buf, 0,
+                                 VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd_buf, g_mesh_index_count, 1, 0, 0, 0);
+        } else {
+            vkCmdDraw(cmd_buf, g_mesh_vertex_count, 1, 0, 0);
+        }
     }
 
     vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipeline);

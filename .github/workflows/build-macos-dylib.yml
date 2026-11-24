@@ -27,6 +27,8 @@ jobs:
           set -e
           file dist/release/vulkan_core.dylib
           nm -gU dist/release/vulkan_core.dylib | grep -E " _AddMesh$| _Vulkan_GetReadbackSize$"
+          nm -gU dist/release/vulkan_core.dylib | grep -q " _AddMesh$"
+          nm -gU dist/release/vulkan_core.dylib | grep -q " _AddMeshIndexed$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _AddImageQuad$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _AddLineStripF$"
           nm -gU dist/release/vulkan_core.dylib | grep -q " _SaveScreenshotRawBGRA$"
