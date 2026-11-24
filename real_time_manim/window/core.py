@@ -90,6 +90,12 @@ class CoreMixin:
         self._static_baked_ids = None
         self._static_key = None
         self._clear_rgb = None
+        # Aggregate diagnostics (`RTM_DIAGNOSTICS=1`): one line per play with
+        # the static layer state, the largest mesh batch and texture uploads.
+        self._diag_play_no = 0
+        self._diag_play_static = False
+        self._diag_play_mesh = 0
+        self._diag_tex_uploads = 0
         # Schedule mode (2.0.0): when the class flag _schedule_mode is True,
         # play() records animations on a global timeline instead of rendering,
         # so any frame can later be produced on demand via build_timeline().
@@ -636,6 +642,7 @@ class CoreMixin:
             float(self.win_w), float(self.win_h), 0.0, float(self.win_h))
         self.dll.AddImageQuad(_STATIC_TOKEN, digest, buf, int(width),
                               int(height), quad, 1.0)
+        self._diag_play_static = True
 
     def sync(self, scene, angle=0.0, only_ids=None):
         # Phase 5: publish this frame's camera viewport (None for a plain Camera,
@@ -665,6 +672,7 @@ class CoreMixin:
                 ]
                 add_mesh.restype = None
                 add_mesh(int(count), vertices)
+                self._diag_play_mesh = max(self._diag_play_mesh, int(count))
         # Phase 5.4: a custom camera's frame comes back as pixels, not geometry.
         if self._rasterise_custom_camera(scene):
             return
@@ -776,6 +784,8 @@ class CoreMixin:
                             vertices.ctypes.data_as(
                                 ctypes.POINTER(ctypes.c_float)),
                         )
+                        self._diag_play_mesh = max(
+                            self._diag_play_mesh, int(count))
                         auto_ids = {id(root) for root in eligible}
                         if os.environ.get("RTM_AUTO_DEPTH_DEBUG"):
                             print("[auto-depth] roots=%d verts=%d"
