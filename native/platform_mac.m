@@ -1199,6 +1199,20 @@ void AddMesh(int vertex_count, const float *verts) {
     if (vertex_count > MAX_MESH_VERTS) vertex_count = MAX_MESH_VERTS;
     memcpy(g_mesh_vertices, verts, sizeof(float) * 7 * vertex_count);
     g_mesh_vertex_count = (uint32_t)vertex_count;
+    g_mesh_index_count = 0;
+}
+
+void AddMeshIndexed(int vertex_count, const float *verts,
+                    int index_count, const unsigned int *indices) {
+    if (verts == NULL || vertex_count <= 0
+            || indices == NULL || index_count < 3) return;
+    if (vertex_count > MAX_MESH_VERTS) vertex_count = MAX_MESH_VERTS;
+    index_count -= index_count % 3;
+    if (index_count > MAX_MESH_INDICES) index_count = MAX_MESH_INDICES;
+    memcpy(g_mesh_vertices, verts, sizeof(float) * 7 * vertex_count);
+    memcpy(g_mesh_indices, indices, sizeof(unsigned int) * index_count);
+    g_mesh_vertex_count = (uint32_t)vertex_count;
+    g_mesh_index_count = (uint32_t)index_count;
 }
 
 void AddPolygon(float x, float y, int r, int g, int b, int border_r, int border_g, int border_b, float border_width, int vert_count, const float* verts, float stroke_progress, float alpha, int close_path) {
@@ -1240,6 +1254,7 @@ void ClearShapes(void) {
     g_image_quad_count = 0;
     g_draw_cmd_count = 0;
     g_mesh_vertex_count = 0;
+    g_mesh_index_count = 0;
 }
 
 #undef RESET_POOL

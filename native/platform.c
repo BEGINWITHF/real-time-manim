@@ -292,6 +292,21 @@ __declspec(dllexport) void AddMesh(int vertex_count, const float *verts) {
     if (vertex_count > MAX_MESH_VERTS) vertex_count = MAX_MESH_VERTS;
     memcpy(g_mesh_vertices, verts, sizeof(float) * 7 * vertex_count);
     g_mesh_vertex_count = (uint32_t)vertex_count;
+    g_mesh_index_count = 0;
+}
+
+__declspec(dllexport) void AddMeshIndexed(int vertex_count, const float *verts,
+                                          int index_count,
+                                          const unsigned int *indices) {
+    if (verts == NULL || vertex_count <= 0
+            || indices == NULL || index_count < 3) return;
+    if (vertex_count > MAX_MESH_VERTS) vertex_count = MAX_MESH_VERTS;
+    index_count -= index_count % 3;
+    if (index_count > MAX_MESH_INDICES) index_count = MAX_MESH_INDICES;
+    memcpy(g_mesh_vertices, verts, sizeof(float) * 7 * vertex_count);
+    memcpy(g_mesh_indices, indices, sizeof(unsigned int) * index_count);
+    g_mesh_vertex_count = (uint32_t)vertex_count;
+    g_mesh_index_count = (uint32_t)index_count;
 }
 
 __declspec(dllexport) void AddDashedLine(float x1, float y1, float x2, float y2, int width, int r, int g, int b, float dash_length, float gap_length, float alpha) {
@@ -342,6 +357,7 @@ __declspec(dllexport) void ClearShapes(void) {
     g_image_quad_count = 0;
     g_draw_cmd_count = 0;
     g_mesh_vertex_count = 0;
+    g_mesh_index_count = 0;
 }
 
 __declspec(dllexport) int Vulkan_Tick(void) {
