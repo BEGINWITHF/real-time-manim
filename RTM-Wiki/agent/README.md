@@ -5,6 +5,8 @@
 > Source of truth: the `real_time_manim/` source tree + `../zh_CN/`. On conflict, the source wins.
 > **This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/Team-Axioviva/real-time-manim).
 
+> **Making a video a person will watch? Follow [`runbook.md`](runbook.md) top to bottom.** It is the tested pipeline: fifteen-minute preflight with a storyboard table, a complete copy-paste scaffold, a beat sheet with exact timings, HUD zones and sizes, the stills QA thresholds, recording/verification commands, and a symptom→fix table. The five-line scene below is the *smallest runnable scene*, not a film.
+
 ## 0. TL;DR — minimal runnable
 
 ```python
@@ -111,6 +113,7 @@ fast_record_scene(MyScene, "out.mp4")
 | `utils.md` | Colors, rate functions, direction constants, vector/geometry utils, path/sequence utils | `08-工具/` |
 | `gotchas.md` | Cross-domain pitfalls + error→cause→fix catalog | site-wide `提醒`/`无法演示` |
 | `patterns.md` | Idiomatic recipes (scene skeleton, common tasks) | site-wide samples |
+| `runbook.md` | **The pipeline from prompt to MP4**: preflight/storyboard, tested scaffold, beat sheet, HUD numbers, QA thresholds, recording/verification, symptom→fix | measured on the 38.8 s reference film |
 | `filmcraft.md` | Finish-a-short craft: palette, typography/HUD zones, beat timing, 3D presentation, stills QA loop, failure modes | measured on the 38.8 s Mandelbrot reference film |
 
 ## 7. Entry schema (uniform across this folder)
@@ -136,8 +139,9 @@ Conventions: **write everything in English**; keep identifiers/code/error string
 ## 8. Suggested read order (bot)
 
 1. Read this README for the global picture and constraints.
-2. Read the domain file for the task (see file map).
-3. For errors/edge behavior, read `gotchas.md`.
-4. For "how do I combine these", read `patterns.md`.
-5. Before recording a finished piece, read `filmcraft.md` (look, timing, stills QA checklist).
-6. For fuller prose / complete sample code, fall back to the matching `../zh_CN/` page (each entry gives a `see` path).
+2. **If the task is “make a video”, read `runbook.md` now and follow it in order.** It includes the scaffold and every threshold; the domain files are only needed when you replace the subject.
+3. Read the domain file for the task (see file map).
+4. For errors/edge behavior, read `gotchas.md`.
+5. For "how do I combine these", read `patterns.md`.
+6. Before recording a finished piece, read `filmcraft.md` (the reasons behind the runbook's numbers).
+7. For fuller prose / complete sample code, fall back to the matching `../zh_CN/` page (each entry gives a `see` path).

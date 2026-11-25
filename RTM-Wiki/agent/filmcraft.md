@@ -6,6 +6,8 @@
 
 A scene can be pixel-exact and still fail: 33 seconds of morphing geometry with no text, a default-blue square on black, a camera that never eases, five saturated hues fighting. The API docs teach *how* to call `win.play`; this page is about *what to put in front of the play*.
 
+**If you just need the process, use [`runbook.md`](runbook.md).** Same rules, laid out as numbered steps with a copy-paste scaffold, exact beat timings, QA thresholds and a symptom→fix table. This page is the *why* behind its numbers.
+
 ---
 
 ## 1. The contract

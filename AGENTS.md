@@ -38,6 +38,8 @@ Core mental model (from the agent README §5): **the data model is ManimCE** —
 
 RTM is a library, not a CLI. A video is a `Scene` subclass whose `construct()` drives an `MLWindow`, plus a recorder call.
 
+**If the goal is a film a person will watch, follow [`RTM-Wiki/agent/runbook.md`](RTM-Wiki/agent/runbook.md) top to bottom before writing code.** It has the preflight/storyboard table, a complete tested scaffold, exact beat timings, HUD zones and sizes, the stills QA thresholds, recording/verification commands and a symptom→fix table. The scene below is the minimal runnable shape, not a film.
+
 **Setup** (only if not installed): `pip install real-time-manim`; macOS additionally `brew install molten-vk`; any recording additionally needs `ffmpeg` on `PATH`. Math without LaTeX: `pip install "real-time-manim[typst]"`.
 
 **The canonical scene shape** — follow it exactly:
@@ -82,7 +84,7 @@ Grammar: `MLWindow(...) ; win.scene = self ; (add | play)* ; win.close()`.
 6. The module is `real_time_manim` (underscores) — fix hyphenated imports on sight.
 7. After recording, verify: the returned `files` list must exist; grep the log for `[FastRecord] Saved:`.
 
-Full scene grammar, recording options, math (`MathTex`→Typst routing, raw-string escaping), and text: `RTM-Wiki/agent/` domain files. Ready-made recipes: `RTM-Wiki/agent/patterns.md`. Before recording anything you intend to show a person, read `RTM-Wiki/agent/filmcraft.md` — it is the quality bar (palette, HUD zones, beat timing, stills QA checklist, failure modes); a scene that only follows the API docs tends to be technically correct and unwatchable.
+Full scene grammar, recording options, math (`MathTex`→Typst routing, raw-string escaping), and text: `RTM-Wiki/agent/` domain files. Ready-made recipes: `RTM-Wiki/agent/patterns.md`. When you intend to show the result to a person: `RTM-Wiki/agent/runbook.md` (the pipeline and every threshold) and `filmcraft.md` (why the numbers are what they are). A scene that only follows the API docs tends to be technically correct and unwatchable.
 
 ## 4. How to report issues
 
