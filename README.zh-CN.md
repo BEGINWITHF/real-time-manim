@@ -4,7 +4,7 @@
   <img src="banner.jpg" alt="Real-Time-Manim V2 banner" width="880"/>
 </p>
 
-<p align="center"><a href="README.md">English</a> · <b>简体中文</b> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português</a> · <a href="README.fr.md">Français</a> · <a href="README.de.md">Deutsch</a> · <a href="README.ru.md">Русский</a></p>
+<p align="center"><a href="README.md">English</a> · <b>简体中文</b> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.hi.md">हिन्दी</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português</a> · <a href="README.fr.md">Français</a> · <a href="README.de.md">Deutsch</a> · <a href="README.ru.md">Русский</a></p>
 
 基于 **Vulkan 加速的 [ManimCE](https://www.manim.community/) 实时渲染后端**。RTM 直接驱动
 ManimCE 自己的 `Mobject` / `Animation` 数据模型，通过原生 Vulkan 管线渲染，因此同一个场景可以
