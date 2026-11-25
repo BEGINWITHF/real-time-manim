@@ -68,10 +68,10 @@ macOS has no native Vulkan; RTM runs through **MoltenVK** (a Vulkan → Metal tr
 brew install molten-vk   # install MoltenVK with Homebrew
 ```
 
-The pip sdist ships the native sources plus a prebuilt `vulkan_core.dylib` and builds the wheel locally. On Apple Silicon, if the build fails, retry with this environment variable:
+PyPI publishes a prebuilt macOS arm64 wheel, which `pip install` uses directly. If pip falls back to the sdist (Intel Mac, or an unmatched platform tag), the sdist ships the native sources plus a prebuilt `vulkan_core.dylib` and builds the wheel locally. On Apple Silicon, if that build fails, retry with this environment variable:
 
 ```bash
-MACOSX_DEPLOYMENT_TARGET=13 python3 -m pip install real-time-manim
+MACOSX_DEPLOYMENT_TARGET=12 python3 -m pip install real-time-manim
 ```
 
 Building the native library from source is `bash native/build_mac.sh` (only needed for repo development).
