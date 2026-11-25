@@ -16,6 +16,7 @@
 > **Начните здесь:** [сайт проекта](https://team-axioviva.github.io/real-time-manim_website/) —
 > обзор, демо и интерактивный граф wiki; [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki)
 > — разбор на уровне исходного кода.
+> Полное руководство на английском: [`RTM-Wiki/en_US/`](RTM-Wiki/en_US/README.md).
 >
 > **ИИ-агентам:** начните с [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md) — весь API
 > сжат в один справочник, удобный для grep, плюс [`gotchas.md`](RTM-Wiki/agent/gotchas.md),

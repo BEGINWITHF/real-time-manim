@@ -18,6 +18,7 @@ aufgezeichnet werden kann.
 > für Überblick, Demos und den interaktiven Wiki-Graphen, und das
 > [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki) für den Durchgang auf
 > Quellcode-Ebene.
+> Das vollständige englische Handbuch liegt in [`RTM-Wiki/en_US/`](RTM-Wiki/en_US/README.md).
 >
 > **KI-Agenten:** beginnt mit [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md) — die
 > gesamte API in einer grep-freundlichen Referenz, dazu
