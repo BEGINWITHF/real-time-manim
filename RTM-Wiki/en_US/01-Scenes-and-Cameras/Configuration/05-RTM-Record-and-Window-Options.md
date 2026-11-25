@@ -21,7 +21,7 @@ def fast_record_scene(scene, out_path=None, *, fps=60, hidden=True,
 | `count_only` | `bool` | `False` | probe mode: count frames only, no capture, no GPU rendering, no files written |
 | `segment` | `tuple \| None` | `None` | `(start_frame, end_frame)` exports a **BMP directory** by frame range (`out_path` becomes a directory), instead of a single MP4 |
 | `overwrite` | `bool` | `True` | when `False`, a target file that already exists raises `FileExistsError` |
-| `cleanup` | `bool` | `True` | delete manim's temporary `media/` directory after recording; `False` keeps it |
+| `cleanup` | `bool` | `True` | remove this run's transient output after recording; shared `media/Tex` / `media/texts` caches survive. `False` keeps this run's transient output too |
 | `verbose` | `bool` | `True` | whether to print the progress line for each window |
 
 **Returns**: `dict` — `{"out_path": ..., "windows": [...], "files": [...], "with_audio": [...]}`; `files` is the output that really exists on disk (empty when `count_only`).
@@ -187,7 +187,7 @@ if __name__ == "__main__" and "probes" in sys.argv[1:]:
     result = fast_record_scene(FpsDemo, out_path="probe_count.mp4", count_only=True, verbose=True)   # count_only: count frames only, no capture and no file
     print("count_only return value: ", result)   # out_path is returned as usual, but the file is not on disk
     fast_record_scene(FpsDemo, out_path="probe_bmp", segment=(0, 30), verbose=True)   # segment: export a BMP directory by frame range, not an MP4
-    fast_record_scene(FpsDemo, out_path="probe_clean.mp4", cleanup=False, verbose=True)   # cleanup=False: keep manim's media/ directory
+    fast_record_scene(FpsDemo, out_path="probe_clean.mp4", cleanup=False, verbose=True)   # cleanup=False: keep this run's transient output
     try:
         fast_record_scene(FpsDemo, out_path="probe_clean.mp4", overwrite=False, verbose=True)   # overwrite=False: error if the target already exists
     except FileExistsError as exc:
@@ -201,7 +201,7 @@ Measured output (in order):
 | --- | --- |
 | `count_only=True` | prints `[FastRecord] Count: 114 frames`, writes no files; the return value's `files` is an empty list |
 | `segment=(0, 30)` | prints `[FastRecord] BMP mode (0, 30)` and `[FastRecord] BMP: 30 frames in ...`; the directory contains `frame_000000.bmp` ~ `frame_000029.bmp` |
-| `cleanup=False` | after that run manim's `media/` directory stays in place (by default the whole directory is deleted) |
+| `cleanup=False` | this run's transient output stays in place (by default only it is removed; shared caches always survive) |
 | `overwrite=False` | when the target already exists it raises `FileExistsError: target already exists: ... (pass overwrite=True to replace it)` |
 | `verbose=False` | does not print progress lines like `[record] window #1 -> ...` / `[FastRecord] ...` |
 

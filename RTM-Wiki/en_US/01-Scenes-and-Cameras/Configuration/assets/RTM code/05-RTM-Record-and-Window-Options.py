@@ -155,7 +155,7 @@ if __name__ == "__main__" and "probes" in sys.argv[1:]:
     result = fast_record_scene(FpsDemo, out_path="probe_count.mp4", count_only=True, verbose=True)   # count_only: count frames only, no capture and no file
     print("count_only return value: ", result)   # out_path is returned as usual, but the file is not on disk
     fast_record_scene(FpsDemo, out_path="probe_bmp", segment=(0, 30), verbose=True)   # segment: export a BMP directory by frame range, not an MP4
-    fast_record_scene(FpsDemo, out_path="probe_clean.mp4", cleanup=False, verbose=True)   # cleanup=False: keep manim's media/ directory
+    fast_record_scene(FpsDemo, out_path="probe_clean.mp4", cleanup=False, verbose=True)   # cleanup=False: keep this run's transient output
     try:
         fast_record_scene(FpsDemo, out_path="probe_clean.mp4", overwrite=False, verbose=True)   # overwrite=False: error if the target already exists
     except FileExistsError as exc:

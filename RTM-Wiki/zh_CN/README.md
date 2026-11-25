@@ -58,7 +58,7 @@ python "...\RTM-Wiki\zh_CN\04-图形与文本\assets\RTM code\12-数字与变量
 | 缓存 | 位置 | 省掉什么 | 怎么清 |
 | --- | --- | --- | --- |
 | LaTeX / Typst 公式 | `media/Tex`（+ `tex_cache/`） | 重新编译公式 | `clear_tex_cache()`（`dry_run=True` 只预览） |
-| 文本 → SVG（Pango） | `media/texts/<hash>.svg` | 重新排版，约 2 ms/条 | `clear_media()`，或录制器默认的 `cleanup=True` |
+| 文本 → SVG（Pango） | `media/texts/<hash>.svg` | 重新排版，约 2 ms/条 | `clear_media()` |
 | 解析后的 SVG → mobject | 进程内存 `SVG_HASH_TO_MOB_MAP` | `svgelements` 解析 + 每个字形建一个 VMobject，4–20 ms/条 | 进程结束自动释放；单个 `Text(use_svg_cache=False)` 可退出 |
 
 ```python
@@ -72,8 +72,10 @@ clear_tex_cache()                # 清 media/Tex 与 tex_cache/（dry_run=True �
 clear_media()                    # 清整个 media/，包括 media/texts
 ```
 
-- **`clear_tex_cache()` 不碰 `media/texts`**：文本 SVG 要用 `clear_media()`（或 `cleanup=True`）。
-- `fast_record_scene(..., cleanup=True)` 是默认值，每录一次就删掉整个 `media/`，磁盘上的文本缓存只活一次渲染；要跨次复用请传 `cleanup=False`。
+- **`clear_tex_cache()` 不碰 `media/texts`**：文本 SVG 要用 `clear_media()`。
+- `fast_record_scene(..., cleanup=True)` 是默认值，只删本次运行的临时输出（videos、images、
+  partial movies、sections、logs）；共享的 `media/Tex` 和 `media/texts` 缓存会保留，并在下次
+  渲染复用。要连本次临时输出也保留，传 `cleanup=False`。
 - 文本文件的 hash 含内容与样式（字体、字号、颜色、`t2c`、行距、连字），红字和蓝字是两个文件。
 - 内存缓存为 FIFO、上限 256 条，且从同一字符串的**第二次**构建才开始写入；重复标签构造约快 2.5 倍，`DecimalNumber` 的每个新值都不会被拖慢。
 
