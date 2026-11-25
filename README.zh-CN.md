@@ -182,18 +182,8 @@ FramePreview(MyScene).run()
 Bug 与功能请求：[提交 issue](https://github.com/Team-Axioviva/real-time-manim/issues)。
 邮箱：**axioviva@gmail.com**。
 
-
 ---
 
 ## 许可证
 
 [MIT](LICENSE)。ManimCE、Vulkan 和 Typst 归各自项目所有。
-
----
-
-## Downloads
-
-![PyPI downloads for real-time-manim](assets/pypi-downloads.svg)
-
-Refreshed daily at 00:00 GMT (UTC) from [pypistats.org](https://pypistats.org/packages/real-time-manim).
-The chart counts file downloads, not unique users.

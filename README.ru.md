@@ -201,12 +201,3 @@ Email: **axioviva@gmail.com**.
 ## Лицензия
 
 [MIT](LICENSE). ManimCE, Vulkan и Typst принадлежат своим проектам.
-
----
-
-## Downloads
-
-![PyPI downloads for real-time-manim](assets/pypi-downloads.svg)
-
-Refreshed daily at 00:00 GMT (UTC) from [pypistats.org](https://pypistats.org/packages/real-time-manim).
-The chart counts file downloads, not unique users.

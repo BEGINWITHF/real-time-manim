@@ -82,7 +82,7 @@ Grammar: `MLWindow(...) ; win.scene = self ; (add | play)* ; win.close()`.
 6. The module is `real_time_manim` (underscores) — fix hyphenated imports on sight.
 7. After recording, verify: the returned `files` list must exist; grep the log for `[FastRecord] Saved:`.
 
-Full scene grammar, recording options, math (`MathTex`→Typst routing, raw-string escaping), and text: `RTM-Wiki/agent/` domain files. Ready-made recipes: `RTM-Wiki/agent/patterns.md`.
+Full scene grammar, recording options, math (`MathTex`→Typst routing, raw-string escaping), and text: `RTM-Wiki/agent/` domain files. Ready-made recipes: `RTM-Wiki/agent/patterns.md`. Before recording anything you intend to show a person, read `RTM-Wiki/agent/filmcraft.md` — it is the quality bar (palette, HUD zones, beat timing, stills QA checklist, failure modes); a scene that only follows the API docs tends to be technically correct and unwatchable.
 
 ## 4. How to report issues
 
