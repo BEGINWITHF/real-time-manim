@@ -11,6 +11,8 @@ RTM drives ManimCE's own `Mobject` / `Animation` model through a native Vulkan p
 scene can be watched **live**, seeked to any frame instantly, and recorded to MP4 several times
 faster than the default renderer.
 
+**PyPI:** [pypi.org/project/real-time-manim](https://pypi.org/project/real-time-manim/)
+
 > **Start here:** the [project website](https://team-axioviva.github.io/real-time-manim_website/)
 > for an overview, demos and the interactive wiki graph, and the
 > [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki) for the source-level walkthrough.
@@ -20,10 +22,10 @@ faster than the default renderer.
 > [`patterns.md`](RTM-Wiki/agent/patterns.md) and [`llms.txt`](llms.txt).
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![PyPI](https://img.shields.io/pypi/v/real-time-manim.svg)
+[![PyPI](https://img.shields.io/pypi/v/real-time-manim.svg)](https://pypi.org/project/real-time-manim/)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS-lightgrey.svg)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)
-![PyPI downloads](https://img.shields.io/pypi/dm/real-time-manim.svg)
+[![PyPI downloads](https://img.shields.io/pypi/dm/real-time-manim.svg)](https://pypi.org/project/real-time-manim/)
 ![GitHub stars](https://img.shields.io/github/stars/Team-Axioviva/real-time-manim.svg)
 ![Last commit](https://img.shields.io/github/last-commit/Team-Axioviva/real-time-manim.svg)
 ![Backend: Vulkan](https://img.shields.io/badge/Backend-Vulkan-red.svg)

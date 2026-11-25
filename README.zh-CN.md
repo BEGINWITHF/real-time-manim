@@ -10,6 +10,8 @@
 ManimCE 自己的 `Mobject` / `Animation` 数据模型，通过原生 Vulkan 管线渲染，因此同一个场景可以
 **实时预览**、瞬间定位到任意一帧，并以比默认渲染器快数倍的速度录制为 MP4。
 
+**PyPI：** [pypi.org/project/real-time-manim](https://pypi.org/project/real-time-manim/)
+
 > **从这里开始：** 先看[项目官网](https://team-axioviva.github.io/real-time-manim_website/)
 > （概览、演示和交互式 wiki 图谱），再看
 > [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki)（源码级讲解）。
@@ -20,10 +22,10 @@ ManimCE 自己的 `Mobject` / `Animation` 数据模型，通过原生 Vulkan 管
 > [`patterns.md`](RTM-Wiki/agent/patterns.md) 和 [`llms.txt`](llms.txt)。
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![PyPI](https://img.shields.io/pypi/v/real-time-manim.svg)
+[![PyPI](https://img.shields.io/pypi/v/real-time-manim.svg)](https://pypi.org/project/real-time-manim/)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS-lightgrey.svg)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)
-![PyPI downloads](https://img.shields.io/pypi/dm/real-time-manim.svg)
+[![PyPI downloads](https://img.shields.io/pypi/dm/real-time-manim.svg)](https://pypi.org/project/real-time-manim/)
 ![GitHub stars](https://img.shields.io/github/stars/Team-Axioviva/real-time-manim.svg)
 ![Last commit](https://img.shields.io/github/last-commit/Team-Axioviva/real-time-manim.svg)
 ![Backend: Vulkan](https://img.shields.io/badge/Backend-Vulkan-red.svg)
