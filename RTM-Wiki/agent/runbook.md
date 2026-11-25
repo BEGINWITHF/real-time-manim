@@ -1,6 +1,6 @@
-# runbook — prompt → finished MP4
+﻿# runbook — prompt → finished MP4
 
-> scope: the exact sequence used to make a 38.8 s, 2,328-frame RTM short that a person will actually watch. Follow it top to bottom; every decision is already made. If a step needs a judgement call, the number to use is written next to it.
+> scope: the exact sequence used to make a 38.8 s, 2,328-frame RTM short that a person will actually watch — including how to review with that person (stills before renders, §0.5 and §12). Follow it top to bottom; every decision is already made. If a step needs a judgement call, the number to use is written next to it.
 > src: this file + `filmcraft.md` (why the numbers are what they are) + `real_time_manim/demos/four_d_mandelbrot.py` (a complete film you can run and copy). If you read one agent page, read this one.
 > **Rule 0:** do not write `construct()` until §0 is filled in. Code written before the storyboard is the reason agent films look like screensavers.
 
@@ -53,6 +53,55 @@ The reference film's actual sheet (use these numbers as the default if unsure):
 - 3–5 shots, 6–14 s each, 10–45 s total. Under 8 s is a GIF, over 45 s needs narration.
 - One camera move for the whole film (a slow zoom or one tilt). More than one reads as a mistake.
 - One accent colour for the subject. A second accent may annotate, nothing else.
+
+---
+
+## §0.5 Working with a person (read before your first edit)
+
+The expensive mistake is not a slow render; it is rendering the **wrong direction** for two minutes and then again after every note. Move the review loop onto stills, and only commit to video once a person has approved what they see.
+
+### 0.5.1 Four questions, one message, each with a default
+
+Ask these together, before code. If the person says “whatever”, take the default and say which you took.
+
+| question | default if unanswered |
+| --- | --- |
+| Length and platform? | 20–40 s, 16:9, 1920×1080 (RTM has no other size) |
+| Language of on-screen text? | the language they wrote to you in |
+| Captions only, or also narration/music? | captions only (RTM has no TTS; audio must be supplied) |
+| The one thing it must explain? | the sentence from their prompt, restated |
+
+### 0.5.2 Three gates — never skip one
+
+| gate | artifact | cost here | what the person decides |
+| --- | --- | --- | --- |
+| **1. Look** | 5–8 stills, or one `contact_sheet` | one scene build (~10 s) + ~10 ms/frame | palette, composition, text, whether the shot list reads |
+| **2. Motion** | `FramePreview` (scrub window + progress bar) | scene build only | timing, easing, reveal order |
+| **3. Film** | `fast_record_scene(..., jobs=4)` | ~2–3 s per second of film (38.8 s → 118 s) | receives the MP4 |
+
+Rules:
+
+- **A still costs seconds; a render costs minutes.** After any visual change, regenerate stills — do not re-render the MP4 to check a colour.
+- **Do not send an MP4 to answer a still question.** If the question is “does this frame look right”, send the frame.
+- **If the question is motion, use `FramePreview`, not a video.** The person can scrub to the exact beat; a 40 s MP4 makes them hunt for it.
+- **State the cost of the next step.** “Stills are ready; on your OK I record 38.8 s, about 2 minutes.”
+- **Review your own stills before sending them.** If you would not ship the frame, do not put it in front of the person.
+
+### 0.5.3 Taste is a choice between two pictures, not an open question
+
+- Never ask “what style do you want?”. Render the same key frame twice (accent A vs accent B, tight vs wide, caption short vs long) and ask **“A or B?”** with both paths.
+- One axis per round: colour, composition, pacing, text. Do not change all four at once — the person cannot tell what they are reacting to.
+- If the answer is “ugly”, ask **which axis** and show the still that is wrong. Do not re-render blindly.
+- If the person is unsure, take the house default (this runbook) and say so; do not stall.
+
+### 0.5.4 Iteration loop (the cheap one)
+
+```
+edit → 5 stills (or contact_sheet) → compare with the approved set → one-line note to the person
+     → only when the look is approved: FramePreview for motion → only after that: record
+```
+
+A colour change, a caption rewrite or a camera nudge costs one still (~10 s). Reserve the MP4 for delivery, not for review.
 
 ---
 
@@ -348,7 +397,9 @@ Pick the first frame, a middle frame and the last. If they do not tell a story i
 
 ---
 
-## §7. Record and verify
+## §7. Record and verify (gate 3 — after gates 1 and 2)
+
+Only run this after a person has approved the stills (§0.5.2). Recording is the one step that cannot be undone in ten seconds.
 
 ```bash
 python my_film.py --jobs 4
@@ -449,6 +500,57 @@ Observed in real agent submissions, in order of frequency:
 - [ ] one accent + one secondary; strokes ≥ 2 px; text ≥ 22 px.
 - [ ] every reveal ≥ 0.8 s; hold ≥ 0.6 s after each; one camera move, eased.
 - [ ] stills at 5+ times reviewed; contact sheet if available.
+- [ ] look (gate 1) and motion (gate 2) approved by the person **before** recording.
 - [ ] `--jobs 1` and `--jobs 4` agree on a middle frame.
 - [ ] `MeshBatch` under `MAX_QUADS` if used; no `set_opacity`-filled outlines.
 - [ ] encoded MP4: 1920×1080, 60 fps, planned duration; first/middle/last frames checked.
+
+---
+
+## §12. Talking to the person (delivery, feedback, honesty)
+
+### 12.1 One message per decision
+
+A review message has five parts, in this order. Nothing else.
+
+```
+What changed: <one line>
+Look at:      <absolute path to sheet.png or preview>
+Cost:         <duration / resolution / file size, or "still, ~10 s to regenerate">
+Check:        <the one thing you are unsure about>
+Next:         <the decision you need: A/B, or "OK to record (~2 min)">
+```
+
+- Paths, not code. The person reviews pictures, not `construct()`.
+- One decision per message. If you have two questions, ask the one that blocks the next step; the other can wait.
+- If the environment can reveal a file (Explorer / Finder), reveal the main artifact; otherwise give the absolute path.
+- Never write “looks great” — write what you checked: “title clears the subject at 3.0 s and 9.8 s”.
+
+### 12.2 Delivering a film
+
+State, in this order: path, duration, resolution/fps, size, how to re-render.
+
+```
+out/film.mp4 — 38.8 s, 1920×1080 @ 60, 7.6 MB
+Re-render: python my_film.py --jobs 4
+```
+
+- Keep the source script next to the output; the person will ask for a one-word change later.
+- Version approved outputs (`film_v2.mp4`) instead of overwriting the file they signed off on.
+- If `--jobs > 1`, say you verified a middle frame against `--jobs 1`.
+- If something is still wrong, say it before they find it (“the last caption is tight on a phone; I can shorten it to 60 characters”).
+
+### 12.3 Receiving feedback
+
+| they say | you do |
+| --- | --- |
+| “ugly” | ask which axis (colour / composition / pacing / text); show the still that is wrong |
+| “too slow” | shorten holds first, then the reveal; do not speed up the camera |
+| “boring” | add one beat (a second structure or a caption change), not more colours |
+| “make it like <film>” | copy its *structure* (shot lengths, palette count, text density) — not its content |
+| “just finish it” | take the house defaults, state them, ship; do not keep asking |
+
+### 12.4 The one rule behind all of these
+
+**Show, don't promise.** A path to a still the person can open beats a paragraph describing what the film will look like. This is why §0.5 exists: stills are cheap, renders are not, and a person's taste is only readable from pixels.
+

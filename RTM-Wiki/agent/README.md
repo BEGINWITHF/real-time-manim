@@ -113,7 +113,7 @@ fast_record_scene(MyScene, "out.mp4")
 | `utils.md` | Colors, rate functions, direction constants, vector/geometry utils, path/sequence utils | `08-工具/` |
 | `gotchas.md` | Cross-domain pitfalls + error→cause→fix catalog | site-wide `提醒`/`无法演示` |
 | `patterns.md` | Idiomatic recipes (scene skeleton, common tasks) | site-wide samples |
-| `runbook.md` | **The pipeline from prompt to MP4**: preflight/storyboard, tested scaffold, beat sheet, HUD numbers, QA thresholds, recording/verification, symptom→fix | measured on the 38.8 s reference film |
+| `runbook.md` | **The pipeline from prompt to MP4**: preflight/storyboard, working with the person (stills → preview → record), tested scaffold, beat sheet, HUD numbers, QA thresholds, verification, symptom→fix, delivery | measured on the 38.8 s reference film |
 | `filmcraft.md` | Finish-a-short craft: palette, typography/HUD zones, beat timing, 3D presentation, stills QA loop, failure modes | measured on the 38.8 s Mandelbrot reference film |
 
 ## 7. Entry schema (uniform across this folder)
