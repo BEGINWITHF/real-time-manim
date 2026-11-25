@@ -1,6 +1,6 @@
 # RTM-Wiki (English manual)
 
-An English manual snapshot for Real-Time-Manim (RTM): **122 pages**, 9 chapters, **351** sample clips.
+An English manual snapshot for Real-Time-Manim (RTM): **123 pages**, 9 chapters, **351** sample clips.
 
 Every API gets its own section, each with a sample video; the parameter tables spell out "what you may pass / what you should not / why it has no effect".
 
@@ -8,8 +8,8 @@ Every API gets its own section, each with a sample video; the parameter tables s
 
 ```
 RTM-Wiki/
-├─ README.md              ← this file (overview)
 └─ en_US/
+   ├─ README.md          ← this file (overview)
    ├─ 00-Getting-Started/           6 pages   installation, quickstart, recording methods, ManimCE/ManimGL user guides, LLMs and agents
    ├─ 01-Scenes-and-Cameras/       17 pages   scene lifecycle, play, special scenes, cameras, config
    ├─ 02-Mobjects/                 16 pages   construction and containers, positioning, measurement, transforms, style, copying, updaters
