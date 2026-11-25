@@ -21,7 +21,7 @@ def fast_record_scene(scene, out_path=None, *, fps=60, hidden=True,
 | `count_only` | `bool` | `False` | 探测模式：只数帧数，不采集、不做 GPU 渲染、不写文件 |
 | `segment` | `tuple \| None` | `None` | `(start_frame, end_frame)` 按帧区间导出 **BMP 目录**（`out_path` 变成目录），而不是一个 MP4 |
 | `overwrite` | `bool` | `True` | `False` 时目标文件已存在就抛 `FileExistsError` |
-| `cleanup` | `bool` | `True` | 录完删掉 manim 的 `media/` 临时目录；`False` 保留 |
+| `cleanup` | `bool` | `True` | 录完删本次运行的临时输出；共享的 `media/Tex` / `media/texts` 缓存保留。`False` 连本次临时输出也保留 |
 | `verbose` | `bool` | `True` | 打不打每个窗口的进度行 |
 
 **返回**：`dict` —— `{"out_path": ..., "windows": [...], "files": [...], "with_audio": [...]}`，`files` 是磁盘上真实存在的输出（`count_only` 时为空）。
@@ -187,7 +187,7 @@ if __name__ == "__main__" and "probes" in sys.argv[1:]:
     result = fast_record_scene(FpsDemo, out_path="probe_count.mp4", count_only=True, verbose=True)   #count_only：只数帧，不采集也不写文件
     print("count_only 的返回值：", result)   #out_path 照常返回，但磁盘上没有这个文件
     fast_record_scene(FpsDemo, out_path="probe_bmp", segment=(0, 30), verbose=True)   #segment：按帧区间导出 BMP 目录，不是 MP4
-    fast_record_scene(FpsDemo, out_path="probe_clean.mp4", cleanup=False, verbose=True)   #cleanup=False：保留 manim 的 media/ 目录
+    fast_record_scene(FpsDemo, out_path="probe_clean.mp4", cleanup=False, verbose=True)   #cleanup=False：保留本次运行的临时输出
     try:
         fast_record_scene(FpsDemo, out_path="probe_clean.mp4", overwrite=False, verbose=True)   #overwrite=False：目标已存在就报错
     except FileExistsError as exc:
@@ -201,7 +201,7 @@ if __name__ == "__main__" and "probes" in sys.argv[1:]:
 | --- | --- |
 | `count_only=True` | 打印 `[FastRecord] Count: 114 frames`，不写任何文件；返回值的 `files` 是空列表 |
 | `segment=(0, 30)` | 打印 `[FastRecord] BMP mode (0, 30)` 和 `[FastRecord] BMP: 30 frames in ...`，目录里是 `frame_000000.bmp` ~ `frame_000029.bmp` |
-| `cleanup=False` | 那次运行后 manim 的 `media/` 目录保留在原地（默认会被整目录删掉） |
+| `cleanup=False` | 本次运行的临时输出保留在原地（默认只删它；共享缓存始终保留） |
 | `overwrite=False` | 目标已存在时抛 `FileExistsError: target already exists: ... (pass overwrite=True to replace it)` |
 | `verbose=False` | 不打 `[record] window #1 -> ...` / `[FastRecord] ...` 这些进度行 |
 

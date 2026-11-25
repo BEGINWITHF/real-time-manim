@@ -47,7 +47,7 @@ RTM **没有命令行**：不装 `manim` CLI 那套旗标，画幅由 `MLWindow(
 | `--log_to_file` | 标志 | 关 | 把日志写文件。RTM：同上 |
 | `--tex_template 路径` | 路径 | 默认模板 | 自定义 LaTeX 模板。RTM 侧入口是 `config.tex_template` / `config.tex_template_file`（**实际生效**，2026-10-17 实测，见 [03-路径与窗口](03-路径与窗口.md)），只是没有命令行旗标 |
 | `--notify_outdated_version / --silent` | 标志 | 开 | 是否提示新版本 |
-| `--no_latex_cleanup` | 标志 | 关 | 保留 LaTeX 中间文件。RTM 等价：`cleanup=False`（保留整个 `media/`） |
+| `--no_latex_cleanup` | 标志 | 关 | 保留 LaTeX 中间文件。RTM 录制时不会删 `media/Tex`；要清掉用 `clear_tex_cache()` |
 | `--enable_gui` | 标志 | 关 | OpenGL GUI 面板 |
 | `--gui_location x,y` | `x,y` | `0,0` | GUI 面板位置 |
 | `--fullscreen` | 标志 | 关 | 窗口全屏 |

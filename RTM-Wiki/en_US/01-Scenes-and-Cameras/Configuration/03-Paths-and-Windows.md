@@ -21,7 +21,7 @@ But manim's own LaTeX / Text / image pipeline is still running, and the director
 | `sections_dir` | `str` | `{video_dir}/sections` | not wired up: for sectioned output, split into scenes and record them separately |
 | `images_dir` | `str` | `{media_dir}/images/{module_name}` | not wired up |
 | `partial_movie_dir` | `str` | `{video_dir}/partial_movie_files/{scene_name}` | not wired up: RTM has no partial cache and will not generate partial movies |
-| `tex_dir` | `str` | `{media_dir}/Tex` | **takes effect for intermediate products**: the LaTeX/Typst compile directory is exactly `config.get_dir("tex_dir")` (`manim/utils/tex_file_writing.py:105,202,277`, `manim/utils/typst_file_writing.py:84`); changing it moves the `.tex`/`.svg` intermediate files (measured 2026-10-17: after setting it to a temporary directory, `Tex('a + b')`'s `.tex`/`.svg` really landed there); **what is not wired up is only the final clip output path** (RTM only uses `out_path`). By default it is under `media/` and is cleaned up along with `cleanup=True` |
+| `tex_dir` | `str` | `{media_dir}/Tex` | **takes effect for intermediate products**: the LaTeX/Typst compile directory is exactly `config.get_dir("tex_dir")` (`manim/utils/tex_file_writing.py:105,202,277`, `manim/utils/typst_file_writing.py:84`); changing it moves the `.tex`/`.svg` intermediate files (measured 2026-10-17: after setting it to a temporary directory, `Tex('a + b')`'s `.tex`/`.svg` really landed there); **what is not wired up is only the final clip output path** (RTM only uses `out_path`). By default it is under `media/`; recorder `cleanup` never removes it (use `clear_tex_cache()` to wipe the LaTeX cache) |
 | `text_dir` | `str` | `{media_dir}/texts` | **takes effect for intermediate products**: `Text`'s svg cache directory is exactly `config.get_dir("text_dir")` (`manim/mobject/text/text_mobject.py:841,1388`; measured 2026-10-17, `Text('hello rtm')` landed in the changed directory), same as above |
 | `log_dir` | `str` | `{media_dir}/logs` | not wired up: RTM does not write log files, output goes to the terminal |
 | `assets_dir` | `str` | `./` | **takes effect for the lookup directory**: `get_full_raster_image_path` / `get_full_svg_image_path` (`manim/utils/images.py:27-38`, audio `manim/utils/sounds.py:24` likewise) treat `config.get_dir("assets_dir")` as one of the default search directories — it first tries the relative path you give as-is, then tries a same-named file under `assets_dir` (measured 2026-10-17: after changing it, a same-named png in the new directory could be found by `ImageMobject`). **What is not wired up is only the final clip output path** |
@@ -34,13 +34,13 @@ But manim's own LaTeX / Text / image pipeline is still running, and the director
 | `log_to_file` | `bool` | `False` | not wired up |
 | `ffmpeg_loglevel` | `str` | `ERROR` | not wired up: RTM starts ffmpeg itself (stderr is discarded directly), this key cannot reach it |
 | `notify_outdated_version` | `bool` | `True` | not wired up |
-| `no_latex_cleanup` | `bool` | `False` | not wired up: note that RTM's `cleanup` is reversed — by default it **deletes the entire** manim `media/`, and only `cleanup=False` keeps it |
+| `no_latex_cleanup` | `bool` | `False` | not wired up: RTM's `cleanup` removes only this run's transient output, never `media/Tex`; use `clear_tex_cache()` to remove LaTeX intermediates |
 | `preview_command` | `str` | `""` | not wired up: after rendering, open your own player to watch |
 
 > Note:
 >
 > - The most common pitfall: "arranging" the output file in the `media_dir` template and then looking for `media/videos/xxx/1080p60/` — RTM simply will not generate that path; the file is exactly where your `out_path` says (non-existent subdirectories are created automatically).
-> - Conversely, manim's own temporary `media/` directory **will be deleted by RTM** (with `cleanup=True`, the default); if you want to keep it for study, pass `cleanup=False`.
+> - RTM's `cleanup` removes only this run's transient output; the shared `media/Tex` and `media/texts` caches stay in place.
 
 ### `config` window keys (cheat-sheet D, all not wired up)
 
@@ -114,7 +114,7 @@ Finally it waits 0.5s and stops. The video is a condensed version of this page: 
 
 > Note: when you can't remember the correspondence, one sentence is enough — "path = `out_path`, window = `MLWindow`, treat the rest of the config keys as non-existent".
 >
-> Also note that after rendering RTM **actively deletes** manim's temporary `media/` directory (`cleanup=True`, the default); don't put anything important in there.
+> RTM's `cleanup` only removes this run's transient output; `media/Tex` and `media/texts` survive, so the caches keep working across renders.
 
 The two engines are pixel-for-pixel identical (168 frames / 2.80s); every `config` key on this page has no on-screen effect, and the only thing that produces a clip is this correspondence animation.
 

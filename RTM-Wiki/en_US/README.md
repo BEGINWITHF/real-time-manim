@@ -58,7 +58,7 @@ python "...\RTM-Wiki\en_US\04-Shapes-and-Text\assets\RTM code\12-Numbers-and-Var
 | cache | where | what it saves | how to clear |
 | --- | --- | --- | --- |
 | LaTeX / Typst formulas | `media/Tex` (+ `tex_cache/`) | recompiling math | `clear_tex_cache()` (`dry_run=True` to preview) |
-| text → SVG (Pango) | `media/texts/<hash>.svg` | re-running Pango layout, ~2 ms per string | `clear_media()`, or a recorder's `cleanup=True` |
+| text → SVG (Pango) | `media/texts/<hash>.svg` | re-running Pango layout, ~2 ms per string | `clear_media()` |
 | parsed SVG → mobjects | process memory (`SVG_HASH_TO_MOB_MAP`) | `svgelements` parsing + one VMobject per glyph, 4–20 ms per string | process exit; `Text(use_svg_cache=False)` opts out per object |
 
 ```python
@@ -72,8 +72,10 @@ clear_tex_cache()                # wipe media/Tex and tex_cache/ (dry_run=True t
 clear_media()                    # wipe the whole media/ tree, including media/texts
 ```
 
-- **`clear_tex_cache()` does not touch `media/texts`** — text SVGs need `clear_media()` (or `cleanup=True`).
-- `fast_record_scene(..., cleanup=True)` is the default and deletes the whole `media/` folder after every render, so the on-disk text cache lives for one render; pass `cleanup=False` to reuse it.
+- **`clear_tex_cache()` does not touch `media/texts`** — text SVGs need `clear_media()`.
+- `fast_record_scene(..., cleanup=True)` is the default and removes only this run's transient output
+  (videos, images, partial movies, sections, logs); the shared `media/Tex` and `media/texts` caches
+  survive and are reused next render. Pass `cleanup=False` to keep this run's transient output too.
 - The text hash covers content **and** style (font, size, colour, `t2c`, line spacing, ligatures), so a red and a blue copy are different files.
 - The in-memory layer is FIFO-capped at 256 entries and only stores from the **second** build of a string; repeated labels construct ~2.5× faster, while every new `DecimalNumber` value is unaffected.
 

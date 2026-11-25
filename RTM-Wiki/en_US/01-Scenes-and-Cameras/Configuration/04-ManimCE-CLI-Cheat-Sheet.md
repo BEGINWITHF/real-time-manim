@@ -47,7 +47,7 @@ This page is the only place in the whole wiki that contains ManimCE content; it 
 | `--log_to_file` | flag | off | write logs to a file. RTM: same as above |
 | `--tex_template path` | path | default template | custom LaTeX template. The RTM-side entry point is `config.tex_template` / `config.tex_template_file` (**really takes effect**, measured 2026-10-17, see [03-Paths-and-Windows](03-Paths-and-Windows.md)), only there is no command-line flag |
 | `--notify_outdated_version / --silent` | flag | on | whether to notify about a new version |
-| `--no_latex_cleanup` | flag | off | keep LaTeX intermediate files. RTM equivalent: `cleanup=False` (keeps the whole `media/`) |
+| `--no_latex_cleanup` | flag | off | keep LaTeX intermediate files. RTM does not delete `media/Tex` during recording; use `clear_tex_cache()` to wipe it |
 | `--enable_gui` | flag | off | OpenGL GUI panel |
 | `--gui_location x,y` | `x,y` | `0,0` | GUI panel position |
 | `--fullscreen` | flag | off | window fullscreen |

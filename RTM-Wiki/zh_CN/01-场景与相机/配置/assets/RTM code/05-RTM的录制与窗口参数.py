@@ -155,7 +155,7 @@ if __name__ == "__main__" and "probes" in sys.argv[1:]:
     result = fast_record_scene(FpsDemo, out_path="probe_count.mp4", count_only=True, verbose=True)   #count_only：只数帧，不采集也不写文件
     print("count_only 的返回值：", result)   #out_path 照常返回，但磁盘上没有这个文件
     fast_record_scene(FpsDemo, out_path="probe_bmp", segment=(0, 30), verbose=True)   #segment：按帧区间导出 BMP 目录，不是 MP4
-    fast_record_scene(FpsDemo, out_path="probe_clean.mp4", cleanup=False, verbose=True)   #cleanup=False：保留 manim 的 media/ 目录
+    fast_record_scene(FpsDemo, out_path="probe_clean.mp4", cleanup=False, verbose=True)   #cleanup=False：保留本次运行的临时输出
     try:
         fast_record_scene(FpsDemo, out_path="probe_clean.mp4", overwrite=False, verbose=True)   #overwrite=False：目标已存在就报错
     except FileExistsError as exc:
