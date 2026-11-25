@@ -17,6 +17,7 @@ fotograma al instante y grabarse a MP4 varias veces más rápido que el renderiz
 > para una visión general, demos y el grafo wiki interactivo, y la
 > [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki) para el recorrido a nivel
 > de código.
+> El manual completo en inglés está en [`RTM-Wiki/en_US/`](RTM-Wiki/en_US/README.md).
 >
 > **Agentes de IA:** empieza por [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md) — toda la
 > API condensada en una referencia fácil de grep, con [`gotchas.md`](RTM-Wiki/agent/gotchas.md),

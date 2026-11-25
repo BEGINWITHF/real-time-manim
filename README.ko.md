@@ -17,6 +17,7 @@ RTM은 ManimCE 자체의 `Mobject` / `Animation` 모델을 네이티브 Vulkan �
 > [프로젝트 웹사이트](https://team-axioviva.github.io/real-time-manim_website/)에서,
 > 소스 수준 설명은
 > [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki)에서 볼 수 있습니다.
+> 전체 영어 매뉴얼은 [`RTM-Wiki/en_US/`](RTM-Wiki/en_US/README.md)에 있습니다.
 >
 > **AI 에이전트:** 먼저 [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md)를 읽으세요.
 > 전체 API를 grep하기 쉬운 하나의 레퍼런스로 정리했으며,

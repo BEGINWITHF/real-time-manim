@@ -17,6 +17,7 @@
 > [プロジェクトサイト](https://team-axioviva.github.io/real-time-manim_website/)、
 > ソースレベルの解説は
 > [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki) をご覧ください。
+> 完全な英語マニュアルは [`RTM-Wiki/en_US/`](RTM-Wiki/en_US/README.md) にあります。
 >
 > **AI エージェント：** まず [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md) を読んで
 > ください——API 全体を grep しやすい 1 つのリファレンスにまとめてあり、

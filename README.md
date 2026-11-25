@@ -16,6 +16,7 @@ faster than the default renderer.
 > **Start here:** the [project website](https://team-axioviva.github.io/real-time-manim_website/)
 > for an overview, demos and the interactive wiki graph, and the
 > [GitHub Wiki](https://github.com/Team-Axioviva/real-time-manim/wiki) for the source-level walkthrough.
+> The complete English manual lives in [`RTM-Wiki/en_US/`](RTM-Wiki/en_US/README.md).
 >
 > **AI agents:** read [`RTM-Wiki/agent/README.md`](RTM-Wiki/agent/README.md) first — the whole API
 > condensed into one greppable reference, with [`gotchas.md`](RTM-Wiki/agent/gotchas.md),
