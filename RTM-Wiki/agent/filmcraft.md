@@ -1,7 +1,7 @@
 # filmcraft — from API to a finished short
 
 > scope: the layer the API files do not cover: what a **watchable** RTM short looks like and how to get there. Palette, typography, HUD zones, beat timing, 3D presentation, the stills-based QA loop, and the failure modes that make a technically-correct scene read as slop. This page is craft, not API; every symbol used here is documented in the domain files (`scene-camera.md`, `three-d.md`, `text.md`, `runtime.md`).
-> src: measured on `examples/four_d_mandelbrot.py` (a 38.8 s, 2,328-frame reference film) plus the same review applied to half a dozen agent-written scenes. Where it conflicts with the source tree, the tree wins.
+> src: measured on a 38.8 s, 2,328-frame 4D Mandelbrot short (2D hero image → 3D lathe reveal → 4D hyperplane slicing) plus the same review applied to half a dozen agent-written scenes. Where it conflicts with the source tree, the tree wins.
 > **This page is opinionated on purpose.** Treat the numbers as defaults to copy, not laws.
 
 A scene can be pixel-exact and still fail: 33 seconds of morphing geometry with no text, a default-blue square on black, a camera that never eases, five saturated hues fighting. The API docs teach *how* to call `win.play`; this page is about *what to put in front of the play*.
@@ -90,7 +90,7 @@ win.play(Story(self.camera, hud, image, run_time=38.8), run_time=38.8)
 
 Two traps this avoids:
 
-- **A custom animation's `alpha=0` is evaluated once while a timeline is prepared**, before any frame is rendered. If `interpolate_mobject` writes state that differs from the scene's initial state, that state leaks into every earlier frame. Keeping a single animation that starts at `t=0`, or making `state(t)` self-consistent for all `t`, sidesteps it.
+- **Seek correctness is a property of the animation, not the renderer.** A timeline is prepared by calling `begin()` — which evaluates `interpolate(0)` — for every entry, and frames at an earlier `t` replay the started entries from their own start. If `interpolate_mobject` reads or writes state that is not a pure function of `alpha`, forward playback still looks right while seeking and `jobs=N` diverge. Keep every visible value as `state(t)`.
 - **`FadeIn` is a `Transform` to the mobject's current state.** Pre-fading a mobject to 0 with `set_opacity(0)` and then playing `FadeIn` fades it *to 0*. Either add it at opacity 1 and use `FadeIn`, or drive opacity yourself.
 - `VMobject.set_opacity` sets **fill and stroke** opacity. For an outline that must stay unfilled, use `set_stroke(opacity=...)`, not `set_opacity`.
 
@@ -136,7 +136,7 @@ Two traps this avoids:
 - [ ] Every camera move eased; no move starts before the previous reveal settles.
 - [ ] Contact sheet reviewed at full size (title safe, subject framed, captions legible).
 - [ ] `--jobs 1` and `--jobs 4` render identical first/middle/last frames.
-- [ ] Mesh under `MAX_QUADS`; no `set_opacity`-filled outlines; no leaked `alpha=0` state.
+- [ ] Mesh under `MAX_QUADS`; no `set_opacity`-filled outlines; custom animation state is `f(t)`.
 - [ ] Encoded MP4 checked at 0.5 s / midpoint / last second.
 
 ## See also
