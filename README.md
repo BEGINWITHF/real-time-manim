@@ -189,18 +189,8 @@ scene of at least 240 frames; move expensive pure setup into `prepare()` so ever
 Bug reports and feature requests: [open an issue](https://github.com/Team-Axioviva/real-time-manim/issues).
 Email: **axioviva@gmail.com**.
 
-
 ---
 
 ## License
 
 [MIT](LICENSE). ManimCE, Vulkan and Typst belong to their respective projects.
-
----
-
-## Downloads
-
-![PyPI downloads for real-time-manim](assets/pypi-downloads.svg)
-
-Refreshed daily at 00:00 GMT (UTC) from [pypistats.org](https://pypistats.org/packages/real-time-manim).
-The chart counts file downloads, not unique users.

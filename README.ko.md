@@ -202,12 +202,3 @@ FramePreview(MyScene).run()
 ## 라이선스
 
 [MIT](LICENSE). ManimCE, Vulkan, Typst는 각 프로젝트에 귀속됩니다.
-
----
-
-## Downloads
-
-![PyPI downloads for real-time-manim](assets/pypi-downloads.svg)
-
-Refreshed daily at 00:00 GMT (UTC) from [pypistats.org](https://pypistats.org/packages/real-time-manim).
-The chart counts file downloads, not unique users.
