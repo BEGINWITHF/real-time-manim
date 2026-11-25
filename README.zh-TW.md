@@ -189,3 +189,12 @@ Bug 與功能請求：[提交 issue](https://github.com/Team-Axioviva/real-time-
 ## 授權
 
 [MIT](LICENSE)。ManimCE、Vulkan 與 Typst 歸各自專案所有。
+
+---
+
+## Downloads
+
+![PyPI downloads for real-time-manim](assets/pypi-downloads.svg)
+
+Refreshed daily at 00:00 GMT (UTC) from [pypistats.org](https://pypistats.org/packages/real-time-manim).
+The chart counts file downloads, not unique users.
