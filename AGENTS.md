@@ -104,4 +104,5 @@ Wiki/content errors found in `RTM-Wiki/` (including `agent/`) are **not** issues
 
 - Docs and agent-facing text in **English**; keep code, identifiers, and error strings byte-identical to the source.
 - Do not invent API details. If a fact is unknown, omit it or mark `TODO`.
+- **Commit as the person.** Use the identity already configured in the repo (`git config user.name` / `user.email`); never invent a bot identity (`opencode`, `agent`, `AI`, …) and never override the config silently. If the identity is unset or `gh auth status` shows the wrong account, **stop and ask**. Rewriting a wrong identity is allowed only on branches you created, with `--force-with-lease`. Full rule: `RTM-Wiki/agent/runbook.md` §12.5.
 - Repo wiki facts derive from `RTM-Wiki/zh_CN/` and the source tree; on conflict, the source tree wins.

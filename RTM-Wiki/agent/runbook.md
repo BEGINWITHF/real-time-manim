@@ -503,6 +503,7 @@ Observed in real agent submissions, in order of frequency:
 - [ ] look (gate 1) and motion (gate 2) approved by the person **before** recording.
 - [ ] `--jobs 1` and `--jobs 4` agree on a middle frame.
 - [ ] `MeshBatch` under `MAX_QUADS` if used; no `set_opacity`-filled outlines.
+- [ ] commits authored **and** committed by the person's git identity (§12.5).
 - [ ] encoded MP4: 1920×1080, 60 fps, planned duration; first/middle/last frames checked.
 
 ---
@@ -553,4 +554,36 @@ Re-render: python my_film.py --jobs 4
 ### 12.4 The one rule behind all of these
 
 **Show, don't promise.** A path to a still the person can open beats a paragraph describing what the film will look like. This is why §0.5 exists: stills are cheap, renders are not, and a person's taste is only readable from pixels.
+
+### 12.5 Git identity — always the person's, never a bot
+
+Every commit must be **authored and committed by the person who asked for the work**. A commit by `opencode`, `agent`, `AI`, `Claude`, or any noreply address you do not control is a bug: it breaks `git blame`, the PR's attribution, and their contribution graph.
+
+Before the first commit:
+
+```bash
+git config --get user.name
+git config --get user.email          # repo-local wins; then --global
+gh auth status                       # for pushes / PRs
+```
+
+- Use exactly that identity. **Do not override it** with `git -c user.name=...` or a made-up fallback.
+- If the name/e-mail is missing, empty, or ambiguous, or `gh auth status` fails or shows the wrong account: **stop and ask the person**. Do not guess, do not invent a bot identity, do not fall back to “the agent”.
+- Do not change `git config` (local or global) without permission. A one-off override is still a change of attribution — treat it the same way.
+- If the person explicitly asks for a bot/agent identity, use exactly the one they name and say so in the PR body.
+- Only if you already committed under the wrong identity: rewrite **only branches you created for this task** (never `main`, never someone else's branch), preserving the message and author date, setting both author and committer, then force-push with `--force-with-lease`:
+
+  ```bash
+  git log --format="%h  %an <%ae>  |  %cn <%ce>  %s" -3   # verify first
+  git push --force-with-lease origin <branch>
+  ```
+
+  Tell the person which old → new SHAs changed.
+
+Verify before opening a PR:
+
+```bash
+git log --format="%h  %an <%ae>  |  %cn <%ce>  %s" origin/main..HEAD
+```
+
 
