@@ -233,6 +233,7 @@ _LAZY_EXPORTS = {
     "Timeline": ("real_time_manim.timeline", "Timeline"),
     "FrameServer": ("real_time_manim.frames", "FrameServer"),
     "FramePreview": ("real_time_manim.preview", "FramePreview"),
+    "contact_sheet": ("real_time_manim.storyboard", "contact_sheet"),
     "MeshBatch": ("real_time_manim.mesh", "MeshBatch"),
     "MeshGroup": ("real_time_manim.mesh", "MeshGroup"),
     "prepared": ("real_time_manim.prepare", "prepared"),

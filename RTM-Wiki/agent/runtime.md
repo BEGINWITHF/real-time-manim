@@ -1,6 +1,6 @@
 # runtime
 
-> scope: install/run, minimal scene, `MLWindow`, recording (`fast_record_scene` / `record_scene`), `FrameServer`, `FramePreview`, `Timeline`, subcaption/SRT helpers, hard constraints.
+> scope: install/run, minimal scene, `MLWindow`, recording (`fast_record_scene` / `record_scene`), `FrameServer`, `contact_sheet`, `FramePreview`, `Timeline`, subcaption/SRT helpers, hard constraints.
 > src: `real_time_manim/{__init__,record,frames,preview,timeline,vulkan_bind}.py`, `real_time_manim/window/{core,play,recording}.py`; wiki `../zh_CN/00-快速开始/`.
 
 ## Install
@@ -484,6 +484,35 @@ def __init__(self, scene_cls, width=1920, height=1080, max_workers=4, max_pendin
   ```
 - CLI: `python -m real_time_manim.frames 1 0 1.5 3.0 --out frames/` (`--out DIR`, `--sync`).
 - `see`: ../zh_CN/00-快速开始/05-任意帧预览.md
+
+## `contact_sheet`
+
+```python
+def contact_sheet(scene, times=None, out_path="frames/contact_sheet.png", *,
+                  cols=4, cell_width=640, labels=True, gap=6, pad=8,
+                  quality=6, verbose=True) -> str
+```
+
+- `ret`: `out_path`; one labelled PNG tiling every rendered frame in a `rows × cols` grid.
+- `args`:
+  - `scene` — `Scene` subclass / instance / no-arg callable (same forms as `FrameServer`).
+  - `times` — iterable of timestamps in **seconds**; `None` → 12 evenly spaced samples (8 when the scene is under 20 s). Values are clamped to `[0, duration]`.
+  - `out_path` — destination PNG; parent directories are created.
+  - `cols` — cells per row (default 4).
+  - `cell_width` — width of one cell in px; height follows the 16:9 frame.
+  - `labels` — draw `t=12.40 s` above each cell.
+  - `gap` / `pad` — px between cells / around the sheet.
+  - `quality` — forwarded to `save_frame`.
+- `notes`:
+  - Prepares the scene **once** with `FrameServer`, then each cell is one ~10 ms seek: a 12-cell sheet costs about one still plus one build.
+  - Built for judging *sequence* — title safety, caption legibility, clipped geometry, empty shots, `--jobs` divergence. Use a full-size still for colour decisions.
+  - Pillow only; no extra dependency (Manim already requires it).
+- `eg`:
+  ```python
+  from real_time_manim import contact_sheet
+  contact_sheet(MyScene, [0.5, 3, 7, 11, 16, 22, 30, 38], "frames/sheet.png")
+  ```
+- `see`: ../zh_CN/00-快速开始/05-任意帧预览.md, `filmcraft.md` §7
 
 ## `FramePreview`
 
