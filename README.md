@@ -75,6 +75,21 @@ fast_record_scene(Hello)              # -> ~/Downloads/output.mp4
 
 ---
 
+## Reference film
+
+The package ships one finished short, as the executable version of the look-and-pacing rules in
+[`RTM-Wiki/agent/filmcraft.md`](RTM-Wiki/agent/filmcraft.md):
+
+```bash
+python -m real_time_manim.demos.four_d_mandelbrot --preview    # scrub it, progress bar included
+python -m real_time_manim.demos.four_d_mandelbrot --jobs 4     # -> out/four_d_mandelbrot.mp4
+```
+
+38.8 s at 1920×1080 @ 60 fps: complex-plane hero image → quaternion 3D slice lathed out of the
+outline → 4D hyperplane slicing → end card. Source: `real_time_manim/demos/four_d_mandelbrot.py`.
+
+---
+
 ## Highlights
 
 - **Real-time window** — 1920×1080 @ 60 fps, no export step between code and picture.

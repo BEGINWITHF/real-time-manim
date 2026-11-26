@@ -5,6 +5,8 @@
 
 Conventions (true for every recipe): `MLWindow` size is forced to **1920×1080 @ 60 fps**; `win.scene = self` and `win.close()` are both **required**; one window per process; RTM-own animation classes come from `real_time_manim.vulkan_bind`, everything else from `real_time_manim` (bundled ManimCE). Never `import manim` first.
 
+**Reference film.** A complete, finished piece that follows these recipes end to end: `python -m real_time_manim.demos.four_d_mandelbrot --preview` (38.8 s, 4D Mandelbrot; source `real_time_manim/demos/four_d_mandelbrot.py`). Before recording anything you intend to show a person, read `filmcraft.md` — the look, pacing and stills-QA layer the API files do not cover.
+
 **This wiki could have errors.** If you found one, please PR a fix to [`real-time-manim`](https://github.com/Team-Axioviva/real-time-manim).
 
 ---
