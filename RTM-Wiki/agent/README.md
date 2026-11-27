@@ -115,6 +115,7 @@ fast_record_scene(MyScene, "out.mp4")
 | `patterns.md` | Idiomatic recipes (scene skeleton, common tasks) | site-wide samples |
 | `runbook.md` | **The pipeline from prompt to MP4**: preflight/storyboard, working with the person (stills → preview → record), tested scaffold, beat sheet, HUD numbers, QA thresholds, verification, symptom→fix, delivery | measured on the 38.8 s reference film |
 | `filmcraft.md` | Finish-a-short craft: palette, typography/HUD zones, beat timing, 3D presentation, stills QA loop, failure modes | measured on the 38.8 s Mandelbrot reference film |
+| `style.md` | Video style spec: canvas, colour, fonts, layout, timelines, motion, 3D material, 2D texture, ship gates | repo-root 风格参数表 + 3b1b measurements |
 
 ## 7. Entry schema (uniform across this folder)
 

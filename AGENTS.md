@@ -106,3 +106,9 @@ Wiki/content errors found in `RTM-Wiki/` (including `agent/`) are **not** issues
 - Do not invent API details. If a fact is unknown, omit it or mark `TODO`.
 - **Commit as the person.** Use the identity already configured in the repo (`git config user.name` / `user.email`); never invent a bot identity (`opencode`, `agent`, `AI`, …) and never override the config silently. If the identity is unset or `gh auth status` shows the wrong account, **stop and ask**. Rewriting a wrong identity is allowed only on branches you created, with `--force-with-lease`. Full rule: `RTM-Wiki/agent/runbook.md` §12.5.
 - Repo wiki facts derive from `RTM-Wiki/zh_CN/` and the source tree; on conflict, the source tree wins.
+
+## 6. Video style spec (3b1b)
+
+Scenes follow a measured 3b1b style. Canonical editable table: `rtm_风格参数表.md` (**repo root**, Chinese, right column = current values); English agent mirror with every value: [`RTM-Wiki/agent/style.md`](RTM-Wiki/agent/style.md). When a table value changes, propagate it into the scene files that instantiate it (`~/gallary/code/<project>/` colour/lighting blocks + inline layout).
+
+Key values: bg `#000000`; INK `#FFFAFB`, DIM `#828481`, FAINT `#414240`; accents BLUE1 `#17B6CF` + YELLOW `#FFF000` from a 7-colour palette, ≤3 semantic colours per frame; serif = CMU Serif (this Mac: Times New Roman), math = Typst `MathTex`; title 72 px centred upper, captions 36–48 px centred, formulas ≥48 px, minimum 24 px text / 2 px stroke; **no corner HUD** — text is a scene element (slider + end card stay `add_fixed_in_frame_mobjects`), title holds 3–5 s then fades; fades = `smoothstep`, camera = `ease-in-out`, zoom ≤15 % per move / ≤40 % total, reveal 1–2 s; hard cuts, chapter fade-to-black 0.5–0.8 s; MeshBatch material: ambient 0.30, diffuse `0.90·max(n·L,0)^0.80`, specular `max(n·H,0)^32·0.12` white, rim `(1−n·V)^4·0.15` `(0.09,0.71,0.81)`; ship gates: 3–6 shots, 4–16 s each, 10–45 s total.

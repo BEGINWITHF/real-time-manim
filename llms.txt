@@ -10,6 +10,7 @@ Start with the agent-facing condensed reference (`RTM-Wiki/agent/README.md`) —
 - [Runtime: install, MLWindow, recording, Timeline](RTM-Wiki/agent/runtime.md)
 - [Scenes & cameras](RTM-Wiki/agent/scene-camera.md): scene lifecycle, play/wait, cameras, config
 - [Recipes & patterns](RTM-Wiki/agent/patterns.md): runnable construct() recipes for common tasks
+- [Style spec](RTM-Wiki/agent/style.md): measured 3b1b design values (canvas, palette, type, layout, timelines, motion, 3D material, ship gates); editable values table at the repo root (`rtm_风格参数表.md`)
 - [Gotchas & error catalogue](RTM-Wiki/agent/gotchas.md): pitfalls and error → cause → fix
 - [Full human manual (zh_CN, 144 pages)](RTM-Wiki/zh_CN/README.md)
 - [Full human manual (en_US)](RTM-Wiki/en_US/README.md)
