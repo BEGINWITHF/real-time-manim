@@ -1,7 +1,7 @@
 ﻿# runbook — prompt → finished MP4
 
 > scope: the exact sequence used to make a 38.8 s, 2,328-frame RTM short that a person will actually watch — including how to review with that person (stills before renders, §0.5 and §12). Follow it top to bottom; every decision is already made. If a step needs a judgement call, the number to use is written next to it.
-> src: this file + `filmcraft.md` (why the numbers are what they are) + `real_time_manim/demos/four_d_mandelbrot.py` (a complete film you can run and copy). If you read one agent page, read this one.
+> src: this file + `filmcraft.md` (why the numbers are what they are). If you read one agent page, read this one.
 > **Rule 0:** do not write `construct()` until §0 is filled in. Code written before the storyboard is the reason agent films look like screensavers.
 
 ---
@@ -341,7 +341,7 @@ surf.set_fill_by_checkerboard(CYAN, "#1d6a8c")
 
 ### 4.4 A depth-tested mesh (only when the shape needs real occlusion)
 
-Copy the reference film's `Vase` class and `Story.state()` (see §9 map): it builds `(K, n_az)` quad strips from a profile, shades per vertex, and writes `mesh.quads` / `mesh.colors` each frame. Sizing rule:
+Copy the house reference film's approach — a `Vase`-style lathe and one pure `Story.state()`: it builds `(K, n_az)` quad strips from a profile, shades per vertex, and writes `mesh.quads` / `mesh.colors` each frame. Sizing rule:
 
 ```
 quads = N_PROFILE * N_AZ   must be <= MeshBatch.MAX_QUADS (131072)
@@ -448,7 +448,7 @@ Check `f_a/f_b/f_c` against the stills: 1920×1080, 60/1, duration within 0.1 s 
 
 | question | file |
 | --- | --- |
-| how did you make the 2D image, the profile, the lathe, the slice? | `real_time_manim/demos/four_d_mandelbrot.py` — map below |
+| how did you make the 2D image, the profile, the lathe, the slice? | the house reference film — RTM ships no demos inside the package; the recipes are in `patterns.md`, the craft rules in `filmcraft.md` |
 | how do I run/record/seek? | `runtime.md`, this file §7 |
 | camera angles, fixed-in-frame text, scenes | `scene-camera.md` |
 | `MeshBatch`, `MeshGroup`, `lit`, limits | `three-d.md` |
@@ -457,21 +457,7 @@ Check `f_a/f_b/f_c` against the stills: 1920×1080, 60/1, duration within 0.1 s 
 | error → cause → fix catalog | `gotchas.md` |
 | copy-paste recipes | `patterns.md` |
 
-Reference film map (the numbers are line numbers in that file):
-
-| what you want | where |
-| --- | --- |
-| look constants, palette, light | top of the file, `PALETTE` / `SURFACE_PALETTE` / `LIGHT` |
-| easing helpers | `smoothstep()`, `ramp()` (l.124–131) |
-| escape-time image + edge falloff | `mandel_field()` l.143, `hero_image()` l.164 |
-| contour extraction | `boundary_loops()` l.252, `upper_arc()` l.304 |
-| profile smoothing | `smooth_profile()` l.343 |
-| lathe + per-vertex shading + slicing | `Vase.geometry()` l.382 |
-| the whole film as one pure function | `Story.state()` l.460 |
-| HUD construction and zones | `FourDMandelbrot.construct()` l.553 |
-| stills / preview / render CLI | `stills()` l.699, `preview()` l.715, `render()` l.689 |
-
-Run it: `python -m real_time_manim.demos.four_d_mandelbrot --preview`.
+The reference film is **not shipped inside the package** — RTM is a library, not a demo host. Its structure (hero image → lathe → 4D slice → end card) and craft rules are documented in `filmcraft.md`; the mesh recipes it uses are in `three-d.md` and `patterns.md`.
 
 ---
 
