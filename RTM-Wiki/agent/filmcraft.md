@@ -14,9 +14,9 @@ A scene can be pixel-exact and still fail: 33 seconds of morphing geometry with 
 
 - **One idea per beat.** A beat is one caption plus one visual change. If a shot needs two captions to be understood, it is two shots.
 - **Text carries the idea.** A 30 s film with no text is a screensaver. Even a pure-visual piece needs a title card, one running caption line, and an end card.
-- **Shots are 6–14 s.** A 25–45 s short has 3–5 shots. `33 s of continuous morph` is not a shot list.
+- **Shots are 4–16 s.** A 10–45 s short has 3–6 shots. `33 s of continuous morph` is not a shot list.
 - **Every shot must be legible as a still.** If a random frame does not say what is happening, the motion is not doing the work.
-- **Hold after every reveal.** Minimum 0.6 s of stillness before the next move; 1.0–1.5 s is better.
+- **Hold after every reveal.** Minimum 0.8 s of stillness before the next move; reveals run 1.0–2.0 s.
 
 ## 2. Look
 
@@ -24,37 +24,37 @@ Start from one background and a four-colour system. The defaults below are what 
 
 | role | value | use |
 | --- | --- | --- |
-| background | `#070b14` | flat, no grid, no vignette unless you author one |
-| ink | `#efe9dc` | title, the one line that must be read first |
-| dim | `#7b93a6` | subtitle, captions, secondary labels |
-| accent | `#f2c66d` (gold) | the subject, the formula, the highlighted curve |
-| second accent | `#6fd6cd` (cyan) | a second structure only — never a third saturated hue |
+| background | `#000000` | flat pure black, no grid, no vignette unless you author one |
+| ink | `#FFFAFB` | title, the one line that must be read first |
+| dim | `#828481` | subtitle, captions, secondary labels |
+| accent | `#17B6CF` (cyan-blue, BLUE1) | the subject, the formula, the highlighted curve |
+| second accent | `#FFF000` (yellow) | a second structure only |
 
 Rules that survive every review:
 
-- **Two accents maximum.** A third saturated hue turns a diagram into a toy.
-- **Gradients run along a parameter**, not across the screen: escape time, arc length, `w`, radius. `palette(t)` with 4–6 stops, sampled per vertex/point.
-- **Dark subjects need light edges.** A dark shape on a dark background disappears the moment the viewer's screen gamma differs. Give it a rim: a gold outline, a cyan edge term, or a baked halo.
-- **1 px is not a line at 1080p.** Strokes below 2 px disappear in video compression; body text below ~22 px is unreadable on a phone.
+- **≤3 semantic colours per frame**, all from the 7-colour palette (`#17B6CF`, `#217AC8`, `#FFF000`, `#329F35`, `#C26D1C`, `#EF532C`, `#FF4CDB`); everything else greyscale.
+- **Gradients are rare.** Intensity is expressed with opacity/glow; when a value must be encoded (escape time, radius, `w`), sample a palette with 4–6 stops along that parameter — never across the screen.
+- **Dark subjects need light edges.** A dark shape on a dark background disappears the moment the viewer's screen gamma differs. Give it a rim: a warm-white outline (`#FFFAFB`), a cyan-blue edge term (`0.09, 0.71, 0.81`), or a baked halo.
+- **1 px is not a line at 1080p.** Strokes below 2 px disappear in video compression; body text below ~24 px is unreadable on a phone.
 - **No raw file paths, no debug numbers, no `t=…` overlays** unless the time is the subject.
 
 ## 3. Typography and HUD zones
 
-- **Prose**: `Text(..., font="Cambria", ...)` — a serif reads as "explainer", not "UI". **Math**: `MathTex` (routed to Typst; `\mathbb`, `\mathcal`, `\not\to` all work). One mixed line of prose+math is fine if the sizes match.
-- **Sizes at 1080p**: title 46, subtitle 26, caption 24–25, formula 36–40, HUD micro-label 20–22.
-- **Zones** (fixed in frame, `add_fixed_in_frame_mobjects`):
-  - top-left: title + subtitle, 62 px margin;
-  - bottom-left: the running caption, 62 px margin, left-aligned with the title — *not* bottom-centre over the subject;
-  - bottom-right: the formula or a read-only value;
-  - right edge (optional): sliders/legends.
+- **Prose**: `Text(..., font="CMU Serif", ...)` — a serif reads as "explainer", not "UI" (this Mac: Times New Roman). **Math**: `MathTex` (routed to Typst; `\mathbb`, `\mathcal`, `\not\to` all work). One mixed line of prose+math is fine if the sizes match.
+- **Sizes at 1080p**: title 72, subtitle 40, caption 36–48, formula ≥ 48, minimum 24.
+- **Zones** — no corner HUD (3b1b measured: text is a scene element, `self.add`, not fixed-in-frame):
+  - title + subtitle: horizontally centred, upper (title block centre ≈ 1.8 world units up), 40 px margin;
+  - the running caption: centred, beside the subject or mid-lower frame — never on the subject's brightest part;
+  - the formula: follows the subject or centred in frame;
+  - right edge (optional): sliders/legends — these stay `add_fixed_in_frame_mobjects`.
 - **Captions ≤ ~72 characters.** One line, two at most. If it wraps to three, the sentence is wrong.
 - **Fade, do not slide.** HUD text that slides competes with the subject; an opacity ramp reads as a change of thought. Slide is for the subject, not the labels.
 
 ## 4. Timing and motion
 
-- Ease everything with `smoothstep` (or `smooth`); linear camera moves look mechanical. A move that starts and stops instantly is a cut, not a move.
-- Typical durations: title 1.0–1.2 s, hero fade 1.2–1.5 s, caption 0.8 s, camera 3–5 s, subject reveal 1.0–1.6 s, crossfade between shots 0.8–1.2 s, end card 1.2–1.6 s.
-- **One camera move at a time.** Zoom + pan + roll simultaneously reads as a mistake unless it is a deliberate fly-through.
+- Fades use `smoothstep` (or `smooth`); camera moves use `ease-in-out`; steady rotations/translations run `linear`. A move that starts and stops instantly is a cut, not a move.
+- Typical durations: title 0.7–0.8 s, hero fade 1.2 s, caption 0.6–0.8 s, camera 2–8 s, subject reveal 1.0–2.0 s, end card 1.8–2.0 s. Transitions are hard cuts; a chapter end fades to black 0.5–0.8 s.
+- **Camera moves are 2–8 s and may repeat** (3b1b: sustained slow pushes); zoom ≤ 15 % per move and ≤ 40 % over the film. Zoom + pan + roll simultaneously reads as a mistake unless it is a deliberate fly-through.
 - **Let the geometry finish.** If a sweep takes 5 s, do not start the caption at 2 s and the camera at 2.5 s; stagger them by the reveal.
 - **Everything is a function of absolute time.** See §6 — a shot script that accumulates state breaks seeking and parallel rendering.
 
@@ -62,9 +62,9 @@ Rules that survive every review:
 
 - **Choose the axis so the silhouette reads.** A surface of revolution is only recognisable from the side; the "top" view collapses it to a disc. Check the silhouette first, the shading second.
 - **Camera**: in a `ThreeDScene`, `phi=0, theta=-90°` is head-on with world `x` right and `y` up. `phi` tilts the view out of the screen; `theta` orbits. A good default 3/4 view is `phi≈35–45°`, `theta` chosen so the object's long axis stays horizontal.
-- **Light off the view axis.** A light parallel to the camera flattens everything. `(-0.7, -0.3, 0.6)` normalized reads as a studio key from the left.
-- **`MeshBatch` has no material system.** With `lit=False` you shade per vertex yourself: `base * (ambient + diffuse * max(n·L, 0)) + specular + rim`. With `lit=True` you supply normals and use `win.set_mesh_light`. Do not mix the two on the same batch.
-- **Smooth the profile.** A boundary extracted at pixel resolution has pixel-scale radius wiggles; lathed, they become rings that read as a machining artifact. 4–8 passes of a 5-tap kernel along the profile is the difference between "turned wood" and "screw thread".
+- **Light off the view axis.** A light parallel to the camera flattens everything. `(-0.72, -0.28, 0.63)` normalized reads as a studio key from the upper left.
+- **`MeshBatch` has no material system.** With `lit=False` you shade per vertex yourself — house values: `base * (0.30 + 0.90 * max(n·L, 0)^0.80) + max(n·H, 0)^32 * 0.12 (white) + (1 − n·V)^4 * 0.15 (cyan-blue 0.09, 0.71, 0.81)`. With `lit=True` you supply normals and use `win.set_mesh_light`. Do not mix the two on the same batch.
+- **Smooth the profile.** A boundary extracted at pixel resolution has pixel-scale radius wiggles; lathed, they become rings that read as a machining artifact. 6 passes of a 5-tap kernel along the profile is the difference between "turned wood" and "screw thread".
 - **Respect the budget.** `MeshBatch.MAX_QUADS = 131072` (indexed). Size `N_PROFILE × N_AZ` against it before rendering; `append` raises when crossed.
 - **No post FX.** No bloom, no DOF, no tone mapping. Fake glow by baking it into an `ImageMobject` texture, or with a rim term in the vertex colours.
 
@@ -79,9 +79,9 @@ class Story(Animation):
         self.camera, self.hud, self.image, self.run_time = camera, hud, image, run_time
 
     def state(self, t):
-        self.image.set_opacity(ramp(t, 1.0, 2.4) * (1.0 - ramp(t, 9.0, 9.9)))
-        self.camera.set_phi(np.radians(38) * ramp(t, 9.4, 12.2))
-        self.hud["title"].set_opacity(ramp(t, 0.0, 1.1))
+        self.image.set_opacity(ramp(t, 0.8, 2.0) * (1.0 - ramp(t, 9.0, 9.9)))
+        self.camera.set_phi(np.radians(38) * ramp(t, 14.0, 19.0))
+        self.hud["title"].set_opacity(ramp(t, 0.0, 0.8))
 
     def interpolate_mobject(self, alpha):
         self.state(alpha * self.run_time)
@@ -128,13 +128,13 @@ Two traps this avoids:
 | a shape vanishes at the start | `FadeIn` on a pre-zeroed mobject; see §6 |
 | parallel render differs from `--jobs 1` | incremental state in a custom animation; see §6 |
 | mesh disappears in the last shot | batch over `MAX_QUADS`; check the profile × azimuth product |
-| five hues, none dominant | more than two accents; collapse to one accent + warm highlight |
+| five hues, none dominant | more than three accents; collapse to one accent + warm highlight |
 
 ## 9. Ship checklist
 
-- [ ] 3–5 shots, each with a caption; total 25–45 s.
+- [ ] 3–6 shots, each with a caption; total 10–45 s.
 - [ ] Title, one running caption line, end card.
-- [ ] Two accents max; text ≥ 22 px; strokes ≥ 2 px.
+- [ ] ≤ 3 accents per frame (7-colour palette); text ≥ 24 px; strokes ≥ 2 px.
 - [ ] Every camera move eased; no move starts before the previous reveal settles.
 - [ ] Contact sheet reviewed at full size (title safe, subject framed, captions legible).
 - [ ] `--jobs 1` and `--jobs 4` render identical first/middle/last frames.

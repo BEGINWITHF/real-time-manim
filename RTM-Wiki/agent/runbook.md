@@ -32,27 +32,27 @@ Copy this into the file docstring and fill every cell **before coding**. Empty c
 
 | # | time | what the viewer sees | caption (≤ 72 chars) | camera |
 | --- | --- | --- | --- | --- |
-| 1 | 0.0–1.2 | title + subtitle | — | static |
-| 2 | 1.2–3.4 | hero object appears, 0.8–1.2 s ease | names the object | static |
-| 3 | 3.4–7.2 | object holds, one annotation grows in | the one sentence that explains it | slow push, ≤ 6 % |
-| 4 | 7.2–9.6 | formula or second structure appears | the consequence | static |
-| 5 | 9.6–12.0 | object leaves, takeaway | — (takeaway line is the visual) | static |
+| 1 | 0.0–0.8 | title + subtitle | — | static |
+| 2 | 0.7–2.5 | hero object appears, opacity fade (no scaling) | names the object | static |
+| 3 | 2.5–9.5 | object holds, one annotation grows in | the one sentence that explains it | slow push ≤ 15 %, ease-in-out |
+| 4 | 5.5–9.4 | formula or second structure appears, then leaves with the subject | the consequence | static |
+| 5 | 9.2–11.8 | object leaves, takeaway | — (takeaway line is the visual) | static |
 
 The reference film's actual sheet (use these numbers as the default if unsure):
 
 | # | time | visual | caption |
 | --- | --- | --- | --- |
-| 1 | 0.0–2.4 | title, then the escape-time Mandelbrot image fades in | “c ∈ ℂ — keep the orbit of 0 bounded” |
-| 2 | 8.1–9.9 | image fades, gold outline remains | (quaternion formula, bottom-left) |
-| 3 | 9.4–14.6 | camera tilts, lathe sweeps out the 3D solid | “squaring commutes with rotations of (i, j, k)” |
+| 1 | 0.0–2.0 | title (0–0.8), then the escape-time Mandelbrot image fades in (0.8–2.0) | “c ∈ ℂ — keep the orbit of 0 bounded” (4.0–8.7) |
+| 2 | 8.0–9.9 | image fades, warm-white outline remains | (quaternion formula, centred) |
+| 3 | 14.0–19.6 | camera tilts (14–19), lathe sweeps out the 3D solid | “squaring commutes with rotations of (i, j, k)” (15.2–25.0) |
 | 4 | 21–31 | hyperplane `w` slices the solid; slider on the right | “cut the 4D solid: the thin filaments go first” |
-| 5 | 32.6–38.2 | object shifts right, end card fades in, fade out | “one Mandelbrot, spun through four dimensions” |
+| 5 | 31.0–38.2 | object shifts right, end card fades in, fade out | “one Mandelbrot, spun through four dimensions” |
 
 ### 0.4 Budget
 
-- 3–5 shots, 6–14 s each, 10–45 s total. Under 8 s is a GIF, over 45 s needs narration.
-- One camera move for the whole film (a slow zoom or one tilt). More than one reads as a mistake.
-- One accent colour for the subject. A second accent may annotate, nothing else.
+- 3–6 shots, 4–16 s each, 10–45 s total. Under 8 s is a GIF, over 45 s needs narration.
+- Camera moves are 2–8 s and may repeat (3b1b: sustained slow pushes); zoom ≤ 15 % per move, ≤ 40 % over the film.
+- ≤ 3 accent colours per frame, all from the 7-colour palette; everything else greyscale.
 
 ---
 
@@ -121,16 +121,16 @@ import numpy as np
 
 import real_time_manim  # noqa: F401  (must come before any `manim` import)
 from real_time_manim import (
-    DEGREES, DOWN, LEFT, UP, Animation, Circle, MathTex, Text,
+    DEGREES, DOWN, UP, Animation, Circle, MathTex, Text,
     ThreeDScene, VMobject, linear,
 )
 from real_time_manim.record import fast_record_scene
 from real_time_manim.vulkan_bind import MLWindow
 
 # ---- look (house defaults; do not improvise on the first pass) ------------
-BG, INK, DIM, GOLD, CYAN = "#070b14", "#efe9dc", "#7b93a6", "#f2c66d", "#6fd6cd"
-TITLE, SUB, CAP, EQ, END = 46, 26, 25, 38, 30   # px at 1080p
-MARGIN = 0.62                                   # world units = 62 px
+BG, INK, DIM, BLUE1, YELLOW = "#000000", "#FFFAFB", "#828481", "#17B6CF", "#FFF000"
+SERIF = "CMU Serif"          # this Mac: "Times New Roman"
+TITLE, SUB, CAP, EQ, END = 72, 40, 36, 48, 48   # px at 1080p
 DURATION = 12.0
 
 
@@ -153,22 +153,21 @@ class Story(Animation):
         self.dur = run_time
 
     def state(self, t):
-        self.hud["title"].set_opacity(ramp(t, 0.0, 1.1))
-        self.hud["sub"].set_opacity(ramp(t, 0.2, 1.3))
-        self.hud["cap"].set_opacity(ramp(t, 2.2, 3.0) * (1.0 - ramp(t, 7.4, 8.0)))
-        self.hud["eq"].set_opacity(ramp(t, 6.0, 6.8) * (1.0 - ramp(t, 8.8, 9.4)))
-        self.hud["end"].set_opacity(ramp(t, 9.2, 10.2) * (1.0 - ramp(t, 11.5, 11.9)))
+        self.hud["title"].set_opacity(ramp(t, 0.0, 0.7))
+        self.hud["sub"].set_opacity(ramp(t, 0.2, 0.9))
+        self.hud["cap"].set_opacity(ramp(t, 1.7, 2.5) * (1.0 - ramp(t, 7.4, 8.0)))
+        self.hud["eq"].set_opacity(ramp(t, 5.5, 6.5) * (1.0 - ramp(t, 8.8, 9.4)))
+        self.hud["end"].set_opacity(ramp(t, 9.2, 10.2) * (1.0 - ramp(t, 11.4, 11.8)))
 
-        # subject: fade in, breathe, leave before the end card
-        a = ramp(t, 1.2, 2.2) * (1.0 - ramp(t, 8.8, 9.4))
-        self.subject.set_fill(GOLD, 0.18 * a)
-        self.subject.set_stroke(GOLD, 3.0, opacity=a)
-        s = 0.90 + 0.10 * ramp(t, 1.2, 2.4) + 0.06 * ramp(t, 5.0, 9.0)
-        self.subject.set(width=3.2 * s)          # absolute, never incremental
+        # subject: fade in (opacity only — no scale-in), leave before the end card
+        a = ramp(t, 0.7, 1.7) * (1.0 - ramp(t, 8.8, 9.4))
+        self.subject.set_fill(BLUE1, 0.6 * a)
+        self.subject.set_stroke(BLUE1, 3.0, opacity=a)
+        self.subject.set(width=3.2)              # absolute, never incremental
 
         self.camera.set_phi(0.0)                 # 2D: head-on
         self.camera.set_theta(-90.0 * DEGREES)
-        self.camera.set_zoom(1.0 + 0.06 * ramp(t, 5.0, 9.0))
+        self.camera.set_zoom(1.0 + 0.08 * ramp(t, 3.5, 9.5))
 
     def interpolate_mobject(self, alpha):
         self.state(alpha * self.dur)
@@ -182,31 +181,34 @@ class TemplateFilm(ThreeDScene):
         self.set_camera_orientation(phi=0.0, theta=-90.0 * DEGREES, zoom=1.0)
 
         # TODO 1: the subject (Circle here)
-        subject = Circle(radius=1.0, color=GOLD)
-        subject.set_fill(GOLD, 0.18)
-        subject.set_stroke(GOLD, 3.0)
+        subject = Circle(radius=1.0, color=BLUE1)
+        subject.set_fill(BLUE1, 0.6)
+        subject.set_stroke(BLUE1, 3.0)
         subject.move_to(UP * 0.35)
 
         # TODO 2-4: title / subtitle / caption / formula / takeaway
-        title = Text("The one-line title", font="Cambria", font_size=TITLE, color=INK)
-        title.to_corner([-1, 1, 0], buff=MARGIN)
-        sub = Text("a subtitle that frames the idea", font="Cambria",
+        title = Text("The one-line title", font=SERIF, font_size=TITLE, color=INK)
+        title.move_to([0.0, 1.8, 0.0])
+        sub = Text("a subtitle that frames the idea", font=SERIF,
                    font_size=SUB, color=DIM)
-        sub.next_to(title, DOWN, buff=0.12, aligned_edge=LEFT)
-        cap = Text("one caption line, at most 72 characters", font="Cambria",
+        sub.next_to(title, DOWN, buff=0.12)
+        cap = Text("one caption line, at most 72 characters", font=SERIF,
                    font_size=CAP, color=DIM)
-        cap.to_corner([-1, -1, 0], buff=MARGIN)
-        eq = MathTex(r"e^{i\pi} + 1 = 0", font_size=EQ, color=GOLD)
-        eq.to_corner([1, -1, 0], buff=MARGIN)
-        end = Text("the takeaway, in one sentence", font="Cambria",
+        cap.move_to([0.0, -2.6, 0.0])
+        eq = MathTex(r"e^{i\pi} + 1 = 0", font_size=EQ, color=BLUE1)
+        eq.move_to([0.0, -3.0, 0.0])
+        end = Text("the takeaway, in one sentence", font=SERIF,
                    font_size=END, color=INK)
         end.move_to(UP * 0.2)
 
         for m in (title, sub, cap, eq, end):
             m.set_opacity(0.0)
-            self.add_fixed_in_frame_mobjects(m)
 
         self.add(subject)
+        # text is a scene element (no corner HUD) — added AFTER the subject
+        # so it paints above it
+        for m in (title, sub, cap, eq, end):
+            self.add(m)
         hud = {"title": title, "sub": sub, "cap": cap, "eq": eq, "end": end}
         win.play(Story(self.camera, hud, subject), run_time=DURATION)
         win.close()
@@ -247,28 +249,29 @@ if __name__ == "__main__":
 
 ## §2. The four slots, with rules
 
-### 2.1 Title (top-left, 46 px)
+### 2.1 Title (centred upper, 72 px)
 
 - 2–5 words, sentence case, no trailing period: “The Mandelbrot set”, “Gaussian curvature”, “Where the wave goes”.
-- Subtitle (26 px, `DIM`) is a noun phrase or a question, never a second title: “in four dimensions”, “a 200-year-old argument”.
-- Both stay on screen for the whole film. They are the viewer's anchor.
+- Subtitle (40 px, `DIM`) is a noun phrase or a question, never a second title: “in four dimensions”, “a 200-year-old argument”.
+- Both hold 3–5 s, then fade — they give the frame to the subject, they do not anchor it.
 
-### 2.2 Caption (bottom-left, 25 px)
+### 2.2 Caption (centred, 36 px)
 
 - One line, ≤ 72 characters, complete sentence, ends with a period if it is a sentence.
 - It says the **one thing** the shot shows. It is not a label (“Figure 1”) and not a paragraph.
 - It lives from the shot's reveal to the next shot's reveal; never re-write it mid-shot.
-- Never centre it under the subject, never put it on the brightest part of the subject. Bottom-left is empty by construction.
+- Centred, beside the subject or mid-lower frame — never on the brightest part of the subject.
 
-### 2.3 Formula (bottom-right, 38–40 px, `GOLD`)
+### 2.3 Formula (follows the subject or centred, ≥ 48 px, `BLUE1`)
 
 - Only if the film is about math. One line; if it needs two, use a `VGroup` of two `MathTex` lines with 0.12 spacing.
 - `MathTex` routes to Typst. Verified working: `\mathbb{H}`, `\mathcal{M}`, `\frac`, `\not\to`, `\mapsto`, `\sum`, `\int`, Greek.
 - If a symbol fails to compile, replace it with an ASCII equivalent; never ship a red error box.
 
-### 2.4 Takeaway (centre, 30 px, `INK`)
+### 2.4 Takeaway (centre, 48 px, `INK`)
 
 - The sentence the viewer should remember; it can be the film's title restated with the answer.
+- Symbolic end cards: `MathTex` 64–80 px centred, with a 28 px sub-line 0.34 below.
 - The subject must be gone (or at 20 % opacity) before it appears. Two focal points = no focal point.
 
 ---
@@ -277,19 +280,20 @@ if __name__ == "__main__":
 
 | beat | in | out | duration | what changes |
 | --- | --- | --- | --- | --- |
-| title | 0.0 | 1.1 | 1.1 | title fades in (opacity only, no slide) |
-| subtitle | 0.2 | 1.3 | 1.1 | subtitle follows by 0.2 s |
-| subject in | 1.2 | 2.2 | 1.0 | opacity 0→1, scale 0.90→1.00 |
-| caption 1 | 2.2 | 3.0 | 0.8 | caption fades in |
-| hold | 3.0 | 5.0 | 2.0 | nothing moves; let the viewer read |
-| camera | 5.0 | 9.0 | 4.0 | one eased zoom ≤ 6 % |
-| annotation / formula | 6.0 | 6.8 | 0.8 | second structure fades in |
+| title | 0.0 | 0.7 | 0.7 | title fades in (opacity only, no slide) |
+| subtitle | 0.2 | 0.9 | 0.7 | subtitle follows by 0.2 s |
+| subject in | 0.7 | 1.7 | 1.0 | opacity 0→1 (no scaling) |
+| caption 1 | 1.7 | 2.5 | 0.8 | caption fades in |
+| hold | 2.5 | 3.5 | 1.0 | nothing moves; let the viewer read |
+| camera | 3.5 | 9.5 | 6.0 | one eased zoom ≤ 15 % (1.00→1.08) |
+| annotation / formula | 5.5 | 6.5 | 1.0 | second structure fades in |
+| caption out | 7.4 | 8.0 | 0.6 | caption leaves |
 | subject out | 8.8 | 9.4 | 0.6 | subject + formula leave |
 | takeaway | 9.2 | 10.2 | 1.0 | takeaway fades in |
-| hold | 10.2 | 11.5 | 1.3 | still |
-| end fade | 11.5 | 11.9 | 0.4 | everything to 0 |
+| hold | 10.2 | 11.4 | 1.2 | still |
+| end fade | 11.4 | 11.8 | 0.4 | everything to 0 |
 
-Rules: reveal = 0.8–1.6 s; hold ≥ 0.6 s after every reveal; camera move 3–5 s and never in the first 2 s; total = last out + 0.1.
+Rules: reveal = 1.0–2.0 s; hold ≥ 0.8 s after every reveal; camera moves 2–8 s, several allowed, zoom ≤ 15 % per move and ≤ 40 % over the film; total = last out + 0.1.
 
 ---
 
@@ -303,7 +307,7 @@ Pick one row. Each snippet is complete; drop it in place of TODO 1.
 arr = np.zeros((900, 900, 4), dtype=np.uint8)   # RGBA, row 0 = top
 # ... fill arr with colours, alpha = 255 ...
 img = ImageMobject(arr)
-img.scale_to_fit_width(7.6)      # 7.6 world units ≈ 820 px at 1080p
+img.scale_to_fit_width(8.0)      # 8.0 world units ≈ 1080 px at 1080p
 img.move_to(ORIGIN)
 self.add(img)
 ```
@@ -316,23 +320,23 @@ self.add(img)
 
 ```python
 obj = VGroup(
-    Circle(radius=1.2, color=CYAN).set_fill(CYAN, 0.10),
+    Circle(radius=1.2, color=YELLOW).set_fill(YELLOW, 0.6),
     Line([-2, -1.6], [2, 1.6], color=INK, stroke_width=2),
-    Dot([0, 0], radius=0.06, color=GOLD),
+    Dot([0, 0], radius=0.06, color=BLUE1),
 )
 obj.move_to(UP * 0.25)
 ```
 
 - Strokes ≥ 2 px (RTM stroke width is in px at 1080p). At 1 px the line disappears in H.264.
-- Filled regions: opacity 0.08–0.20; more looks like a highlighter.
-- Label parts with `Text(..., font_size=22)` attached via `next_to`, in `DIM`; the main object keeps the accent.
+- Filled regions: opacity 0.4–0.9; less disappears, more is a sticker.
+- Label parts with `Text(..., font_size=24)` attached via `next_to`, in `DIM`; the main object keeps the accent.
 
 ### 4.3 A surface (`Surface`, painter-sorted)
 
 ```python
 surf = Surface(lambda u, v: [2.4 * np.cos(u) * v, 2.4 * np.sin(u) * v, v],
                u_range=(0, TAU), v_range=(0, 1), resolution=(32, 8))
-surf.set_fill_by_checkerboard(CYAN, "#1d6a8c")
+surf.set_fill_by_checkerboard(YELLOW, "#217AC8")
 ```
 
 - `resolution=(u, v)` is the face count; 32×8 = 256 faces is plenty for one object.
@@ -347,7 +351,7 @@ Copy the reference film's `Vase` class and `Story.state()` (see §9 map): it bui
 quads = N_PROFILE * N_AZ   must be <= MeshBatch.MAX_QUADS (131072)
 ```
 
-The reference film uses `680 × 56 = 38,080`; ~10.5 ms/frame to rebuild and shade. Go bigger only if the object fills the frame.
+The reference film uses `680 × 56 = 38,024` quads; ~10.5 ms/frame to rebuild and shade. Go bigger only if the object fills the frame.
 
 ---
 
@@ -355,9 +359,9 @@ The reference film uses `680 × 56 = 38,080`; ~10.5 ms/frame to rebuild and shad
 
 - Camera: `phi=0, theta=-90°` is head-on (world x right, y up). Start there, then tilt `phi` to 35–45° for a 3/4 view. `theta` orbits; keep the subject's long axis horizontal.
 - Light: `L = normalize([-0.72, -0.28, 0.63])` (upper-left, off the view axis). On-axis light = flat = “why does my 3D look like a sticker”.
-- Shading per vertex: `base * (0.20 + 0.95 * max(n·L, 0)) + rim * 0.30` with `rim = (1 - n·V)^4`; optional specular `max(n·H, 0)^38 * 0.30`.
+- Shading per vertex: `base * (0.30 + 0.90 * max(n·L, 0)^0.80) + rim * 0.15` with `rim = (1 - n·V)^4` (cyan-blue `0.09, 0.71, 0.81`); optional specular `max(n·H, 0)^32 * 0.12` (white).
 - `MeshBatch` has no transparency and no post FX: bake glow into an image texture or use the rim term.
-- Smooth any profile extracted from a mask with 4–8 passes of a 5-tap kernel, or the lathe reads as a screw thread.
+- Smooth any profile extracted from a mask with 6 passes of a 5-tap kernel, or the lathe reads as a screw thread.
 - Budget check before the first render, not after: print `len(mesh.quads)`.
 
 ---
@@ -375,10 +379,10 @@ Read all of them, in order, like a comic page. If one of these is true, fix it b
 | check | fail |
 | --- | --- |
 | title readable over the background and over the subject | any overlap where contrast drops |
-| every caption ≤ 2 lines, ≥ 22 px | smaller / longer |
+| every caption ≤ 72 chars, ≤ 2 lines, ≥ 24 px, centred | smaller / longer / corner-pinned |
 | subject inside the frame at every sample | any edge clipping |
 | no empty frame > 0.5 s that is not a deliberate hold | black or near-black shot |
-| one accent hue on the subject | two accents competing |
+| ≤ 3 accent hues per frame, all from the 7-colour palette | more accents, or off-palette colours |
 | the end card has no other focal point | subject still visible behind it |
 
 ### 6.2 Storyboard sheet (optional, one call)
@@ -436,11 +440,11 @@ Check `f_a/f_b/f_c` against the stills: 1920×1080, 60/1, duration within 0.1 s 
 | image looks soft | texture under 1000 px or `scale_to_fit_width` too large; rebuild at ~1 px per output px |
 | subject clipped by the frame edge | scale to ≤ 7.4 world units wide, or zoom out 5 % |
 | camera move feels mechanical | linear rate; use `smoothstep`/`ramp` |
-| colours muddy | more than two accents, or an accent mixed with `DIM` on a filled area |
+| colours muddy | more than three accents, or an accent mixed with `DIM` on a filled area |
 | formula shows a red error box | unsupported Typst symbol; replace with ASCII (never ship it) |
 | render takes minutes per second | Python loop per frame; vectorise (one numpy expression per frame) |
 | preview/seek shows a different pose | custom animation reads current state instead of `t` |
-| text is cut after H.264 | stroke/text under 2 px / 22 px; bump the size |
+| text is cut after H.264 | stroke/text under 2 px / 24 px; bump the size |
 
 ---
 
@@ -481,9 +485,9 @@ Observed in real agent submissions, in order of frequency:
 
 1. **A long film with no text.** 30 s of geometry with no title/caption/end card. If the API cannot say what it shows, the film cannot either.
 2. **Default Manim blue on black.** It reads as “unfinished”. Use the house palette.
-3. **Five colours.** Two accents maximum.
-4. **Linear camera moves**, or three moves in the same shot.
-5. **Captions over the subject's brightest area.** Bottom-left, always.
+3. **Five colours.** ≤ 3 semantic colours per frame, all from the 7-colour palette.
+4. **Linear camera moves.** Camera must ease (ease-in-out); several slow pushes are fine.
+5. **Captions over the subject's brightest area.** Centred mid-lower, clear of the subject.
 6. **A single 30 s shot.** No cuts, no beats, no holds.
 7. **An empty end.** Fade to black with nothing said.
 8. **A hard-coded absolute path** (`~/…/real-time-manim`) in a file meant to be shared. Import the package; do not point at your checkout.
@@ -495,10 +499,10 @@ Observed in real agent submissions, in order of frequency:
 ## §11. Final checklist (copy into the PR/description)
 
 - [ ] docstring sentence filled; storyboard table complete.
-- [ ] 3–5 shots, 6–14 s each, total 10–45 s.
+- [ ] 3–6 shots, 4–16 s each, total 10–45 s.
 - [ ] title/subtitle/subject/caption/formula/takeaway in the house palette and zones.
-- [ ] one accent + one secondary; strokes ≥ 2 px; text ≥ 22 px.
-- [ ] every reveal ≥ 0.8 s; hold ≥ 0.6 s after each; one camera move, eased.
+- [ ] ≤ 3 accents per frame (7-colour palette); strokes ≥ 2 px; text ≥ 24 px.
+- [ ] reveals 1.0–2.0 s; hold ≥ 0.8 s after each; camera eased, zoom ≤ 15 % per move, ≤ 40 % total.
 - [ ] stills at 5+ times reviewed; contact sheet if available.
 - [ ] look (gate 1) and motion (gate 2) approved by the person **before** recording.
 - [ ] `--jobs 1` and `--jobs 4` agree on a middle frame.
