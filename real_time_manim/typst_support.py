@@ -687,6 +687,56 @@ def latex_to_typst_math(tex: str) -> str | None:
 # background compilation
 # ---------------------------------------------------------------------------
 
+
+def _patch_typst_svg_cache() -> None:
+    """Harden manim's content-hashed Typst SVG cache against truncated files.
+
+    ``typst_to_svg_file`` short-circuits on ``svg_file.exists()`` and its
+    write is not atomic, so a killed compile (or a torn write) leaves a
+    PARTIAL .svg behind.  Every later run then reuses it silently: the
+    Typst route either raises on the broken XML and quietly falls back to
+    LaTeX (correct picture, but the Typst cache stays dead and every
+    rebuild pays a failed parse) or parses fewer glyphs than the formula
+    has and renders them compressed.  Wrap the cache lookup: when the
+    cached SVG does not end with its closing tag, drop it and recompile
+    once.
+
+    Both module attributes are patched: ``typst_mobject`` binds the
+    function with a ``from ... import`` when it loads, which happens
+    before this patch runs (``typst_support`` imports ``Typst`` first), so
+    that bound name keeps the original unless it is replaced explicitly.
+    """
+    import manim.utils.typst_file_writing as _tw
+
+    _orig = _tw.typst_to_svg_file
+
+    def _patched(typst_code, preamble="",
+                 text_size=getattr(_tw, "TYPST_COMPILATION_FONT_SIZE", 10),
+                 font_paths=None):
+        path = _orig(typst_code, preamble, text_size, font_paths)
+        try:
+            with open(path, "rb") as _fh:
+                _fh.seek(-64, os.SEEK_END)
+                tail = _fh.read()
+        except OSError:
+            tail = b""
+        if not tail.rstrip().endswith(b"</svg>"):
+            path.unlink(missing_ok=True)
+            path = _orig(typst_code, preamble, text_size, font_paths)
+        return path
+
+    _tw.typst_to_svg_file = _patched
+    try:
+        import manim.mobject.text.typst_mobject as _tmo
+    except Exception:                                # pragma: no cover
+        _tmo = None
+    if _tmo is not None:
+        _tmo.typst_to_svg_file = _patched
+
+
+_patch_typst_svg_cache()
+
+
 _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="rtm-typst")
 
 
